@@ -1,0 +1,92 @@
+{
+    "document_type": "Commercial Auto Quote Sheet",
+    "agency_info": {
+        "address": "2001 Timberloch Place Suite 500, The Woodlands, TX 77380",
+        "direct_line": "281-895-1799 - 281-809-0112 Ext 113",
+        "email": "Quotes@h2oins.com"
+    },
+    "applicant_info": {
+        "owners_name": "GEORGE YSIDRO SORIANO ",
+        "business_name": "GEORGE YSIDRO SORIANO ",
+        "phone": "(940) 205-8801  ",
+        "fax": "N/A",
+        "dba": " SORIANOS TRUCKING ",
+        "mailing_address": "8464 BRAHMA DR JUSTIN, TX   76247  ",
+        "email": "SORIANOGEORGE72@GMAIL.COM",
+        "physical_address": "8464 BRAHMA DR JUSTIN, TX   76247  ",
+        "usdot": "4070832",
+        "txdot": "010077942C",
+        "mc": "N/A",
+        "current_carrier": "PROGRESSIVE COUNTY MUTUAL INSURANCE COMPANY",
+        "years_continuous_coverage": "1",
+        "destinations": "50 MILES",
+        "exp_date": "2/26/2026",
+        "policy_number": "993688204",
+        "commodities": "SAND & GRAVEL 100%",
+        "years_in_business": "1"
+    },
+    "driver_information": [
+        {
+            "name": "GEORGE YSIDRO SORIANO",
+            "dob": "08/18/1980",
+            "doh": "2/26/2025",
+            "age": "45",
+            "dl_number": "49972478",
+            "state": "TX",
+            "class": "A",
+            "exp_years": "10+",
+            "accidents": "0",
+            "violations": "0",
+            "excluded": "YES"
+        },
+        {
+            "name": "PEDRO MANUEL SORIANO",
+            "dob": "06/29/1972",
+            "doh": "2/26/2025",
+            "age": "54",
+            "dl_number": "K00-59-5414",
+            "state": "KS",
+            "class": "A",
+            "exp_years": "10+",
+            "accidents": "0",
+            "violations": "0",
+            "excluded": "0"
+        }
+    ],
+    "vehicles": {
+        "tractors_trucks_pickup": [
+            {
+                "year": "2013 ",
+                "make": "PTRB",
+                "vin": "1XP4D49X2DD190801",
+                "type": null,
+                "gvw": "80.000 LBS",
+                "value": "$5.000"
+            }
+        ],
+        "trailers": [
+            {
+                "year": " 2023",
+                "make": "ARMO",
+                "vin": "4A9T3DJ26PB178072",
+                "type": null,
+                "gvw": "10.100 LBS",
+                "value": "$50.000"
+            }
+        ]
+    },
+    "coverages": {
+        "radius_of_operation": "0-100",
+        "auto_liability_limits": "$500K CSL",
+        "general_liability": "1,000,000",
+        "physical_damage_deductible": "1,000",
+        "cargo_limit": "$100,000",
+        "refrigeration_breakdown": true,
+        "pip_med": true,
+        "um_uim": true,
+        "non_trucking_liability_limit": "",
+        "trailer_interchange_limit": "Trailer Prueba",
+        "additional_coverages": "ADICIONAL PRUEBA DE COBERTURAS",
+        "cargo_limit_other": "OTRAS"
+    }
+}

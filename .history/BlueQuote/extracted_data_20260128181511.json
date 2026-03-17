@@ -1,0 +1,77 @@
+{
+    "document_type": "Commercial Auto Quote Sheet",
+    "agency_info": {
+        "address": "2001 Timberloch Place Suite 500, The Woodlands, TX 77380",
+        "direct_line": "281-895-1799 - 281-809-0112 Ext 113",
+        "fax": "281-809-0115",
+        "website": "www.h2oins.com",
+        "email": "Quotes@h2oins.com"
+    },
+    "applicant_info": {
+        "owners_name": "SABINO A MENDOZA",
+        "business_name": "S MENDOZA TRANSPORTATION LLC",
+        "phone": "(832) 428-0423",
+        "fax": "N/A",
+        "dba": "N/A",
+        "mailing_address": "8701 S BRAESWOOD BLVD APT 215 HOUSTON, TX 77031",
+        "email": "SMENDOZATRANSPORTATIONLLC@GMAIL.COM",
+        "physical_address": "8701 S BRAESWOOD BLVD APT 215 HOUSTON, TX 77031",
+        "usdot": "4521103",
+        "txdot": "N/A (INCOMING)",
+        "mc": "N/A",
+        "current_carrier": "N/A",
+        "years_continuous_coverage": "NEW VENTURE",
+        "destinations": "500 MILES",
+        "exp_date": "02/16/2026",
+        "policy_number": "N/A",
+        "commodities": "BEVERAGES 40%, PLASTIC PRODUCTS 20%, CLOTHES (RECYCLED, NON-DESIGNER) 20%, FRUITS (ONLY WATERMELON) 20%",
+        "years_in_business": "NEW VENTURE"
+    },
+    "driver_information": [
+        {
+            "name": "SABINO A MENDOZA",
+            "dob": "12/30/1966",
+            "doh": "NEW VENTURE",
+            "age": 59,
+            "dl_number": "27080816",
+            "state": "TX",
+            "class": "A",
+            "exp_years": "+10",
+            "accidents": 0,
+            "violations": 0,
+            "excluded": 0
+        }
+    ],
+    "vehicles": {
+        "tractors_trucks_pickup": [
+            {
+                "year": "2012",
+                "make": "FREIGHTLINER",
+                "vin": "1FUJGLBG7CLBV6434",
+                "type": "Tractor Truck",
+                "gvw": "80,000 lbs",
+                "value": "$0"
+            }
+        ],
+        "trailers": [
+            {
+                "year": "",
+                "make": "",
+                "vin": "NON-OWNED TRAILER",
+                "type": "Dry Van Trailer",
+                "gvw": "",
+                "value": ""
+            }
+        ]
+    },
+    "coverages": {
+        "radius_of_operation": "301-500",
+        "auto_liability_limits": "$1M CSL",
+        "general_liability": null,
+        "physical_damage_deductible": null,
+        "cargo_limit": "$100,000",
+        "refrigeration_breakdown": false,
+        "trailer_interchange_limit": null,
+        "additional_coverages": null
+    }
+}

@@ -1,0 +1,160 @@
+# H2O Quote RPA - Configuration Settings
+# All paths, file names, Excel sheets, and parameters are defined here
+
+# ============================================================================
+# FILE PATHS & DIRECTORIES
+# ============================================================================
+paths:
+  # Input/Output directories
+  data_input: "data/input"
+  data_output: "data/output"
+  
+  # Configuration files
+  excel_checklist: "config/CHECK LIST (2)_ESTANDARIZADO.xlsx"
+  business_rules: "TODOS_LOS_CODIGOS.md"
+  
+  # Logs
+  log_dir: "logs"
+  log_file: "logs/rpa_execution.log"
+
+# ============================================================================
+# EXCEL CONFIGURATION
+# ============================================================================
+excel:
+  # Check List Excel structure
+  checklist:
+    sheet_name: "Hoja1"  # or 0 for first sheet, or specific name
+    column_business_type: "A"  # TIPO DE NEGOCIO
+    column_comments: "B"       # COMENTARIOS (mensaje)
+    start_row: 2               # First data row (after header)
+  
+  # Other Excel files (if needed)
+  classification:
+    file: "Clasificación por compañía.xlsx"
+    sheet_name: "Hoja1"
+  
+  business_types:
+    file: "Tipo de negocios y coberturas.xlsx"
+    sheet_name: "Hoja1"
+
+# ============================================================================
+# PDF EXTRACTION SETTINGS
+# ============================================================================
+pdf:
+  # Blue Quote PDF field mappings (IDs)
+  # These can be adjusted if PDF template changes
+  field_mappings:
+    applicant_start_id: 1
+    applicant_end_id: 18
+    driver_start_id: 19
+    driver_block_size: 11
+    vehicle_start_id: 74
+    vehicle_block_size: 6
+    trailer_start_id: 104
+    trailer_block_size: 6
+  
+  # Output format
+  output_format: "json"  # json or csv
+  output_naming: "extracted_{filename}"  # Template for output files
+
+# ============================================================================
+# COMMODITY MATCHING SETTINGS
+# ============================================================================
+matching:
+  # Fuzzy matching threshold (0-100)
+  similarity_threshold: 60.0
+  
+  # Normalization rules
+  remove_percentages: true
+  remove_special_chars: true
+  to_uppercase: true
+  
+  # Substring bonus
+  substring_bonus: 15.0  # % bonus for substring matches
+
+# ============================================================================
+# EMAIL SETTINGS (for future email automation)
+# ============================================================================
+email:
+  # Monitoring settings
+  monitoring:
+    #subject_filter: "Submission New Venture"
+    subject_filter: "Submission"
+    check_interval_seconds: 60
+    
+  # IMAP settings (receiving emails)
+  imap:
+    server: "imap.gmail.com"
+    port: 993
+    use_ssl: true
+    folder: "INBOX"
+    subfolder: "Quotes"  # Optional: specific folder for quotes
+  
+  # SMTP settings (sending emails)
+  smtp:
+    server: "smtp.gmail.com"
+    port: 587
+    use_tls: true
+  
+  # Email credentials (use .env for actual values)
+  # These are just placeholders
+  username: "${EMAIL_USERNAME}"  # Will be read from .env
+  password: "${EMAIL_PASSWORD}"  # Will be read from .env
+  
+  # Testing override: Send all replies to this email instead of original sender
+  # Leave empty or comment out for production
+  test_email_override: "${TEST_EMAIL_OVERRIDE}"
+  
+  # Email templates
+  templates:
+    subject_template: "Re: {original_subject}"
+    success_template: "config/templates/email_success.txt"
+    not_found_template: "config/templates/email_not_found.txt"
+    from_email: "${EMAIL_FROM}"
+    reply_to: "${EMAIL_REPLY_TO}"
+
+# ============================================================================
+# BUSINESS RULES
+# ============================================================================
+business_rules:
+  # Document requirements based on codes
+  required_documents:
+    BLUE_QUOTE: "Blue Quote PDF"
+    MVR: "Motor Vehicle Record"
+    CDL: "Commercial Driver's License"
+    IFTAS: "IFTA (Si aplica)"
+    LOSS_RUN: "Loss Run (5 años)"
+    APP_DILIGENCIADA: "APP en Drive"
+  
+  # Conditional rules
+  minimum_business_years: 1
+  minimum_driver_age: 21
+  cdl_required_default: true
+
+# ============================================================================
+# LOGGING & DEBUGGING
+# ============================================================================
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  console_output: true
+  file_output: true
+  
+# ============================================================================
+# RPA WORKFLOW SETTINGS
+# ============================================================================
+workflow:
+  # Auto-save extracted data
+  auto_save_json: true
+  
+  # Retry settings
+  max_retries: 3
+  retry_delay_seconds: 5
+  
+  # Processing modes
+  batch_mode: false  # Process multiple PDFs at once
+  auto_send_email: false  # Automatically send response emails
+  
+  # Validation
+  validate_extracted_data: true
+  require_commodity_match: true

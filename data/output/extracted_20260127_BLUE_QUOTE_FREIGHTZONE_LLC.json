@@ -1,0 +1,150 @@
+{
+    "document_type": "Commercial Auto Quote Sheet",
+    "agency_info": {
+        "address": "2001 Timberloch Place Suite 500, The Woodlands, TX 77380",
+        "direct_line": "281-895-1799 - 281-809-0112 Ext 113",
+        "email": "Quotes@h2oins.com"
+    },
+    "applicant_info": {
+        "owners_name": "RAUL POMARES",
+        "business_name": "FREIGHTZONE LLC ",
+        "phone": "(502) 424-8856  ",
+        "fax": "N/A",
+        "dba": "N/A",
+        "mailing_address": "319 CARLITO CV UNIVERSAL CTY, TX   78148  ",
+        "email": "DISPATCH@FREIGHTZONE.ORG",
+        "physical_address": "319 CARLITO CV UNIVERSAL CTY, TX   78148  ",
+        "usdot": "3877502",
+        "txdot": "009685171C",
+        "mc": "N/A",
+        "current_carrier": "PEGASO RISK RETENTION GROUP, INC.",
+        "years_continuous_coverage": "2",
+        "destinations": "100 MILES ",
+        "exp_date": "2/9/2026",
+        "policy_number": "PSO-2402013-01",
+        "commodities": "DIRT, SAND & GRAVEL 100%",
+        "years_in_business": "3"
+    },
+    "driver_information": [
+        {
+            "name": "RAUL RAMON POMARES MARCEL",
+            "dob": "11/09/1982",
+            "doh": "2/8/2023",
+            "age": "43",
+            "dl_number": "37742187",
+            "state": "TX",
+            "class": "C",
+            "exp_years": "2",
+            "accidents": "0",
+            "violations": "0",
+            "excluded": "YES"
+        },
+        {
+            "name": "CLARO E ALVAREZ GUZMAN",
+            "dob": "08/12/1958",
+            "doh": "2/8/2023",
+            "age": "67",
+            "dl_number": "37124920",
+            "state": "TX",
+            "class": "A",
+            "exp_years": "3",
+            "accidents": "0",
+            "violations": "0",
+            "excluded": "NO"
+        },
+        {
+            "name": "ROGER F PUPO QUINTANA",
+            "dob": "03/31/1961",
+            "doh": "2/8/2023",
+            "age": "64",
+            "dl_number": "37741426",
+            "state": "TX",
+            "class": "A",
+            "exp_years": "4",
+            "accidents": "0",
+            "violations": "0",
+            "excluded": "NO"
+        },
+        {
+            "name": "ROGER MARCO PUPO GARCIA",
+            "dob": "01/30/2001",
+            "doh": "2/8/2023",
+            "age": "24",
+            "dl_number": "42678997",
+            "state": "TX",
+            "class": "A",
+            "exp_years": "4",
+            "accidents": "0",
+            "violations": "0",
+            "excluded": "NO"
+        }
+    ],
+    "vehicles": {
+        "tractors_trucks_pickup": [
+            {
+                "year": "2015",
+                "make": "KW",
+                "vin": "1XKYDP9X2FJ426554 ",
+                "type": "Tractor Truck",
+                "gvw": "80,000 lbs",
+                "value": " $40,000"
+            },
+            {
+                "year": "2016 ",
+                "make": "KW ",
+                "vin": "1XKYDP9X8GJ111758",
+                "type": "Tank Trailer",
+                "gvw": "80,000 lbs",
+                "value": " $40,000"
+            },
+            {
+                "year": "2013 ",
+                "make": "FRHT ",
+                "vin": "3AKJGEDVXDSFG3785",
+                "type": "Unknown",
+                "gvw": "80,000 lbs",
+                "value": "$30,000"
+            }
+        ],
+        "trailers": [
+            {
+                "year": "2024",
+                "make": "DURAHAUL",
+                "vin": "3F8KT3420R1009247",
+                "type": "Unknown",
+                "gvw": "15,000 lbs",
+                "value": "$40,000"
+            },
+            {
+                "year": "2012 ",
+                "make": "CONS ",
+                "vin": "5TU343227CS000953",
+                "type": "Unknown",
+                "gvw": "14,500 lbs",
+                "value": "$30,000"
+            },
+            {
+                "year": "2014 ",
+                "make": "RANC ",
+                "vin": "1D9SD3421ER661093 ",
+                "type": "Unknown",
+                "gvw": "15,000 lbs",
+                "value": "$30,000"
+            }
+        ]
+    },
+    "coverages": {
+        "radius_of_operation": "0-100",
+        "auto_liability_limits": "$1M CSL",
+        "general_liability": "1,000,000",
+        "physical_damage_deductible": "1,000",
+        "cargo_limit": null,
+        "refrigeration_breakdown": false,
+        "pip_med": false,
+        "um_uim": false,
+        "non_trucking_liability_limit": null,
+        "trailer_interchange_limit": null,
+        "additional_coverages": "Additional Insureds: J&P Paving CO. INC. 5002 Sinclair Road San Antonio, Texas 78222 ashley@j-ppaving.com / Texson Transport 7515 Grissom Rd San Antonio, Texas 78251 fm@texsontransport.com",
+        "cargo_limit_other": null
+    }
+}

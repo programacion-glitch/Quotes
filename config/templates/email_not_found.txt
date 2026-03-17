@@ -1,0 +1,16 @@
+Estimado/a {nombre_cliente},
+
+Gracias por su consulta de cotización para {nombre_negocio}.
+
+Lamentablemente, el commodity indicado "{commodity}" no se encuentra actualmente en nuestra base de datos parametrizada.
+
+Estamos trabajando para ampliar nuestra cobertura de productos y servicios. Le recomendamos contactarnos directamente para evaluar opciones alternativas o actualizar su solicitud con información adicional.
+
+Por favor, no dude en comunicarse con nosotros:
+- Email: Quotes@h2oins.com
+- Teléfono: 281-895-1799
+
+Saludos cordiales,
+H2O Insurance Services
+2001 Timberloch Place Suite 500
+The Woodlands, TX 77380

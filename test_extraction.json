@@ -1,0 +1,79 @@
+{
+  "document_type": "Commercial Auto Quote Sheet",
+  "agency_info": {
+    "address": "2001 Timberloch Place Suite 500, The Woodlands, TX 77380",
+    "direct_line": "281-895-1799 - 281-809-0112 Ext 113",
+    "email": "Quotes@h2oins.com"
+  },
+  "applicant_info": {
+    "owners_name": "HERBERT TEVEZ",
+    "business_name": "J & SONS LOGISTICS LLC ",
+    "phone": "(832) 823-9363",
+    "fax": "N/A",
+    "dba": " N/A",
+    "mailing_address": "330 RAYFORD ROAD SPRING, TX   77386  ",
+    "email": "JSONSlLLC@YAHOO.COM",
+    "physical_address": "31502 KINGSTON VILLAGE DR SPRING, TX 77386",
+    "usdot": "2495428 ",
+    "txdot": "006817376C",
+    "mc": "MC-864472",
+    "current_carrier": "NEW VENTURE",
+    "years_continuous_coverage": "NEW VENTURE",
+    "destinations": "150 MILES",
+    "exp_date": "01/25/2026",
+    "policy_number": "NEW VENTURE",
+    "commodities": "BUILDING MATERIALS 30%, STEEL BEAM 25%, PIPES 25%, LIGHT MACHINERY 20% ",
+    "years_in_business": "11"
+  },
+  "driver_information": [
+    {
+      "name": "HERBERTH JULIO TEVEZ",
+      "dob": "12/29/1978",
+      "doh": "6/10/2014",
+      "age": "47",
+      "dl_number": "38003590",
+      "state": "TX",
+      "class": "A",
+      "exp_years": "10+",
+      "accidents": "0",
+      "violations": "0",
+      "excluded": "0"
+    }
+  ],
+  "vehicles": {
+    "tractors_trucks_pickup": [
+      {
+        "year": "2011 ",
+        "make": "KW",
+        "vin": "1XKAD48X4BJ281190",
+        "type": "Tractor Truck",
+        "gvw": "80,000 lbs",
+        "value": "$25.000"
+      }
+    ],
+    "trailers": [
+      {
+        "year": " 2016",
+        "make": "FONTAINE ",
+        "vin": "13N148209G1513445",
+        "type": "Flatbed Trailer",
+        "gvw": "15.300",
+        "value": "$17.000"
+      }
+    ]
+  },
+  "coverages": {
+    "radius_of_operation": "101-200",
+    "auto_liability_limits": "$1M CSL",
+    "general_liability": null,
+    "physical_damage_deductible": "1,000",
+    "cargo_limit": "$100,000",
+    "refrigeration_breakdown": false,
+    "pip_med": true,
+    "um_uim": false,
+    "non_trucking_liability_limit": "$30.000",
+    "trailer_interchange_limit": null,
+    "additional_coverages": null,
+    "cargo_limit_other": null
+  }
+}

@@ -1,0 +1,77 @@
+{
+    "document_type": "Commercial Auto Quote Sheet",
+    "agency_info": {
+        "address": "2001 Timberloch Place Suite 500, The Woodlands, TX 77380",
+        "direct_line": "281-895-1799 - 281-809-0112 Ext 113",
+        "email": "Quotes@h2oins.com"
+    },
+    "applicant_info": {
+        "owners_name": "HUMBERTO VILLARREAL ",
+        "business_name": "HUMBERTO VILLARREAL ",
+        "phone": "(409) 656-7240",
+        "fax": "N/A",
+        "dba": "H VILLARREAL TRUCKING",
+        "mailing_address": "585 NOLAN ST BEAUMONT, TX 77705",
+        "email": "mmortiz1957@gmail.com",
+        "physical_address": "4121 FONVILLE AVE. BEAUMONT, TX 77705",
+        "usdot": "2033673 ",
+        "txdot": "005376232C",
+        "mc": "N/A",
+        "current_carrier": "PROGRESSIVE COUNTY MUTUAL INSURANCE COMPANY",
+        "years_continuous_coverage": "4 YEARS",
+        "destinations": "100 MILES",
+        "exp_date": "2/8/2026",
+        "policy_number": "CA955576604",
+        "commodities": "DIRT, SAND & GRAVEL 100%",
+        "years_in_business": "27 YEARS"
+    },
+    "driver_information": [
+        {
+            "name": "HUMBERTO F VILLARREAL",
+            "dob": "03/25/1949",
+            "doh": "1/15/1999 ",
+            "age": "76",
+            "dl_number": "10069460",
+            "state": "TX",
+            "class": "A",
+            "exp_years": "+30",
+            "accidents": "0",
+            "violations": "0",
+            "excluded": "YES"
+        },
+        {
+            "name": "CLIFTON JR THOMAS",
+            "dob": "09/12/1960",
+            "doh": "01/05/2026",
+            "age": "65",
+            "dl_number": "00767736",
+            "state": "TX",
+            "class": "A",
+            "exp_years": "+20",
+            "accidents": "0",
+            "violations": "0",
+            "excluded": "NO"
+        }
+    ],
+    "vehicles": {
+        "tractors_trucks_pickup": [
+            {
+                "year": "2009",
+                "make": "MACK",
+                "vin": "1M1AN07Y19N003670",
+                "type": "Dump Truck",
+                "gvw": "48,000 lbs",
+                "value": "$0"
+            }
+        ],
+        "trailers": []
+    },
+    "coverages": {
+        "radius_of_operation": "0-100",
+        "auto_liability_limits": "$500K CSL",
+        "general_liability": null,
+        "physical_damage_deductible": null,
+        "cargo_limit": null,
+        "refrigeration_breakdown": false
+    }
+}

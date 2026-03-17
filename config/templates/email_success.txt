@@ -1,0 +1,25 @@
+Estimado/a {nombre_cliente},
+
+Gracias por su consulta de cotización para {nombre_negocio}.
+
+Hemos analizado el commodity indicado: {commodity}
+Tipo de negocio identificado: {tipo_negocio}
+
+A continuación le presentamos las empresas aseguradoras que cumplen con los requisitos para cotizar este tipo de operación:
+
+---
+
+{mga_list}
+
+---
+
+Por favor, asegúrese de tener disponible la documentación mencionada para cada empresa.
+
+Si tiene alguna duda o requiere información adicional, no dude en contactarnos.
+
+Saludos cordiales,
+H2O Insurance Services
+2001 Timberloch Place Suite 500
+The Woodlands, TX 77380
+Quotes@h2oins.com
+281-895-1799

@@ -1,0 +1,44 @@
+﻿Deep analysis of: BlueQuote/20260121- Blue Quote.pdf
+============================================================
+Pages: 1
+
+Annotations: 2
+  [0] Keys in annotation: ['AP', 'C', 'CreationDate', 'F', 'M', 'NM', 'Name', 'P', 'Popup', 'Rect', 'Subj', 'Subtype', 'T', 'Type']
+  [1] Keys in annotation: ['F', 'Open', 'Parent', 'Rect', 'Subtype', 'Type']
+
+--- TEXT EXTRACTION ---
+Commercial Auto Quote Sheet
+Adress: 2001 Timberloch Place Suite 500 Direct Line: 281-895-1799 - 281-809-0112 Ext 113
+The Woodlands, TX 77380 Fax: 281-809-0115
+www.h2oins.com Email adress: Quotes@h2oins.com
+Owners Name: NIRISLEIDIS CARDENAS FILLOR Business Name: IN-OUT TRANSPORTATION LLC
+____________________________________________________________________________________________ _______________________________________________________________________________________
+Phone:346-435-0571 Fax: N/A DBA: N/A
+________________________________________________________________ ________________________________________________________ _________________________________________________________
+Mailing Address: 4151 Sun Meadow Dr, Houston, TX 77072 Email: nirisleidisc@yahoo.com
+___________________________________________________________________________________________________________________________ _________________________________________________________
+Physical Address: 4151 Sun Meadow Dr, Houston, TX 77072
+___________________________________________________________________________________________________________________________
+USDOT#: 4512905 TXDOT#: TBD MC#: 01786917
+________________________________________________________________ ________________________________________________________ _________________________________________________________
+Current Carrier: N/A Years with continious coverages: N/A
+__________________________________________________________________________________ ________________________________________________________________________________________________
+Destinations: TX (100 miles) Exp. Date:01/23/2026 Policy#: N/A
+__________________________________________________________________________________ ____________________________________________ ________________________________________________
+Commodities: Construction materials 50%, light machinery and spare parts 50% Years in business: New Venture
+______________________________________________________________________________________________________________________________________ _________________________________________________
+Driver Information
+Name DOB DOH Age DL # State Class EXP(yrs) #Accidents #Violations (Excluded)
+NIRISLEIDIS CARDENAS FILLOR 03/16/1990 2025 35 50546326 TX C 2 0 0 YNENSoo
+OSIEL CRUZ LLERENA 05/28/1982 2025 43 50546742 TX C 2 0 0 NO
+Tractors/Trucks/Pickup:
+Year Make VIN Type GVW Value
+2022 RAM 250 3C6UR5DL6NG325111 Pickup Truck 8,300 lbs 20,000
+Trailers:
+Year Make VIN Type GVW Value
+2026 ED FD1 3LHGD4020T7001739 Flatbed Trailer 15,689 lbs 5,000
+
+--- TABLES ---
+Tables found: 3
+
+Done
