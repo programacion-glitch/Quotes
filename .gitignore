@@ -1,7 +1,7 @@
 # .gitignore for H2O Quote RPA
 
 # Environment variables (NEVER commit!)
-
+.history
 
 # Python
 __pycache__/
