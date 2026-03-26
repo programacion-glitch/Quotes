@@ -22,6 +22,8 @@ from modules.config_manager import get_config
 from modules.mga_email_reader import MGAEmailReader
 from modules.attachment_validator import AttachmentValidator
 from modules.drive_manager import DriveManager
+from modules.document_ai_extractor import DocumentAIExtractor
+from modules.rule_engine import RuleEngine
 
 
 class QuoteWorkflowOrchestrator:
@@ -54,89 +56,73 @@ class QuoteWorkflowOrchestrator:
         self.mga_email_reader = MGAEmailReader(str(self.excel_path))
         self.attachment_validator = AttachmentValidator()
         self.drive_manager = DriveManager()
+        self.document_extractor = DocumentAIExtractor()
+        self.rule_engine = RuleEngine(str(self.excel_path))
+        self.rule_engine_enabled = self.config.get("rule_engine.enabled", True)
+        self.halt_on_low_confidence = self.config.get("rule_engine.halt_on_low_confidence", True)
     
     def process_email(self, email_data: Dict):
         """
         Process a single email with quote PDF.
-        
+
         Args:
             email_data: Email dict from EmailReceiver
         """
         print(f"\n{'='*60}")
         print(f"PROCESSING EMAIL")
         print(f"{'='*60}")
-        
+
         subject = email_data.get('subject', '')
         sender = email_data.get('sender_email', '')
         sender_name = email_data.get('sender_name', 'Cliente')
-        
+
         print(f"From: {sender_name} <{sender}>")
         print(f"Subject: {subject}")
-        
-        # Step 1: Find PDF attachment - prioritize BLUE QUOTE
+
+        # Step 1: Get all attachments
         attachments = email_data.get('attachments', [])
-        pdf_attachment = None
-        
-        # First pass: Look for "BLUE QUOTE" in filename
-        for att in attachments:
-            filename = att['filename'].upper()
-            if filename.endswith('.PDF') and 'BLUE QUOTE' in filename:
-                pdf_attachment = att
-                print(f"✓ Found BLUE QUOTE PDF: {att['filename']}")
-                break
-        
-        # Second pass: If no BLUE QUOTE found, take any PDF
-        if not pdf_attachment:
-            for att in attachments:
-                if att['filename'].lower().endswith('.pdf'):
-                    pdf_attachment = att
-                    print(f"⚠️  BLUE QUOTE not found, using: {att['filename']}")
-                    break
-        
-        # Validate PDF was found
-        if not pdf_attachment:
-            print("✗ No PDF attachment found - skipping email")
+
+        if not attachments:
+            print("No attachments found - skipping email")
             return
-        
-        # Step 2: Save PDF temporarily and extract data
+
+        # Step 2: Extract structured data from all attachments via DocumentAIExtractor
+        print(f"\nStep 1: Extracting data from all attachments ({len(attachments)} file(s))...")
         try:
-            # Save to temp file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-                tmp_file.write(pdf_attachment['data'])
-                tmp_pdf_path = tmp_file.name
-            
-            print(f"Step 1: Extracting data from PDF...")
-            extractor = BlueQuotePDFExtractor(tmp_pdf_path)
-            extracted_data = extractor.extract()
-            
-            # Get commodity and business name with fallbacks
-            commodity = extracted_data.get('applicant_info', {}).get('commodities') or ''
-            business_name = extracted_data.get('applicant_info', {}).get('business_name') or 'su empresa'
-            
-            print(f"  ✓ Commodity: {commodity or 'None'}")
-            print(f"  ✓ Business: {business_name}")
-            
-            # Clean up temp file
-            Path(tmp_pdf_path).unlink()
-            
+            profile = self.document_extractor.extract_all(attachments)
         except Exception as e:
-            print(f"✗ Error extracting PDF: {e}")
+            print(f"  Error during document extraction: {e}")
             return
-        
-        # Handle empty/None commodity
+
+        # Step 3: Check extraction confidence — halt if low confidence and configured to do so
+        confidence = profile.extraction_confidence.overall if profile.extraction_confidence else "unknown"
+        print(f"  Extraction confidence: {confidence}")
+
+        if confidence == "low" and self.halt_on_low_confidence:
+            flags = profile.extraction_confidence.flags if profile.extraction_confidence else []
+            flag_summary = ", ".join(f.field for f in flags) if flags else "unknown fields"
+            print(f"  Low confidence on: {flag_summary} — halting processing for manual review")
+            return
+
+        # Step 4: Get commodity and business name from profile
+        commodity = profile.commodity or ''
+        business_name = profile.applicant.business_name or 'su empresa'
+
+        print(f"  Commodity: {commodity or 'None'}")
+        print(f"  Business: {business_name}")
+
+        # Step 5: Map commodity to business type
         if not commodity:
-            print("⚠️  No commodity found in PDF - sending not found email")
+            print("  No commodity found in documents - sending not found email")
             commodity = "N/A"
             tipo_negocio = None
         else:
-            # Step 3: Map commodity to business type
             print(f"\nStep 2: Mapping commodity to business type...")
             tipo_negocio = self.mapper.map_commodity_to_type(commodity)
 
-        
         if not tipo_negocio:
-            print(f"  ⚠️  No match found for commodity: {commodity}")
-            # Still send "not found" email
+            print(f"  No match found for commodity: {commodity}")
+            # Send "not found" email
             response = build_email_response(
                 mga_data=[],
                 commodity=commodity,
@@ -146,60 +132,99 @@ class QuoteWorkflowOrchestrator:
                 original_subject=subject
             )
         else:
-            print(f"  ✓ Matched: {tipo_negocio}")
-            
-            # Step 4: Get MGAs
+            print(f"  Matched: {tipo_negocio}")
+
+            # Step 6: Get candidate MGAs
             print(f"\nStep 3: Finding MGAs...")
             mga_list = self.mga_reader.get_mga_by_business_type(tipo_negocio)
-            
-            print(f"  ✓ Found {len(mga_list)} MGA(s)")
+
+            print(f"  Found {len(mga_list)} MGA(s)")
             for mga in mga_list:
                 print(f"    - {mga['mga']}")
-            
-            # Step 5: Validate documents and send to MGAs
-            print(f"\nStep 4: Validating documents and sending to MGAs...")
+
+            # Step 7: Apply rule engine to filter eligible MGAs
+            eligible_mga_names = set(mga['mga'] for mga in mga_list)
+            ineligible_log = []  # List of (mga_name, failed_rules, warnings)
+
+            if self.rule_engine_enabled and mga_list:
+                print(f"\nStep 4: Evaluating MGAs against rules...")
+                try:
+                    evaluations = self.rule_engine.evaluate(profile, tipo_negocio)
+                    eval_by_name = {ev.mga_name: ev for ev in evaluations}
+
+                    for mga in mga_list:
+                        mga_name = mga['mga']
+                        ev = eval_by_name.get(mga_name)
+                        if ev is None:
+                            # No rule row found — allow by default (backwards-compatible)
+                            print(f"    {mga_name}: no rules defined — allowed")
+                            continue
+                        if ev.eligible:
+                            print(f"    {mga_name}: ELIGIBLE ({len(ev.passed_rules)} rules passed)")
+                            if ev.warnings:
+                                for w in ev.warnings:
+                                    print(f"      Warning: {w}")
+                        else:
+                            print(f"    {mga_name}: INELIGIBLE")
+                            for fr in ev.failed_rules:
+                                print(f"      Failed rule [{fr.rule}]: {fr.reason}")
+                            eligible_mga_names.discard(mga_name)
+                            ineligible_log.append({
+                                'mga': mga_name,
+                                'failed_rules': [fr.reason for fr in ev.failed_rules],
+                                'warnings': ev.warnings,
+                            })
+                except Exception as e:
+                    print(f"  Rule engine error (skipping filter): {e}")
+
+            # Step 8: Filter mga_list to only eligible entries
+            mga_list_eligible = [mga for mga in mga_list if mga['mga'] in eligible_mga_names]
+
+            print(f"\nStep 5: Validating documents and sending to MGAs...")
+            print(f"  Eligible MGAs: {len(mga_list_eligible)}/{len(mga_list)}")
+
             email_sender = EmailSender(self.email_address, self.email_password)
-            
+
             # Extract the quote body from original email
             original_body = extract_quote_body(email_data.get('body', ''))
-            
+
             mgas_contacted = 0
             mgas_failed = []
-            
-            for mga in mga_list:
+
+            for mga in mga_list_eligible:
                 mga_name = mga['mga']
                 print(f"\n  Processing MGA: {mga_name}")
-                
+
                 # Validate documents for this MGA
                 validation = self.attachment_validator.validate_for_mga(attachments, mga_name)
-                
+
                 if not validation.is_valid:
-                    print(f"    ✗ Missing documents: {', '.join(validation.missing_docs)}")
+                    print(f"    Missing documents: {', '.join(validation.missing_docs)}")
                     mgas_failed.append({'mga': mga_name, 'missing': validation.missing_docs})
                     continue
-                
-                print(f"    ✓ All documents valid")
-                
+
+                print(f"    All documents valid")
+
                 # Get MGA email address
                 mga_email_info = self.mga_email_reader.get_email_for_mga(mga_name)
-                
+
                 if not mga_email_info:
-                    print(f"    ✗ No email configured for MGA: {mga_name}")
+                    print(f"    No email configured for MGA: {mga_name}")
                     mgas_failed.append({'mga': mga_name, 'missing': ['EMAIL NOT CONFIGURED']})
                     continue
-                
+
                 to_email = mga_email_info['email_to']
                 cc_email = mga_email_info.get('email_cc')
-                
+
                 # Override for testing
                 if self.test_email_override:
-                    print(f"    🧪 TEST MODE: Would send to {self.test_email_override} instead of {to_email}")
+                    print(f"    TEST MODE: Would send to {self.test_email_override} instead of {to_email}")
                     to_email = self.test_email_override
                     cc_email = None
-                
+
                 # DRY RUN: Simulate sending
                 if self.dry_run:
-                    print(f"    📋 DRY RUN - Would send email:")
+                    print(f"    DRY RUN - Would send email:")
                     print(f"       TO: {to_email}")
                     if cc_email:
                         print(f"       CC: {cc_email}")
@@ -207,7 +232,7 @@ class QuoteWorkflowOrchestrator:
                     print(f"       Attachments: {list(validation.matched_docs.keys())}")
                     print(f"       Body: {original_body[:100]}...")
                     mgas_contacted += 1
-                    print(f"    ✓ [SIMULATED] Email to {mga_name}")
+                    print(f"    [SIMULATED] Email to {mga_name}")
                 else:
                     # Send email to MGA
                     success = email_sender.send_to_mga(
@@ -217,18 +242,26 @@ class QuoteWorkflowOrchestrator:
                         attachments=validation.matched_docs,
                         cc_email=cc_email
                     )
-                    
+
                     if success:
                         mgas_contacted += 1
-                        print(f"    ✓ Email sent to {mga_name}")
+                        print(f"    Email sent to {mga_name}")
                     else:
                         mgas_failed.append({'mga': mga_name, 'missing': ['SEND FAILED']})
-            
-            # Step 6: Upload to Drive if at least one MGA was contacted
+
+            # Step 9: Log ineligible MGAs
+            if ineligible_log:
+                print(f"\n  Ineligible MGAs (skipped by rule engine):")
+                for entry in ineligible_log:
+                    print(f"    - {entry['mga']}: {'; '.join(entry['failed_rules'])}")
+                    if entry['warnings']:
+                        print(f"      Warnings: {'; '.join(entry['warnings'])}")
+
+            # Step 10: Upload to Drive if at least one MGA was contacted
             if mgas_contacted > 0:
-                print(f"\nStep 5: Uploading documents to Google Drive...")
-                usdot = extracted_data.get('applicant_info', {}).get('usdot', 'UNKNOWN')
-                
+                print(f"\nStep 6: Uploading documents to Google Drive...")
+                usdot = profile.applicant.usdot or 'UNKNOWN'
+
                 # We want to ACTUALLY upload to drive even in DRY_RUN to test it!
                 drive_success = self.drive_manager.upload_files_for_client(
                     business_name=business_name,
@@ -236,17 +269,17 @@ class QuoteWorkflowOrchestrator:
                     attachments=attachments
                 )
                 if drive_success:
-                    print(f"    ✓ Documents successfully uploaded to Drive.")
+                    print(f"    Documents successfully uploaded to Drive.")
                 else:
-                    print(f"    ✗ Some or all documents failed to upload to Drive.")
+                    print(f"    Some or all documents failed to upload to Drive.")
 
             # Summary
             print(f"\n{'='*60}")
             print(f"SUMMARY: {mgas_contacted}/{len(mga_list)} MGAs contacted")
-            
+
             # If no MGAs were contacted, send fallback email
             if mgas_contacted == 0:
-                print(f"\n⚠️ No MGAs received email - sending summary to fallback...")
+                print(f"\nNo MGAs received email - sending summary to fallback...")
                 response = build_email_response(
                     mga_data=mga_list,
                     commodity=commodity,
@@ -255,45 +288,45 @@ class QuoteWorkflowOrchestrator:
                     nombre_negocio=business_name,
                     original_subject=subject
                 )
-                
+
                 recipient_email = self.test_email_override or email_data.get('sender_email')
-                
+
                 if self.dry_run:
-                    print(f"    📋 DRY RUN - Would send fallback email to: {recipient_email}")
+                    print(f"    DRY RUN - Would send fallback email to: {recipient_email}")
                 else:
                     email_sender.send_email(
                         to_email=recipient_email,
                         subject=response['subject'],
                         body=response['body']
                     )
-            
+
             print(f"{'='*60}\n")
             return
-        
+
         # Fallback: Send summary email if no tipo_negocio matched
         print(f"\nStep 5: Sending summary email...")
         email_sender = EmailSender(self.email_address, self.email_password)
-        
+
         recipient_email = email_data.get('sender_email')
         if self.test_email_override:
-            print(f"🧪 TEST MODE: Sending to {self.test_email_override} instead of {recipient_email}")
+            print(f"TEST MODE: Sending to {self.test_email_override} instead of {recipient_email}")
             recipient_email = self.test_email_override
-        
+
         if self.dry_run:
-            print(f"📋 DRY RUN - Would send summary email to: {recipient_email}")
-            print(f"✓✓✓ WORKFLOW COMPLETE (DRY RUN)")
+            print(f"DRY RUN - Would send summary email to: {recipient_email}")
+            print(f"WORKFLOW COMPLETE (DRY RUN)")
         else:
             success = email_sender.send_email(
                 to_email=recipient_email,
                 subject=response['subject'],
                 body=response['body']
             )
-            
+
             if success:
-                print(f"✓✓✓ WORKFLOW COMPLETE - Summary email sent!")
+                print(f"WORKFLOW COMPLETE - Summary email sent!")
             else:
-                print(f"✗ Failed to send email")
-        
+                print(f"Failed to send email")
+
         print(f"{'='*60}\n")
     
     def start_monitoring(self, check_interval: int = 60):
