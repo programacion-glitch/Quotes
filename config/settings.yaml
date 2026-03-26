@@ -146,15 +146,38 @@ logging:
 workflow:
   # Auto-save extracted data
   auto_save_json: true
-  
+
   # Retry settings
   max_retries: 3
   retry_delay_seconds: 5
-  
+
   # Processing modes
   batch_mode: false  # Process multiple PDFs at once
   auto_send_email: false  # Automatically send response emails
-  
+
   # Validation
   validate_extracted_data: true
   require_commodity_match: true
+
+# ============================================================================
+# AI DOCUMENT EXTRACTION
+# ============================================================================
+ai_extraction:
+  # Proxy settings (credentials from .env: OPENAI_BASE_URL, OPENAI_API_KEY)
+  model: "gpt-4o"
+  timeout_seconds: 60
+  max_retries: 3
+  retry_delay_seconds: 5
+  # Minimum text chars from PDF before falling back to vision
+  min_text_threshold: 50
+
+# ============================================================================
+# RULE ENGINE
+# ============================================================================
+rule_engine:
+  # Excel sheet name for structured rules
+  sheet_name: "REGLAS"
+  # Enable/disable rule evaluation
+  enabled: true
+  # Halt workflow when AI extraction confidence is low
+  halt_on_low_confidence: true
