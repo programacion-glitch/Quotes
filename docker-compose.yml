@@ -1,0 +1,17 @@
+services:
+  h2o-quote-bot:
+    build: .
+    image: h2o-quote-rpa:latest
+    container_name: h2o-quote-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "workflow_orchestrator.py"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
