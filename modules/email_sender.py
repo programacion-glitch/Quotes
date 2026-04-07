@@ -44,19 +44,21 @@ class EmailSender:
         body: str,
         reply_to_message_id: Optional[str] = None,
         in_reply_to: Optional[str] = None,
-        attachments: Optional[List[str]] = None
+        attachments: Optional[List[str]] = None,
+        is_html: bool = False
     ) -> bool:
         """
         Send email.
-        
+
         Args:
             to_email: Recipient email
             subject: Email subject
-            body: Email body (plain text)
+            body: Email body (plain text or HTML)
             reply_to_message_id: Original message ID for threading
             in_reply_to: In-Reply-To header for threading
             attachments: List of file paths to attach
-            
+            is_html: If True, send body as HTML
+
         Returns:
             True if sent successfully
         """
@@ -66,22 +68,26 @@ class EmailSender:
             msg['From'] = self.email_address
             msg['To'] = to_email
             msg['Subject'] = subject
-            
+
             # Add threading headers if replying
             if reply_to_message_id:
                 msg['In-Reply-To'] = reply_to_message_id
                 msg['References'] = reply_to_message_id
-            
+
             if in_reply_to:
                 msg['In-Reply-To'] = in_reply_to
-            
+
             # Add body
-            msg.attach(MIMEText(body, 'plain', 'utf-8'))
+            content_type = 'html' if is_html else 'plain'
+            msg.attach(MIMEText(body, content_type, 'utf-8'))
             
-            # Add attachments if any
+            # Add attachments if any (supports file paths or in-memory dicts with 'filename'/'data')
             if attachments:
-                for file_path in attachments:
-                    self._attach_file(msg, file_path)
+                for att in attachments:
+                    if isinstance(att, dict):
+                        self._attach_bytes(msg, att.get('filename', 'attachment'), att.get('data', b''))
+                    else:
+                        self._attach_file(msg, att)
             
             # Connect and send
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
@@ -96,6 +102,14 @@ class EmailSender:
             print(f"✗ Failed to send email: {e}")
             return False
     
+    def _attach_bytes(self, msg: MIMEMultipart, filename: str, data: bytes):
+        """Attach in-memory bytes to email message."""
+        part = MIMEBase('application', 'octet-stream')
+        part.set_payload(data)
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', f'attachment; filename= {filename}')
+        msg.attach(part)
+
     def _attach_file(self, msg: MIMEMultipart, file_path: str):
         """Attach file to email message."""
         path = Path(file_path)

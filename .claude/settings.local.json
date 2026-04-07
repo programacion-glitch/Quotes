@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(python -m pytest tests/test_rule_engine.py -v)",
+      "Bash(curl:*)",
+      "Bash(python scripts/migrate_rules.py)",
+      "Bash(python -c \":*)",
+      "Bash(python:*)",
+      "Bash(tasklist)",
+      "Bash(PYTHONIOENCODING=utf-8 python workflow_orchestrator.py)",
+      "Bash(taskkill //F //PID 17244)",
+      "Bash(taskkill:*)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "mcp__plugin_playwright_playwright__browser_fill_form",
+      "mcp__plugin_playwright_playwright__browser_click",
+      "mcp__plugin_playwright_playwright__browser_close",
+      "Bash(start \"\" \"C:/Program Files/Google/Chrome/Application/chrome.exe\" --remote-debugging-port=9222 --user-data-dir=\"C:/Users/Desarrollo/AppData/Local/Google/Chrome/User Data\")",
+      "mcp__plugin_playwright_playwright__browser_run_code",
+      "Bash(pip show:*)",
+      "Read(//c/Program Files/Google/Chrome/Application/**)",
+      "Read(//c/Program Files \\(x86\\)/Google/Chrome/Application/**)",
+      "Bash(where chrome:*)",
+      "Bash(reg query:*)",
+      "Bash(C:/Program Files/Google/Chrome/Application/chrome.exe:*)",
+      "Bash(\"C:/Program Files/Google/Chrome/Application/chrome.exe\" --remote-debugging-port=9222 --user-data-dir=\"C:/Users/Desarrollo/AppData/Local/Google/Chrome/User Data\" \"https://www.foragentsonly.com\")",
+      "Bash(mkdir -p \"C:/Users/Desarrollo/AppData/Local/Google/Chrome/DebugProfile\")",
+      "Bash(cp -r \"C:/Users/Desarrollo/AppData/Local/Google/Chrome/User Data/Default\" \"C:/Users/Desarrollo/AppData/Local/Google/Chrome/DebugProfile/Default\")",
+      "Bash(echo \"Copy done: $?\")",
+      "Bash(\"C:/Program Files/Google/Chrome/Application/chrome.exe\" --remote-debugging-port=9222 --user-data-dir=\"C:/Users/Desarrollo/AppData/Local/Google/Chrome/DebugProfile\" \"https://www.foragentsonly.com/home/?Welcome=584\")",
+      "Bash(PYTHONIOENCODING=utf-8 PYTHONUTF8=1 python:*)",
+      "mcp__plugin_playwright_playwright__browser_type",
+      "mcp__plugin_playwright_playwright__browser_select_option",
+      "mcp__plugin_playwright_playwright__browser_evaluate",
+      "mcp__plugin_playwright_playwright__browser_tabs",
+      "Bash(PYTHONIOENCODING=utf-8 python:*)",
+      "Bash(git checkout:*)"
+    ]
+  }
+}
