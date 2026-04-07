@@ -35,16 +35,17 @@ class MGAEvaluation:
 class RuleEngine:
     """Evaluates quote profiles against MGA rules from REGLAS sheet."""
 
-    # Columns in REGLAS sheet (order matters for reading)
+    # Columns in REGLAS sheet
     COLUMNS = [
-        "MGA", "TIPO_DE_NEGOCIO", "MIN_BUSINESS_YEARS", "MIN_CDL_YEARS",
+        "MGA", "TIPO_DE_NEGOCIO", "IS_NEW_VENTURE",
+        "MIN_BUSINESS_YEARS", "MIN_CDL_YEARS",
         "REQUIRES_MVR", "MVR_MIN_YEARS", "REQUIRES_IFTAS", "REQUIRES_LOSS_RUN",
         "LOSS_RUN_MIN_YEARS", "LOSSES_MUST_BE_CLEAN", "REQUIRES_APP",
         "REQUIRES_EIN", "REQUIRES_QUESTIONS", "REQUIRES_REGISTRATIONS",
         "MIN_UNITS", "MIN_OWNER_AGE", "MIN_INDUSTRY_EXP_YEARS",
         "ALLOWED_COVERAGES", "BLOCKED_TRAILER_TYPES", "BLOCKED_COMMODITIES",
         "ALLOWED_TRAILER_TYPES", "ROUTING", "DOWN_PAYMENT_PCT", "MIN_PRICE",
-        "SPECIAL_FORM", "NOTES"
+        "SPECIAL_FORM", "NOTAS_EXTRA"
     ]
 
     def __init__(self, excel_path: str, sheet_name: str = "REGLAS"):
@@ -137,13 +138,32 @@ class RuleEngine:
             passed = []
             warnings = []
 
-            # --- Numeric thresholds ---
+            # --- Filtro New Venture ---
+            rule_nv = (rule.get("IS_NEW_VENTURE") or "").strip().upper()
+            if rule_nv == "YES" and not profile.applicant.is_new_venture:
+                failures.append(FailedRule("IS_NEW_VENTURE",
+                    "Solo aplica para New Venture, pero el negocio ya esta establecido",
+                    "ESTABLECIDO", "NEW_VENTURE"))
+            elif rule_nv == "NO" and profile.applicant.is_new_venture:
+                min_years = self._get_int(rule.get("MIN_BUSINESS_YEARS"))
+                if min_years:
+                    msg = f"Requiere minimo {min_years} ano(s) en el negocio, este es New Venture"
+                else:
+                    msg = "No acepta New Venture (solo negocios establecidos)"
+                failures.append(FailedRule("IS_NEW_VENTURE", msg, "NEW_VENTURE", "ESTABLECIDO"))
+            elif rule_nv in ("YES", "NO"):
+                passed.append("IS_NEW_VENTURE")
+
+            is_nv = profile.applicant.is_new_venture
+
+            # --- Umbrales numericos ---
+            # MIN_BUSINESS_YEARS no aplica a New Venture (no tienen historial)
             min_biz = self._get_int(rule.get("MIN_BUSINESS_YEARS"))
-            if min_biz is not None:
+            if min_biz is not None and not is_nv:
                 biz_years = profile.applicant.business_years
                 if biz_years is not None and biz_years < min_biz:
                     failures.append(FailedRule("MIN_BUSINESS_YEARS",
-                        f"Business has {biz_years} year(s), needs {min_biz}+",
+                        f"Negocio tiene {biz_years} ano(s), requiere {min_biz}+",
                         biz_years, min_biz))
                 elif biz_years is not None:
                     passed.append("MIN_BUSINESS_YEARS")
@@ -153,7 +173,7 @@ class RuleEngine:
                 owner_age = profile.applicant.owner_age
                 if owner_age is not None and owner_age < min_age:
                     failures.append(FailedRule("MIN_OWNER_AGE",
-                        f"Owner is {owner_age}, needs min {min_age}",
+                        f"Propietario tiene {owner_age} anos, requiere minimo {min_age}",
                         owner_age, min_age))
                 elif owner_age is not None:
                     passed.append("MIN_OWNER_AGE")
@@ -162,7 +182,7 @@ class RuleEngine:
             if min_units is not None:
                 if profile.units.count < min_units:
                     failures.append(FailedRule("MIN_UNITS",
-                        f"Has {profile.units.count} units, needs {min_units}+",
+                        f"Tiene {profile.units.count} unidades, requiere {min_units}+",
                         profile.units.count, min_units))
                 else:
                     passed.append("MIN_UNITS")
@@ -172,29 +192,29 @@ class RuleEngine:
                 exp = profile.applicant.industry_experience_years
                 if exp is not None and exp < min_exp:
                     failures.append(FailedRule("MIN_INDUSTRY_EXP_YEARS",
-                        f"Industry exp: {exp} years, needs {min_exp}+",
+                        f"Experiencia en la industria: {exp} anos, requiere {min_exp}+",
                         exp, min_exp))
                 elif exp is not None:
                     passed.append("MIN_INDUSTRY_EXP_YEARS")
 
-            # --- Driver-level rules (least favorable) ---
+            # --- Reglas por conductor (el menos favorable) ---
             min_cdl = self._get_int(rule.get("MIN_CDL_YEARS"))
             if min_cdl is not None and profile.drivers:
                 all_pass = True
                 for drv in profile.drivers:
                     if drv.cdl_years is not None and drv.cdl_years < min_cdl:
                         failures.append(FailedRule("MIN_CDL_YEARS",
-                            f"Driver '{drv.name}': CDL {drv.cdl_years} yr, needs {min_cdl}+",
+                            f"Conductor '{drv.name}': CDL {drv.cdl_years} ano(s), requiere {min_cdl}+",
                             drv.cdl_years, min_cdl))
                         all_pass = False
                 if all_pass:
                     passed.append("MIN_CDL_YEARS")
 
-            # --- Document presence ---
+            # --- Presencia de documentos ---
             if self._is_yes(rule.get("REQUIRES_MVR")):
                 has_mvr = any(d.mvr_present for d in profile.drivers)
                 if not has_mvr:
-                    failures.append(FailedRule("REQUIRES_MVR", "Missing document: MVR"))
+                    failures.append(FailedRule("REQUIRES_MVR", "Falta documento: MVR"))
                 else:
                     passed.append("REQUIRES_MVR")
 
@@ -202,72 +222,72 @@ class RuleEngine:
             iftas_rule = rule.get("REQUIRES_IFTAS")
             if self._is_yes(iftas_rule):
                 if not profile.iftas.present:
-                    failures.append(FailedRule("REQUIRES_IFTAS", "Missing document: IFTAS"))
+                    failures.append(FailedRule("REQUIRES_IFTAS", "Falta documento: IFTAS"))
                 else:
                     passed.append("REQUIRES_IFTAS")
             elif self._is_si_aplica(iftas_rule) and not profile.iftas.present:
-                warnings.append("IFTAS may be required if interstate operations apply")
+                warnings.append("IFTAS puede ser requerido si aplican operaciones interestatales")
 
-            # Loss Run
+            # Loss Run — no aplica a New Venture (no tienen historial)
             lr_rule = rule.get("REQUIRES_LOSS_RUN")
-            if self._is_yes(lr_rule):
+            if self._is_yes(lr_rule) and not is_nv:
                 if not profile.loss_run.present:
-                    failures.append(FailedRule("REQUIRES_LOSS_RUN", "Missing document: LOSS RUN"))
+                    failures.append(FailedRule("REQUIRES_LOSS_RUN", "Falta documento: Loss Run"))
                 else:
                     passed.append("REQUIRES_LOSS_RUN")
-            elif self._is_si_aplica(lr_rule) and not profile.loss_run.present:
-                warnings.append("Loss Run may be required depending on history")
+            elif self._is_si_aplica(lr_rule) and not profile.loss_run.present and not is_nv:
+                warnings.append("Loss Run puede ser requerido dependiendo del historial")
 
-            # MVR min years
+            # MVR anos minimos — no aplica a New Venture
             mvr_min = self._get_int(rule.get("MVR_MIN_YEARS"))
-            if mvr_min is not None:
+            if mvr_min is not None and not is_nv:
                 for drv in profile.drivers:
                     if drv.mvr_present and drv.mvr_years_covered is not None and drv.mvr_years_covered < mvr_min:
                         failures.append(FailedRule("MVR_MIN_YEARS",
-                            f"Driver '{drv.name}': MVR covers {drv.mvr_years_covered} yr, needs {mvr_min}+",
+                            f"Conductor '{drv.name}': MVR cubre {drv.mvr_years_covered} ano(s), requiere {mvr_min}+",
                             drv.mvr_years_covered, mvr_min))
 
-            # Loss Run min years
+            # Loss Run anos minimos — no aplica a New Venture
             lr_min = self._get_int(rule.get("LOSS_RUN_MIN_YEARS"))
-            if lr_min is not None and profile.loss_run.present:
+            if lr_min is not None and profile.loss_run.present and not is_nv:
                 if profile.loss_run.years_covered is not None and profile.loss_run.years_covered < lr_min:
                     failures.append(FailedRule("LOSS_RUN_MIN_YEARS",
-                        f"Loss Run covers {profile.loss_run.years_covered} yr, needs {lr_min}+",
+                        f"Loss Run cubre {profile.loss_run.years_covered} ano(s), requiere {lr_min}+",
                         profile.loss_run.years_covered, lr_min))
 
-            # Losses must be clean
-            if self._is_yes(rule.get("LOSSES_MUST_BE_CLEAN")):
+            # Perdidas limpias — no aplica a New Venture
+            if self._is_yes(rule.get("LOSSES_MUST_BE_CLEAN")) and not is_nv:
                 if profile.loss_run.present and not profile.loss_run.is_clean:
-                    failures.append(FailedRule("LOSSES_MUST_BE_CLEAN", "Loss Run must be clean (no claims)"))
+                    failures.append(FailedRule("LOSSES_MUST_BE_CLEAN", "Loss Run debe estar limpio (sin reclamos)"))
                 elif profile.loss_run.present:
                     passed.append("LOSSES_MUST_BE_CLEAN")
 
             # APP
             if self._is_yes(rule.get("REQUIRES_APP")):
                 if not profile.app.present:
-                    failures.append(FailedRule("REQUIRES_APP", "Missing document: APP"))
+                    failures.append(FailedRule("REQUIRES_APP", "Falta documento: APP"))
                 else:
                     passed.append("REQUIRES_APP")
 
             if self._is_yes(rule.get("REQUIRES_EIN")):
                 if not profile.app.ein_included:
-                    failures.append(FailedRule("REQUIRES_EIN", "Missing: EIN"))
+                    failures.append(FailedRule("REQUIRES_EIN", "Falta: EIN"))
                 else:
                     passed.append("REQUIRES_EIN")
 
             if self._is_yes(rule.get("REQUIRES_QUESTIONS")):
                 if not profile.app.questions_filled:
-                    failures.append(FailedRule("REQUIRES_QUESTIONS", "Questionnaire not filled"))
+                    failures.append(FailedRule("REQUIRES_QUESTIONS", "Cuestionario no completado"))
                 else:
                     passed.append("REQUIRES_QUESTIONS")
 
             if self._is_yes(rule.get("REQUIRES_REGISTRATIONS")):
                 if "REGISTRATIONS" not in [d.upper() for d in profile.documents_present]:
-                    failures.append(FailedRule("REQUIRES_REGISTRATIONS", "Missing: vehicle registrations"))
+                    failures.append(FailedRule("REQUIRES_REGISTRATIONS", "Faltan: registraciones de vehiculos"))
                 else:
                     passed.append("REQUIRES_REGISTRATIONS")
 
-            # --- Coverage rules ---
+            # --- Reglas de coberturas ---
             allowed_cov = self._parse_list(rule.get("ALLOWED_COVERAGES"))
             if allowed_cov:
                 requested = set(c.upper() for c in profile.coverages)
@@ -275,12 +295,12 @@ class RuleEngine:
                 disallowed = requested - allowed_set
                 if disallowed:
                     failures.append(FailedRule("ALLOWED_COVERAGES",
-                        f"Coverage not accepted: {', '.join(disallowed)}",
+                        f"Cobertura no aceptada: {', '.join(disallowed)}",
                         list(requested), list(allowed_set)))
                 else:
                     passed.append("ALLOWED_COVERAGES")
 
-            # --- Trailer rules (ALLOWED takes precedence) ---
+            # --- Reglas de trailers (ALLOWED tiene precedencia) ---
             allowed_trailers = self._parse_list(rule.get("ALLOWED_TRAILER_TYPES"))
             blocked_trailers = self._parse_list(rule.get("BLOCKED_TRAILER_TYPES"))
 
@@ -290,7 +310,7 @@ class RuleEngine:
                 disallowed = actual - allowed_set
                 if disallowed:
                     failures.append(FailedRule("ALLOWED_TRAILER_TYPES",
-                        f"Trailer not in allow list: {', '.join(disallowed)}",
+                        f"Trailer no permitido: {', '.join(disallowed)}",
                         list(actual), list(allowed_set)))
                 else:
                     passed.append("ALLOWED_TRAILER_TYPES")
@@ -300,18 +320,18 @@ class RuleEngine:
                 overlap = actual & blocked_set
                 if overlap:
                     failures.append(FailedRule("BLOCKED_TRAILER_TYPES",
-                        f"Blocked trailer type: {', '.join(overlap)}"))
+                        f"Tipo de trailer bloqueado: {', '.join(overlap)}"))
                 else:
                     passed.append("BLOCKED_TRAILER_TYPES")
 
-            # --- Commodity restrictions ---
+            # --- Restricciones de commodity ---
             blocked_comm = self._parse_list(rule.get("BLOCKED_COMMODITIES"))
             if blocked_comm:
                 commodity_upper = profile.commodity.upper()
                 blocked_found = [kw for kw in blocked_comm if kw in commodity_upper]
                 if blocked_found:
                     failures.append(FailedRule("BLOCKED_COMMODITIES",
-                        f"Blocked commodity: {', '.join(blocked_found)}"))
+                        f"Commodity bloqueado: {', '.join(blocked_found)}"))
                 else:
                     passed.append("BLOCKED_COMMODITIES")
 
@@ -321,7 +341,7 @@ class RuleEngine:
                 "down_payment_pct": self._get_int(rule.get("DOWN_PAYMENT_PCT")),
                 "min_price": self._get_int(rule.get("MIN_PRICE")),
                 "special_form": rule.get("SPECIAL_FORM"),
-                "notes": rule.get("NOTES"),
+                "notas_extra": rule.get("NOTAS_EXTRA"),
             }
 
             results.append(MGAEvaluation(

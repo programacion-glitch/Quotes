@@ -181,3 +181,10 @@ rule_engine:
   enabled: true
   # Halt workflow when AI extraction confidence is low
   halt_on_low_confidence: true
+  # Approval mode: "manual" = send summary, wait for confirmation email
+  #                "auto" = send summary AND send to MGAs automatically
+  approval_mode: "manual"
+  # Email to send the analysis summary to (before MGA dispatch)
+  summary_email: "${EMAIL_USERNAME}"
+  # Subject keyword to look for in the confirmation reply
+  confirmation_keyword: "APROBAR"

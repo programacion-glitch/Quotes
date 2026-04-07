@@ -515,9 +515,11 @@ class DocumentAIExtractor:
 
         # Step 8: Determine confidence
         critical_fields = [
-            ("business_years", profile.applicant.business_years),
             ("commodity", profile.commodity),
         ]
+        # business_years only critical for established businesses (New Venture has no years by definition)
+        if not profile.applicant.is_new_venture:
+            critical_fields.append(("business_years", profile.applicant.business_years))
         if profile.drivers:
             critical_fields.append(("cdl_years", profile.drivers[0].cdl_years))
 
