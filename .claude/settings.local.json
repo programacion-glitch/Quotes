@@ -37,7 +37,11 @@
       "mcp__plugin_playwright_playwright__browser_evaluate",
       "mcp__plugin_playwright_playwright__browser_tabs",
       "Bash(PYTHONIOENCODING=utf-8 python:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git stash:*)",
+      "Bash(git push:*)",
+      "Bash(git branch:*)"
     ]
   }
 }
