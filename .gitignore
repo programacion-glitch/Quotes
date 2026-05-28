@@ -53,6 +53,7 @@ logs/
 test_output.txt
 matching_results.txt
 results_display.txt
+.playwright-mcp
 
 # Excel temporary files
 ~$*.xlsx

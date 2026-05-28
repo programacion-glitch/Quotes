@@ -154,11 +154,10 @@ class DocumentAIExtractor:
 
     def classify_attachment(self, filename: str, data: bytes) -> Optional[str]:
         """
-        Determine document type. Filename matching first, AI fallback.
+        Determine document type by FILENAME only. No AI fallback.
 
         Returns one of DOC_TYPES or None.
         """
-        # 1. Filename matching (reuse existing logic)
         for doc_type in DOC_TYPES:
             if self.validator._matches_document(filename, doc_type):
                 return doc_type
@@ -169,21 +168,6 @@ class DocumentAIExtractor:
         if self.validator._matches_app_general(filename):
             return "NEW VENTURE APP"
 
-        # 2. AI fallback: send first page to classify
-        content = self._extract_content(filename, data)
-        if not content:
-            return None
-
-        prompt = (
-            "This insurance document is one of: BLUE QUOTE, MVR, CDL, IFTAS, LOSS RUN, NEW VENTURE APP. "
-            "Which one is it? Return ONLY the document type name, nothing else."
-        )
-        result = self._call_ai(prompt, content)
-        if result:
-            result_upper = result.strip().upper()
-            for dt in DOC_TYPES:
-                if dt in result_upper:
-                    return dt
         return None
 
     # ---- Content Extraction ----
@@ -383,20 +367,32 @@ class DocumentAIExtractor:
         app_info = extracted.get("applicant_info", {})
 
         # Applicant
-        years_raw = app_info.get("years_in_business")
-        business_years = None
-        if years_raw:
-            try:
-                business_years = int(str(years_raw).strip())
-            except (ValueError, TypeError):
-                pass
+        # The Blue Quote often stores years as "3 YEARS" / "3 anos" / "3" — pull
+        # the first integer from the string instead of strict int parsing.
+        import re as _re
+        def _first_int(value) -> Optional[int]:
+            if value is None:
+                return None
+            m = _re.search(r"\d+", str(value))
+            return int(m.group(0)) if m else None
+
+        business_years = _first_int(app_info.get("years_in_business"))
+
+        # Current carrier: if filled, the client is ALREADY insured somewhere, so
+        # they are NOT a new venture regardless of business_years extraction.
+        current_carrier = (app_info.get("current_carrier") or "").strip()
+        years_cov = _first_int(app_info.get("years_continuous_coverage"))
+
+        is_nv = (business_years is None or business_years == 0) and not current_carrier
 
         applicant = ApplicantProfile(
             business_name=app_info.get("business_name") or "",
             owner_name=app_info.get("owners_name") or "",
             usdot=app_info.get("usdot") or "",
             business_years=business_years,
-            is_new_venture=business_years is None or business_years == 0,
+            is_new_venture=is_nv,
+            current_carrier=current_carrier,
+            years_continuous_coverage=years_cov,
         )
 
         # Commodity
@@ -548,19 +544,11 @@ class DocumentAIExtractor:
         profile = QuoteProfile()
         confidence_flags = []
 
-        # Step 1: Classify all attachments
-        # Two-pass strategy:
-        #   Pass 1: filename-based matching wins. Each doc_type slot can be claimed
-        #           by exactly one attachment whose name explicitly matches.
-        #   Pass 2: AI fallback only for files that didn't match by name, AND only
-        #           assigns to doc_type slots that are still empty. Prevents an
-        #           ambiguous file (e.g. "RENOVATION PRICE.pdf") from overwriting
-        #           the real "BLUE QUOTE.pdf" that already filled the BLUE QUOTE slot.
+        # Step 1: Classify attachments by FILENAME only.
+        # No AI fallback — avoids misclassifying unrelated docs as CDL, Loss Run, etc.
         classified: dict = {}  # doc_type -> attachment
         unclassified: list = []
-        needs_ai: list = []    # attachments that didn't match by filename
 
-        # ---- Pass 1: filename matches ----
         for att in attachments:
             filename = att["filename"]
             matched_type: Optional[str] = None
@@ -574,50 +562,18 @@ class DocumentAIExtractor:
                     matched_type = "NEW VENTURE APP"
 
             if matched_type is None:
-                needs_ai.append(att)
+                unclassified.append(filename)
+                print(f"    Skipped (no match): {filename}")
                 continue
 
             if matched_type in classified:
-                # Slot already taken by another filename match — keep the first
+                # Slot already taken — keep the first match
                 print(f"    Skipped (duplicate {matched_type}): {filename}")
                 continue
 
             classified[matched_type] = att
             profile.documents_present.append(matched_type)
             print(f"    Classified: {filename} → {matched_type}")
-
-        # ---- Pass 2: AI fallback for unmatched filenames ----
-        for att in needs_ai:
-            filename = att["filename"]
-            # Run AI classifier (may return None)
-            content = self._extract_content(filename, att["data"])
-            ai_type: Optional[str] = None
-            if content:
-                prompt = (
-                    "This insurance document is one of: BLUE QUOTE, MVR, CDL, IFTAS, LOSS RUN, NEW VENTURE APP. "
-                    "Which one is it? Return ONLY the document type name, nothing else."
-                )
-                result = self._call_ai(prompt, content)
-                if result:
-                    result_upper = result.strip().upper()
-                    for dt in DOC_TYPES:
-                        if dt in result_upper:
-                            ai_type = dt
-                            break
-
-            if ai_type is None:
-                unclassified.append(filename)
-                print(f"    Unclassified: {filename} (skipped)")
-                continue
-
-            if ai_type in classified:
-                # Already filled by a filename match in pass 1 — do not overwrite
-                print(f"    Skipped (AI said {ai_type}, slot already filled): {filename}")
-                continue
-
-            classified[ai_type] = att
-            profile.documents_present.append(ai_type)
-            print(f"    Classified (AI): {filename} → {ai_type}")
 
         # Step 2: Extract Blue Quote
         # Try the form-based BlueQuotePDFExtractor first; fall back to AI vision

@@ -122,7 +122,14 @@ class QuoteWorkflowOrchestrator:
             return
 
         # Override new-venture flag from subject (authoritative signal from sender)
-        if "new venture" in subject.lower():
+        # — but a filled current_carrier in the Blue Quote is HARD EVIDENCE that
+        # the client is already insured, so never treat as New Venture in that case.
+        current_carrier = (profile.applicant.current_carrier or "").strip()
+        if current_carrier:
+            profile.applicant.is_new_venture = False
+            if "new venture" in subject.lower():
+                print(f"  Subject says 'New Venture' but Blue Quote has current_carrier='{current_carrier}' — treating as established")
+        elif "new venture" in subject.lower():
             profile.applicant.is_new_venture = True
             # Drop business_years from confidence flags — not applicable to new ventures
             if profile.extraction_confidence:
@@ -298,6 +305,12 @@ class QuoteWorkflowOrchestrator:
             mga_name = mga['mga']
             print(f"\n  Processing MGA: {mga_name}")
 
+            # PROGRESSIVE: web automation instead of email
+            if mga_name.upper() == "PROGRESSIVE":
+                self._dispatch_to_progressive(profile, subject)
+                mgas_contacted += 1
+                continue
+
             # Validate documents
             validation = self.attachment_validator.validate_for_mga(attachments, mga_name)
             if not validation.is_valid:
@@ -346,6 +359,33 @@ class QuoteWorkflowOrchestrator:
             )
 
         print(f"\n  SUMMARY: {mgas_contacted}/{len(mga_list)} MGAs contacted")
+
+    def _dispatch_to_progressive(self, profile, subject):
+        """Dispatch quote to Progressive via web automation."""
+        import re
+
+        # Extract effective date from subject (format: Effective date: MM/DD/YYYY or M/D/YYYY)
+        eff_date = None
+        match = re.search(r'[Ee]ffective\s+date[:\s]+(\d{1,2}/\d{1,2}/\d{4})', subject)
+        if match:
+            eff_date = match.group(1)
+
+        print(f"    [Progressive] Starting web automation (effective date: {eff_date or 'unknown'})...")
+
+        try:
+            from modules.progressive.client import ProgressiveClient
+            result = ProgressiveClient.create_quote(profile, effective_date=eff_date)
+
+            if result.success:
+                print(f"    [Progressive] Quote completed! Step reached: {result.step_reached}")
+                for w in result.warnings:
+                    print(f"    [Progressive] WARN: {w}")
+            else:
+                print(f"    [Progressive] Failed at step '{result.step_reached}': {result.error}")
+                if result.screenshot_path:
+                    print(f"    [Progressive] Screenshot: {result.screenshot_path}")
+        except Exception as e:
+            print(f"    [Progressive] Unexpected error: {e}")
 
     def _send_not_found_email(self, email_data, commodity, sender_name, business_name, subject):
         """Send 'not found' email when commodity can't be matched."""

@@ -248,12 +248,22 @@ class RuleEngine:
                             drv.mvr_years_covered, mvr_min))
 
             # Loss Run anos minimos — no aplica a New Venture
-            lr_min = self._get_int(rule.get("LOSS_RUN_MIN_YEARS"))
-            if lr_min is not None and profile.loss_run.present and not is_nv:
-                if profile.loss_run.years_covered is not None and profile.loss_run.years_covered < lr_min:
+            # Logica: los anos de LR requeridos = anos en el negocio.
+            # Si el MGA tiene un LOSS_RUN_MIN_YEARS explicito (ej. XPT=5),
+            # ese es el tope: min(business_years, lr_min_excel).
+            # Si no tiene tope, se piden todos los anos del negocio.
+            biz_years = profile.applicant.business_years
+            lr_min_excel = self._get_int(rule.get("LOSS_RUN_MIN_YEARS"))
+            if biz_years is not None and profile.loss_run.present and not is_nv:
+                if lr_min_excel is not None:
+                    required_lr = min(biz_years, lr_min_excel)
+                else:
+                    required_lr = biz_years
+
+                if required_lr > 0 and profile.loss_run.years_covered is not None and profile.loss_run.years_covered < required_lr:
                     failures.append(FailedRule("LOSS_RUN_MIN_YEARS",
-                        f"Loss Run cubre {profile.loss_run.years_covered} ano(s), requiere {lr_min}+",
-                        profile.loss_run.years_covered, lr_min))
+                        f"Loss Run cubre {profile.loss_run.years_covered} ano(s), requiere {required_lr}+ (negocio tiene {biz_years} anos)",
+                        profile.loss_run.years_covered, required_lr))
 
             # Perdidas limpias — no aplica a New Venture
             if self._is_yes(rule.get("LOSSES_MUST_BE_CLEAN")) and not is_nv:

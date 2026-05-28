@@ -9,7 +9,82 @@ from typing import List, Dict, Any
 from datetime import datetime
 
 from modules.quote_profile import QuoteProfile
-from modules.rule_engine import MGAEvaluation
+from modules.rule_engine import MGAEvaluation, FailedRule
+
+
+def _baseline_missing_docs(profile: QuoteProfile) -> List[FailedRule]:
+    """
+    Return the list of baseline document failures for the profile.
+
+    Required docs for ANY MGA to receive an email submission:
+      - CDL: always required (even for NV - the owner-driver still needs it)
+      - MVR: required only for established businesses (NV has no driving history)
+      - Loss Run: required only for established businesses (NV has no losses)
+
+    Returns empty list if all baseline docs are present.
+    """
+    failures: List[FailedRule] = []
+    docs = {d.upper() for d in profile.documents_present}
+    is_nv = profile.applicant.is_new_venture
+
+    if "CDL" not in docs:
+        failures.append(FailedRule("REQUIRES_CDL", "Falta documento: CDL"))
+    if "MVR" not in docs and not is_nv:
+        failures.append(FailedRule("REQUIRES_MVR", "Falta documento: MVR"))
+    if "LOSS RUN" not in docs and not is_nv:
+        failures.append(FailedRule("REQUIRES_LOSS_RUN", "Falta documento: Loss Run"))
+    return failures
+
+
+def _baseline_eval_for_no_rules(mga_name: str, profile: QuoteProfile) -> MGAEvaluation:
+    """
+    Build an MGAEvaluation for an MGA that has NO specific REGLAS rows,
+    applying only baseline document requirements.
+    """
+    failures = _baseline_missing_docs(profile)
+    return MGAEvaluation(
+        mga_name=mga_name,
+        eligible=(len(failures) == 0),
+        failed_rules=failures,
+    )
+
+
+def _apply_baseline_to_eligible(ev: MGAEvaluation, profile: QuoteProfile) -> MGAEvaluation:
+    """
+    If an MGA passed rule engine but baseline docs are missing, downgrade it
+    to ineligible with the corresponding FailedRules appended. This ensures
+    'Eligible' in the analysis email always means 'can actually receive an email'.
+    """
+    if not ev.eligible:
+        return ev
+    missing = _baseline_missing_docs(profile)
+    if not missing:
+        return ev
+    # Avoid duplicating FailedRules that the rule engine already added
+    existing_rules = {fr.rule for fr in ev.failed_rules}
+    new_failures = [fr for fr in missing if fr.rule not in existing_rules]
+    return MGAEvaluation(
+        mga_name=ev.mga_name,
+        eligible=False,
+        passed_rules=ev.passed_rules,
+        failed_rules=ev.failed_rules + new_failures,
+        warnings=ev.warnings,
+        informational=ev.informational,
+    )
+
+
+def _is_only_missing_docs(ev: MGAEvaluation) -> bool:
+    """
+    True if EVERY failed_rule on this evaluation is about a missing document
+    (reason starts with 'Falta'). Used to route these MGAs to the 'fixes'
+    section instead of the 'no elegibles' list.
+    """
+    if not ev.failed_rules:
+        return False
+    return all(
+        (fr.reason or "").strip().lower().startswith("falta")
+        for fr in ev.failed_rules
+    )
 
 TEMPLATE_PATH = Path(__file__).parent.parent / "config" / "templates" / "analysis_email.html"
 
@@ -38,16 +113,43 @@ def _doc_row(name: str, present: bool) -> str:
     )
 
 
-def _driver_row(name: str, cdl_years, mvr_years) -> str:
-    """Generate a driver info row."""
-    cdl = str(cdl_years) if cdl_years is not None else "?"
+def _driver_row(name: str, cdl_years, mvr_years, cdl_doc_missing: bool = False) -> str:
+    """Generate a driver info row.
+
+    If cdl_doc_missing is True and the driver has cdl_years (from BlueQuote),
+    mark the CDL cell with an amber * to indicate the value came from fallback.
+    """
+    cdl_text = str(cdl_years) if cdl_years is not None else "?"
+    if cdl_doc_missing and cdl_years is not None:
+        cdl_cell = (
+            f'<span style="color:#b8860b;">{cdl_text}<span title="Tomado del Blue Quote - falta CDL">*</span></span>'
+        )
+    else:
+        cdl_cell = cdl_text
     mvr = str(mvr_years) if mvr_years is not None else "?"
     return (
         f'<tr>'
         f'<td style="padding:10px 12px;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#0a1628;border-top:1px solid #e8eaee;">{name}</td>'
-        f'<td align="center" style="padding:10px 12px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:bold;color:#0a1628;border-top:1px solid #e8eaee;">{cdl}</td>'
+        f'<td align="center" style="padding:10px 12px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:bold;color:#0a1628;border-top:1px solid #e8eaee;">{cdl_cell}</td>'
         f'<td align="center" style="padding:10px 12px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:bold;color:#0a1628;border-top:1px solid #e8eaee;">{mvr}</td>'
         f'</tr>'
+    )
+
+
+def _warnings_banner(html_warnings: list) -> str:
+    """Build the top-of-email warnings banner. Empty string if no warnings."""
+    if not html_warnings:
+        return ""
+    rows = "".join(
+        f'<p style="margin:0 0 6px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#8a5a00;line-height:1.5;">&#9888; {w}</p>'
+        for w in html_warnings
+    )
+    return (
+        '<tr>'
+        '<td style="padding:18px 32px;background-color:#fff8e1;border-bottom:1px solid #f0deb0;">'
+        f'{rows}'
+        '</td>'
+        '</tr>'
     )
 
 
@@ -141,10 +243,64 @@ def build_analysis_email(
 
     Returns dict with 'subject' and 'body'.
     """
-    eligible = [ev for ev in evaluations if ev.eligible]
-    ineligible = [ev for ev in evaluations if not ev.eligible]
+    # Filter strategy:
+    #   - Hide MGAs that failed by IS_NEW_VENTURE only when it's a CATEGORICAL
+    #     mismatch (MGA only takes NV but business is established) — years are
+    #     irrelevant there, so showing it adds noise.
+    #   - SHOW MGAs that failed because of business YEARS, even if the failure
+    #     is reported as IS_NEW_VENTURE (e.g. "Requiere minimo 2 ano(s)...") —
+    #     these tell the user when the business would become eligible.
+    def _should_hide(ev: MGAEvaluation) -> bool:
+        for fr in ev.failed_rules:
+            if fr.rule != "IS_NEW_VENTURE":
+                continue
+            reason = (fr.reason or "").lower()
+            # Year-based rejections stay visible (contain digits/"ano" or "minimo")
+            if any(tok in reason for tok in ("minimo", "ano", "año", "year")):
+                return False
+            # Pure "solo aplica para New Venture" → hide
+            if "solo aplica para new venture" in reason or "new_venture" in reason:
+                return True
+        return False
+
+    relevant = [ev for ev in evaluations if not _should_hide(ev)]
+
+    # MGAs listed in the MGA sheet but without specific REGLAS rows for the
+    # current tipo_negocio: apply BASELINE document requirements (MVR/CDL/Loss Run)
+    # instead of showing them as "approved by default".
     evaluated_names = {ev.mga_name for ev in evaluations}
-    no_rules = [m for m in mga_list if m['mga'] not in evaluated_names]
+    no_rules_mgas = [m for m in mga_list if m['mga'] not in evaluated_names]
+    baseline_evals = [
+        _baseline_eval_for_no_rules(m['mga'], profile) for m in no_rules_mgas
+    ]
+    relevant += baseline_evals
+
+    # SAFETY NET: even MGAs that passed all REGLAS rules can't actually receive
+    # an email without the baseline documents (CDL always; MVR/Loss Run unless NV).
+    # Downgrade any "eligible" MGA that's missing those docs.
+    relevant = [_apply_baseline_to_eligible(ev, profile) for ev in relevant]
+
+    # CURRENT CARRIER filter: if the Blue Quote lists a current_carrier, that MGA
+    # is already insuring the client — we cannot offer them again.
+    current_carrier_norm = (profile.applicant.current_carrier or "").strip().upper()
+
+    def _is_current_carrier(mga_name: str) -> bool:
+        if not current_carrier_norm:
+            return False
+        n = (mga_name or "").strip().upper()
+        return current_carrier_norm in n or n in current_carrier_norm
+
+    current_carrier_hits = [ev for ev in relevant if _is_current_carrier(ev.mga_name)]
+    relevant = [ev for ev in relevant if not _is_current_carrier(ev.mga_name)]
+
+    eligible = [ev for ev in relevant if ev.eligible]
+    ineligible_all = [ev for ev in relevant if not ev.eligible]
+
+    # Split ineligibles: those failing ONLY by missing docs go to the "fixes"
+    # section only; the rest show up in the "no elegibles" list as before.
+    ineligible = [ev for ev in ineligible_all if not _is_only_missing_docs(ev)]
+    missing_docs_only = [ev for ev in ineligible_all if _is_only_missing_docs(ev)]
+    no_rules = []  # no longer shown as "approved by default"
 
     # Load template
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
@@ -165,6 +321,11 @@ def build_analysis_email(
     for doc in expected:
         documents_rows += _doc_row(doc, doc in docs_present)
 
+    cdl_missing = "CDL" not in docs_present
+    cdl_has_fallback = cdl_missing and any(
+        drv.cdl_years is not None for drv in (profile.drivers or [])
+    )
+
     # -- Drivers --
     drivers_rows = ""
     if profile.drivers:
@@ -172,10 +333,31 @@ def build_analysis_email(
             drivers_rows += _driver_row(
                 drv.name or "Sin nombre",
                 drv.cdl_years,
-                drv.mvr_years_covered
+                drv.mvr_years_covered,
+                cdl_doc_missing=cdl_missing,
             )
     else:
         drivers_rows = _no_data_row("Sin informacion de conductores")
+
+    # -- Warnings banner --
+    warnings_list = []
+    if cdl_missing and cdl_has_fallback:
+        warnings_list.append(
+            "<strong>Falta CDL</strong> &mdash; requerido para la cotizacion final "
+            "con los MGAs. Los anos del conductor se tomaron del Blue Quote "
+            "(marcados con <span style=\"color:#b8860b;\">*</span> en la tabla)."
+        )
+    elif cdl_missing:
+        warnings_list.append(
+            "<strong>Falta CDL</strong> &mdash; requerido para la cotizacion final con los MGAs."
+        )
+    if current_carrier_norm:
+        hit_names = ", ".join(ev.mga_name for ev in current_carrier_hits) if current_carrier_hits else "ninguna coincidencia"
+        warnings_list.append(
+            f"<strong>Carrier actual:</strong> {profile.applicant.current_carrier} &mdash; "
+            f"excluido(s) del analisis para no ofrecer la misma compa&ntilde;&iacute;a: {hit_names}."
+        )
+    warnings_banner = _warnings_banner(warnings_list)
 
     # -- Loss Run --
     if profile.loss_run.present:
@@ -209,13 +391,21 @@ def build_analysis_email(
     if not ineligible:
         ineligible_rows = _no_data_row("Todas las MGAs califican", bg="#fdf5f4", border="#f0c6c3")
 
-    # -- Fixes (what's needed) --
+    # -- Fixes (what's needed to unblock) --
+    # ONLY include MGAs that are blocked purely by missing documents — those are
+    # the ones that can actually be unlocked by providing the file. MGAs that
+    # also fail by years/commodity/etc stay in the "No Elegibles" list because
+    # no amount of documents will unlock them.
     fix_map = {}
-    for ev in ineligible:
+    for ev in missing_docs_only:
         for fr in ev.failed_rules:
-            if fr.reason not in fix_map:
-                fix_map[fr.reason] = []
-            fix_map[fr.reason].append(ev.mga_name)
+            reason = (fr.reason or "").strip()
+            if not reason.lower().startswith("falta"):
+                continue
+            if reason not in fix_map:
+                fix_map[reason] = []
+            if ev.mga_name not in fix_map[reason]:
+                fix_map[reason].append(ev.mga_name)
 
     fixes_rows = ""
     if fix_map:
@@ -230,6 +420,7 @@ def build_analysis_email(
 
     # -- Render template --
     body = template.format(
+        warnings_banner=warnings_banner,
         business_name=profile.applicant.business_name or "N/A",
         owner_name=profile.applicant.owner_name or "N/A",
         usdot=profile.applicant.usdot or "N/A",
