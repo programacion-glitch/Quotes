@@ -97,6 +97,10 @@ class QuoteFlow:
                 return result
 
             wizard_page = await home_page.start_new_quote(fields.usdot, self.context)
+            # The wizard runs in a NEW tab. Track it so error screenshots capture
+            # the page the failure actually happened on (not the original home
+            # tab, which is what self.page still points at).
+            self._active_page = wizard_page
 
             # Step 3: START (BusinessOwnerInfo)
             result.step_reached = "business_info"
@@ -251,7 +255,10 @@ class QuoteFlow:
 
     async def _take_error_screenshot(self, step: str) -> Optional[str]:
         try:
-            base = BasePage(self.page)
+            # Prefer the wizard tab (where Steps 3+ happen); fall back to the
+            # home tab for earlier failures (login / dashboard).
+            page = getattr(self, "_active_page", None) or self.page
+            base = BasePage(page)
             return await base.screenshot(f"error_{step}")
         except Exception:
             return None

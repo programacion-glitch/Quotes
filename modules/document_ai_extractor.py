@@ -21,12 +21,72 @@ from modules.pdf_extractor import BlueQuotePDFExtractor
 from modules.attachment_validator import AttachmentValidator
 from modules.quote_profile import (
     QuoteProfile, ApplicantProfile, DriverProfile, LossRunProfile,
-    IftasProfile, AppProfile, UnitsProfile, ExtractionConfidence, ConfidenceFlag
+    IftasProfile, AppProfile, UnitsProfile, VehicleProfile, CoveragesProfile,
+    ExtractionConfidence, ConfidenceFlag,
 )
 
 
 # Document type constants
 DOC_TYPES = ["BLUE QUOTE", "MVR", "CDL", "IFTAS", "LOSS RUN", "NEW VENTURE APP"]
+
+
+# USPS street suffix abbreviations (most common). The street boundary in a
+# single-line address sits at the last token in this set; everything after
+# is the city.
+_STREET_SUFFIXES = {
+    "ST", "STREET", "AVE", "AV", "AVENUE", "BLVD", "BOULEVARD",
+    "RD", "ROAD", "DR", "DRIVE", "LN", "LANE", "CT", "COURT",
+    "CIR", "CIRCLE", "WAY", "PL", "PLACE", "TER", "TERRACE",
+    "TRL", "TRAIL", "HWY", "HIGHWAY", "PKWY", "PARKWAY",
+    "CV", "COVE", "CTR", "CENTER", "CRES", "CRESCENT",
+    "LOOP", "ALY", "ALLEY", "ROW", "RUN", "XING", "CROSSING",
+    "SQ", "SQUARE", "PT", "POINT", "FWY", "FREEWAY", "RT", "ROUTE",
+}
+
+
+def _parse_us_address(addr: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """Split a US address string into (street, city, state, zip).
+
+    Handles the common Blue Quote formats:
+        "585 NOLAN ST BEAUMONT, TX 77705"
+        "319 CARLITO CV UNIVERSAL CTY, TX   78148"
+        "8464 BRAHMA DR JUSTIN, TX 76247"
+
+    Split anchors:
+      * trailing 5 (or 5+4) digit ZIP
+      * 2-letter state code immediately before the ZIP
+      * the comma between city and state
+      * within the pre-comma segment: the LAST street-suffix token (ST, DR,
+        CV, ...) ends the street; remaining tokens are the city.
+
+    Returns (None, None, None, None) on unparseable input.
+    """
+    import re as _re
+    if not addr or not isinstance(addr, str):
+        return (None, None, None, None)
+    s = " ".join(addr.split())
+    m = _re.search(r"^(.*?),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$", s, _re.IGNORECASE)
+    if not m:
+        return (None, None, None, None)
+    left, state, zipc = m.group(1).strip(), m.group(2).upper(), m.group(3)
+    tokens = left.split()
+    if len(tokens) < 2:
+        return (None, left or None, state, zipc)
+
+    # Find LAST street suffix; everything up to and including it = street.
+    suffix_idx = -1
+    for i, tok in enumerate(tokens):
+        if tok.upper().strip(".") in _STREET_SUFFIXES:
+            suffix_idx = i
+
+    if suffix_idx >= 0 and suffix_idx < len(tokens) - 1:
+        street = " ".join(tokens[: suffix_idx + 1]).strip() or None
+        city = " ".join(tokens[suffix_idx + 1:]).strip() or None
+    else:
+        # No recognized suffix; fall back to "last 1 token is city" heuristic.
+        street = " ".join(tokens[:-1]).strip() or None
+        city = tokens[-1] or None
+    return (street, city, state, zipc)
 
 # System prompts per document type — each requests specific fields as JSON
 EXTRACTION_PROMPTS = {
@@ -362,7 +422,7 @@ class DocumentAIExtractor:
 
     # ---- Blue Quote: Existing Extractor → Profile Mapping ----
 
-    def _map_blue_quote_to_profile(self, extracted: dict) -> Tuple[ApplicantProfile, str, List[str], UnitsProfile, List[DriverProfile]]:
+    def _map_blue_quote_to_profile(self, extracted: dict) -> Tuple[ApplicantProfile, str, List[str], UnitsProfile, List[DriverProfile], CoveragesProfile]:
         """Map BlueQuotePDFExtractor output to profile components."""
         app_info = extracted.get("applicant_info", {})
 
@@ -378,12 +438,26 @@ class DocumentAIExtractor:
 
         business_years = _first_int(app_info.get("years_in_business"))
 
-        # Current carrier: if filled, the client is ALREADY insured somewhere, so
-        # they are NOT a new venture regardless of business_years extraction.
+        # Current carrier: if filled with a REAL carrier name, the client is
+        # already insured. But the Blue Quote uses sentinel strings like
+        # "NEW VENTURE" / "N/A" / "NONE" / "TBD" to mean "no prior carrier" —
+        # those must NOT be treated as a real carrier (otherwise we'd answer
+        # GEICO's "currently insured?" question Yes and mis-rate the policy).
+        _NO_CARRIER_SENTINELS = {"", "N/A", "NA", "NONE", "NEW VENTURE", "TBD"}
         current_carrier = (app_info.get("current_carrier") or "").strip()
+        if current_carrier.upper() in _NO_CARRIER_SENTINELS:
+            current_carrier = ""
         years_cov = _first_int(app_info.get("years_continuous_coverage"))
 
         is_nv = (business_years is None or business_years == 0) and not current_carrier
+
+        # Parse address. Prefer mailing_address (what GEICO/Progressive use for the
+        # owner contact section); fall back to physical_address. The Blue Quote
+        # stores them as a single line like "585 NOLAN ST BEAUMONT, TX 77705".
+        addr_src = (app_info.get("mailing_address")
+                    or app_info.get("physical_address")
+                    or "")
+        street, city, state_code, zip_code = _parse_us_address(addr_src)
 
         applicant = ApplicantProfile(
             business_name=app_info.get("business_name") or "",
@@ -393,12 +467,22 @@ class DocumentAIExtractor:
             is_new_venture=is_nv,
             current_carrier=current_carrier,
             years_continuous_coverage=years_cov,
+            street_address=street,
+            city=city,
+            state=state_code or "TX",
+            zip_code=zip_code,
+            phone=(app_info.get("phone") or "").strip() or None,
+            email=(app_info.get("email") or "").strip() or None,
         )
 
         # Commodity
         commodity = app_info.get("commodities") or ""
 
-        # Coverages — map from checkbox booleans to list
+        # Coverages — two parallel structures:
+        #   * `coverages` (List[str]) — short codes for rule_engine compat
+        #   * `coverages_detail` (CoveragesProfile) — full per-field values
+        #     used by the MGA field_mappers (Progressive / GEICO) to fill
+        #     coverage selections in each portal.
         cov_data = extracted.get("coverages", {})
         coverages = []
         if cov_data.get("auto_liability_limits"):
@@ -410,39 +494,121 @@ class DocumentAIExtractor:
         if cov_data.get("physical_damage_deductible"):
             coverages.append("APD")
 
+        # Build CoveragesProfile from the BlueQuote coverage block.
+        # Empty / None values are left at the CoveragesProfile defaults.
+        def _str_or_none(v) -> Optional[str]:
+            if v is None:
+                return None
+            s = str(v).strip()
+            return s or None
+
+        bi_limit = _str_or_none(cov_data.get("auto_liability_limits"))
+        pd_ded = _str_or_none(cov_data.get("physical_damage_deductible"))
+        cov_kwargs = {}
+        if bi_limit:
+            cov_kwargs["bodily_injury_limit"] = bi_limit
+        # BlueQuote stores ONE deductible for Phys Damage; apply to both Comp+Coll.
+        # If the BQ value is null, leave the CoveragesProfile defaults (which
+        # opt-in to $1,000 deductible). Distinguish explicit-null (decline) from
+        # missing by checking the raw cov_data key.
+        if "physical_damage_deductible" in cov_data:
+            if pd_ded:
+                cov_kwargs["comp_deductible"] = f"${pd_ded}" if not pd_ded.startswith("$") else pd_ded
+                cov_kwargs["coll_deductible"] = cov_kwargs["comp_deductible"]
+            else:
+                cov_kwargs["comp_deductible"] = None
+                cov_kwargs["coll_deductible"] = None
+        cargo_limit = _str_or_none(cov_data.get("cargo_limit"))
+        if cargo_limit:
+            cov_kwargs["motor_truck_cargo_limit"] = cargo_limit
+        coverages_detail = CoveragesProfile(**cov_kwargs)
+
         # Units
         vehicles = extracted.get("vehicles", {})
         trucks = vehicles.get("tractors_trucks_pickup", [])
         trailers = vehicles.get("trailers", [])
         trailer_types = []
         for t in trailers:
-            t_type = t.get("type", "").upper().strip()
+            # `type` may be present with an explicit null, so `.get(key, "")`
+            # can still return None — coalesce before calling string methods.
+            t_type = (t.get("type") or "").upper().strip()
             if t_type and t_type != "UNKNOWN":
                 trailer_types.append(t_type)
 
+        # Radius of operation lives at the coverage level in the BlueQuote
+        # (one value for the whole policy, e.g. "101-200" or "150 MILES"),
+        # not per-vehicle. Propagate it to every VehicleProfile so the MGA
+        # mappers can bucket the one-way distance correctly.
+        radius_src = (cov_data.get("radius_of_operation")
+                      or app_info.get("destinations")
+                      or None)
+        radius_str = str(radius_src).strip() if radius_src else None
+
+        # Build per-vehicle records (VehicleProfile list). These carry VIN,
+        # year, make, etc. that the MGA flows (GEICO VIN decode, Progressive
+        # AddVehicle) need. Trucks + trailers are treated uniformly here;
+        # downstream mappers split them by trailer_type as needed.
+        veh_records: List[VehicleProfile] = []
+        for src in (trucks, trailers):
+            for t in src:
+                year_int = _first_int(t.get("year"))
+                veh_records.append(VehicleProfile(
+                    vin=(t.get("vin") or "").strip() or None,
+                    year=year_int,
+                    make=(t.get("make") or "").strip() or None,
+                    model=(t.get("model") or "").strip() or None,
+                    trailer_type=(t.get("type") or "").strip().upper() or None,
+                    gvw=(t.get("gvw") or "").strip() or None,
+                    radius_miles=radius_str,
+                ))
+
         units = UnitsProfile(
             count=len(trucks) + len(trailers),
-            trailer_types=list(set(trailer_types))
+            trailer_types=list(set(trailer_types)),
+            vehicles=veh_records,
         )
 
         # Drivers
         drivers = []
+        # 2-letter US state code → full state name (GEICO License State combobox
+        # uses full names; some BlueQuotes store codes). Minimal map covering
+        # the states we operate in.
+        _US_STATE_NAMES = {
+            "TX": "Texas", "OK": "Oklahoma", "LA": "Louisiana", "AR": "Arkansas",
+            "NM": "New Mexico", "CO": "Colorado", "KS": "Kansas", "MS": "Mississippi",
+        }
         for d in extracted.get("driver_information", []):
             exp_raw = d.get("exp_years")
             exp_years = None
             if exp_raw:
                 try:
-                    exp_years = int(str(exp_raw).strip())
+                    exp_years = int(str(exp_raw).strip().lstrip("+"))
                 except (ValueError, TypeError):
                     pass
+            # BlueQuote stores excluded as "YES"/"NO"/"0"/"1". Treat YES/1/TRUE
+            # (case-insensitive) as excluded; everything else (including the
+            # bare "0") as not excluded.
+            excluded_raw = str(d.get("excluded", "")).strip().upper()
+            is_excluded = excluded_raw in {"YES", "Y", "1", "TRUE"}
+            # CDL class A/B is the commercial driver standard; treat presence
+            # of a class letter as "has CDL".
+            cdl_class_raw = (d.get("class") or "").strip().upper()
+            # Driver License State: accept 2-letter code or full name; the form
+            # mappers normalize as needed.
+            dl_state_raw = (d.get("state") or "").strip().upper()
+            dl_state_full = _US_STATE_NAMES.get(dl_state_raw, dl_state_raw or None)
             drivers.append(DriverProfile(
-                name=d.get("name") or "",
-                cdl_present=False,  # Will be updated when CDL doc is processed
+                name=(d.get("name") or "").strip(),
+                cdl_present=bool(cdl_class_raw),
                 cdl_years=exp_years,
-                cdl_class=d.get("class"),
+                cdl_class=cdl_class_raw or None,
+                license_number=(d.get("dl_number") or "").strip() or None,
+                license_state=dl_state_full,
+                date_of_birth=(d.get("dob") or "").strip() or None,
+                exclude_from_policy=is_excluded,
             ))
 
-        return applicant, commodity, coverages, units, drivers
+        return applicant, commodity, coverages, units, drivers, coverages_detail
 
     # ---- Blue Quote helpers ----
 
@@ -595,12 +761,13 @@ class DocumentAIExtractor:
                 finally:
                     Path(tmp_path).unlink(missing_ok=True)
 
-                applicant, commodity, coverages, units, drivers = self._map_blue_quote_to_profile(bq_data)
+                applicant, commodity, coverages, units, drivers, coverages_detail = self._map_blue_quote_to_profile(bq_data)
 
                 if self._is_blue_quote_sufficient(applicant, commodity, units, drivers, coverages):
                     profile.applicant = applicant
                     profile.commodity = commodity
                     profile.coverages = coverages
+                    profile.coverages_detail = coverages_detail
                     profile.units = units
                     profile.drivers = drivers
                     print(f"    Blue Quote extracted: {applicant.business_name}, commodity={commodity}")

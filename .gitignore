@@ -1,6 +1,9 @@
 # .gitignore for H2O Quote RPA
 
 # Environment variables (NEVER commit!)
+.env
+.env.*
+!.env.example
 .history
 
 # Python
@@ -72,3 +75,5 @@ htmlcov/
 
 # Service Account Credentials
 config/*.json
+data/credentials.json
+data/token.json

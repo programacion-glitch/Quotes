@@ -85,7 +85,14 @@ class LoginPage(BasePage):
             return False
 
     async def _enter_otp(self, otp: str) -> None:
-        """Enter the 6-digit OTP and submit."""
+        """Enter the 6-digit OTP and submit.
+
+        Progressive renders one OTP input PER MFA delivery method (authapp /
+        email / sms), all sharing name="MfaOtpEntry". Only the input for the
+        chosen method is visible; the others are hidden. We must fill the
+        VISIBLE one — `.first` grabs the hidden authapp input and the fill
+        times out ("element is not visible").
+        """
         selectors = [
             'input[name*="passcode" i]',
             'input[name*="otp" i]',
@@ -94,11 +101,27 @@ class LoginPage(BasePage):
             'input[type="tel"]',
             'input[type="number"]',
         ]
+        filled = False
         for sel in selectors:
             loc = self.page.locator(sel)
-            if await loc.count() > 0:
-                await loc.first.fill(otp)
+            n = await loc.count()
+            for i in range(n):
+                el = loc.nth(i)
+                try:
+                    if await el.is_visible():
+                        await el.fill(otp, timeout=10_000)
+                        filled = True
+                        break
+                except Exception:
+                    continue
+            if filled:
                 break
+        if not filled:
+            await self.screenshot("otp_no_visible_input")
+            raise RuntimeError(
+                "Could not find a visible OTP input to fill "
+                "(all MfaOtpEntry inputs were hidden)"
+            )
 
         # Submit OTP
         await self.remove_overlays()

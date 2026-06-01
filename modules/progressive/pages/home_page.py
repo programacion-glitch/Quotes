@@ -47,18 +47,36 @@ class HomePage(BasePage):
         """Select state from the 'New Quote' dropdown. Always TX."""
         state_name = STATE_NAMES.get(state_code, state_code)
         print(f"    [Progressive] Selecting state: {state_name}")
-        # The state dropdown has a stable id #QuoteStateList
+        # After login Progressive runs a federated-login redirect chain
+        # (foragentsonly.com/federatedlogin/signin -> /home). The New Quote
+        # panel only exists once that settles, so wait for the home page to
+        # finish loading before looking for the dropdown (a short attached-wait
+        # raced the redirect and timed out intermittently).
+        try:
+            await self.page.wait_for_load_state("networkidle", timeout=30_000)
+        except Exception:
+            pass
+        # The state dropdown has a stable id #QuoteStateList.
         dropdown = self.page.locator("#QuoteStateList")
-        await dropdown.wait_for(state="attached", timeout=10_000)
-        await dropdown.select_option(label=state_name, timeout=5_000)
+        await dropdown.wait_for(state="visible", timeout=30_000)
+        await dropdown.select_option(label=state_name, timeout=10_000)
         # Dropdown has onchange=BuildProductSelector that renders the Select Product button
         await self.page.wait_for_timeout(500)
 
     async def _select_product_commercial_auto(self) -> None:
         """Click 'Select Product(s)' and choose 'Commercial Auto'."""
         print("    [Progressive] Selecting product: Commercial Auto")
-        # Click Select Product(s) - id is stable
-        await self.page.locator("#selectProductButton").click(timeout=10_000)
+        # Click Select Product(s) - id is stable. The button is rendered by the
+        # state dropdown's onchange (BuildProductSelector), so it can resolve in
+        # the DOM before it is actually visible — wait for visibility and scroll
+        # it into view to avoid a flaky "element is not visible" click timeout.
+        select_btn = self.page.locator("#selectProductButton")
+        await select_btn.wait_for(state="visible", timeout=15_000)
+        try:
+            await select_btn.scroll_into_view_if_needed(timeout=3_000)
+        except Exception:
+            pass
+        await select_btn.click(timeout=10_000)
         await self.page.wait_for_timeout(500)
 
         # Wait for the product flyout popup to appear

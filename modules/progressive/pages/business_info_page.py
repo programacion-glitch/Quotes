@@ -96,6 +96,8 @@ class BusinessInfoPage(BasePage):
             city=fields.owner_city,
             dob=fields.owner_dob,
         )
+        # Conditional required question for trucking/dirt-sand-gravel classes.
+        await self._answer_oil_gas_fields(False)
         await self._click_start_quote()
 
     async def _set_effective_date(self, date_str: str) -> None:
@@ -247,105 +249,94 @@ class BusinessInfoPage(BasePage):
                 await dba_box.first.fill(dba)
 
     async def _select_business_type(self, commodity: Optional[str]) -> None:
-        """
-        Select business type via quick button or combobox.
-        If Trucker/Contractor is chosen, a sub-type dropdown appears.
+        """Select the business type via the 'Business type list' combobox.
+
+        This combobox IS the required "keyword describing your business" field.
+        The quick-button shortcuts ("Trucker", etc.) do NOT populate it, so the
+        START page rejects submission ("This field is required") — we must drive
+        the combobox itself. Its accessible name ("Business type list") and the
+        option labels are stable; only the per-session ExtJS ids change.
         """
         if not commodity:
             print("    [Progressive] WARN: no commodity provided, skipping")
             return
-        print(f"    [Progressive] Selecting business type for: {commodity}")
+        search_term, preferred = self._map_commodity_to_option(commodity)
+        print(
+            f"    [Progressive] Business type: '{commodity}' -> "
+            f"option~'{preferred or search_term}'"
+        )
 
-        # Map incoming commodity to the best quick-button + sub-type
-        quick, subtype = self._map_commodity(commodity)
+        combo = self.page.get_by_role("combobox", name="Business type list")
+        await combo.wait_for(state="visible", timeout=15_000)
+        await combo.click()
+        await self.page.wait_for_timeout(400)
 
-        # Click quick button if available
-        if quick:
-            print(f"    [Progressive] Quick button: {quick}")
-            btn = self.page.get_by_role("button", name=quick, exact=True)
-            if await btn.count() > 0:
-                await btn.first.click(timeout=5_000)
-                await self.page.wait_for_timeout(1_500)
-        else:
-            # Fall back to combobox search
-            combo = self.page.get_by_role("combobox", name="Business type list")
-            await combo.click()
-            search_term = commodity.split(",")[0].strip().split()[0]
-            await combo.type(search_term, delay=80)
+        # Prefer the exact mapped option from the full (non-virtualized) list.
+        opt = None
+        if preferred:
+            cand = self.page.get_by_role("option", name=preferred, exact=False)
+            if await cand.count() > 0:
+                opt = cand.first
+        # Otherwise type to filter, then take the first remaining option.
+        if opt is None:
+            try:
+                await combo.fill(search_term)
+            except Exception:
+                await self.page.keyboard.type(search_term, delay=60)
             await self.page.wait_for_timeout(1_200)
-            option = self.page.get_by_role("option").first
-            if await option.count() > 0:
-                await option.click(timeout=5_000)
+            options = self.page.get_by_role("option")
+            if await options.count() > 0:
+                opt = options.first
 
-        # If sub-type needed (Trucker -> Type of Trucker)
-        if subtype:
-            print(f"    [Progressive] Sub-type: {subtype}")
-            await self.page.wait_for_timeout(500)
-            sub_combo = self.page.get_by_role("combobox", name="Type of Trucker")
-            if await sub_combo.count() > 0:
-                await sub_combo.click()
-                # Pick option by visible name
-                opt = self.page.get_by_role("option", name=subtype).first
-                if await opt.count() > 0:
-                    await opt.click(timeout=5_000)
-                    await self.page.wait_for_timeout(500)
+        if opt is not None:
+            await opt.click(timeout=5_000)
+            await self.page.wait_for_timeout(1_000)
+        else:
+            print(
+                f"    [Progressive] WARN: no business-type option matched "
+                f"'{search_term}'"
+            )
 
-    def _map_commodity(self, commodity: str) -> tuple[Optional[str], Optional[str]]:
-        """Map profile commodity to (quick_button, trucker_subtype)."""
+    def _map_commodity_to_option(
+        self, commodity: str
+    ) -> tuple[str, Optional[str]]:
+        """Map a BlueQuote commodity to (search_term, preferred_option_text)
+        for the Business type list combobox. `preferred` is an exact-ish option
+        label when known; `search_term` filters the list as a fallback for
+        anything not explicitly mapped (keeps this dynamic for any BlueQuote)."""
         c = (commodity or "").upper()
-
-        # Dirt/sand/gravel -> dedicated quick button (no sub-type needed there)
-        if "DIRT" in c or "SAND" in c or "GRAVEL" in c:
-            # Actually routing through Trucker+DSG gives better options
-            return ("Trucker", "Dirt, Sand and Gravel")
-
-        # Flatbed/dry van/reefer/box truck -> General Freight trucker
-        trucker_keywords = [
-            "FLATBED", "DRY VAN", "REEFER", "BOX TRUCK", "STRAIGHT",
-            "CARGO VAN", "GENERAL FREIGHT", "FREIGHT",
+        table = [
+            (("DIRT", "SAND", "GRAVEL"), "Dirt Sand", "Dirt Sand & Gravel (For A Fee)"),
+            (("FRACK",), "Fracking", "Fracking Sand Hauling"),
+            (("COAL",), "Coal", "Coal Hauling"),
+            (("AUTO HAUL", "CAR HAUL"), "Auto Hauler", "Auto Hauler (For Hire Trucking)"),
+            (("LIVESTOCK",), "Livestock", "Livestock Hauling (For A Fee)"),
+            (("LOG", "WOOD CHIP"), "Logging", "Logging Trucker"),
+            (("GARBAGE", "TRASH"), "Garbage", "Garbage & Trash Hauling/Removal"),
+            (("HAZARD", "HAZMAT"), "Hazardous", "Hazardous Materials Hauling"),
+            (("CONTAINER",), "Container", "Container Hauling"),
+            (("AGRICULTUR", "FARM PRODUCE"), "Agricultural", "Agricultural Hauling (For A Fee)"),
+            (("DAIRY",), "Dairy", "Dairy Products Hauling (For A Fee)"),
+            (("REFRIG", "REEFER", "FROZEN"), "Frozen Foods", "Frozen Foods Hauling"),
         ]
-        if any(k in c for k in trucker_keywords):
-            return ("Trucker", "General Freight / Other")
-
-        # Specific commodity -> Trucker with matching sub-type
-        subtype_map = {
-            "AUTO HAULER": "Auto Hauler",
-            "AGRICULTURAL": "Agricultural",
-            "AGRICULTUR": "Agricultural",
-            "COAL": "Coal",
-            "CONTAINER": "Containers",
-            "DEBRIS": "Debris Removal",
-            "FRACKING": "Fracking, Sand or Water",
-            "FRAC SAND": "Fracking, Sand or Water",
-            "GARBAGE": "Garbage & Trash",
-            "TRASH": "Garbage & Trash",
-            "HAZARDOUS": "Hazardous Materials / Placards",
-            "HAZMAT": "Hazardous Materials / Placards",
-            "HOUSEHOLD": "Household Goods Mover",
-            "LIVESTOCK": "Livestock",
-            "LOGGING": "Logging / Wood Chips",
-            "WOOD CHIP": "Logging / Wood Chips",
-            "MACHINERY": "Machinery & Heavy Equipment",
-            "HEAVY EQUIP": "Machinery & Heavy Equipment",
-            "MOBILE HOME": "Mobile Home Toter",
-            "OILFIELD": "Oilfield Materials",
-            "REFRIG": "Refrigerated Goods",
-            "BUILDING MATERIAL": "General Freight / Other",
-        }
-        for key, value in subtype_map.items():
-            if key in c:
-                return ("Trucker", value)
-
-        # Other top-level categories
-        if "TOW" in c:
-            return ("Towing", None)
-        if "LANDSCAP" in c:
-            return ("Landscaper", None)
-        if "CONTRACTOR" in c or "CONSTRUC" in c:
-            return ("Contractor", None)  # NOTE: Contractor needs its own sub-type
-
-        # Default: Trucker / General Freight
-        return ("Trucker", "General Freight / Other")
+        for keys, term, opt in table:
+            if any(k in c for k in keys):
+                return (term, opt)
+        # General freight family.
+        if any(
+            k in c
+            for k in ("FLATBED", "DRY VAN", "BOX TRUCK", "STRAIGHT",
+                      "CARGO VAN", "FREIGHT", "GENERAL")
+        ):
+            return ("General Freight", "General Freight Hauler")
+        # Last resort: filter by the first meaningful word of the commodity.
+        skip = {"THE", "FOR", "AND", "100%", "OF"}
+        word = next(
+            (w for w in c.replace(",", " ").replace("%", " ").split()
+             if len(w) > 2 and w not in skip),
+            "Hauling",
+        )
+        return (word.title(), None)
 
     async def _answer_hazmat_placard(self, has_placard: bool) -> None:
         """
@@ -395,14 +386,19 @@ class BusinessInfoPage(BasePage):
         # Try SAFER radio first if street is provided AND matches; else click "Enter a different address"
         if street:
             print(f"    [Progressive] Street address: {street}")
-            # First try the SAFER prefilled radio (looks like "STREET CITY STATE ZIP")
-            safer_addr_radio = self.page.locator(
-                'input[type="radio"]'
-            ).filter(has=self.page.get_by_text(street, exact=False))
+            # Prefer the SAFER pre-verified address radio. Its accessible name
+            # is the full "STREET CITY STATE ZIP", so we match by the street
+            # substring (role+name is stable; the previous has-text filter never
+            # matched because radio inputs have no text children, which forced
+            # the manual-entry path and triggered an address-validation warning
+            # that blocked submission).
             used_radio = False
+            safer_addr_radio = self.page.get_by_role(
+                "radio", name=street, exact=False
+            )
             if await safer_addr_radio.count() > 0:
                 try:
-                    await safer_addr_radio.first.click(timeout=2_000)
+                    await safer_addr_radio.first.click(timeout=3_000)
                     used_radio = True
                     print("    [Progressive] Used SAFER-resolved home address radio")
                     await self.page.wait_for_timeout(500)
@@ -452,12 +448,86 @@ class BusinessInfoPage(BasePage):
                 await box.first.fill(dob)
                 await self.page.keyboard.press("Tab")
 
+    async def _answer_oil_gas_fields(self, hauls_oil_gas: bool) -> None:
+        """Conditional required question shown for trucking / dirt-sand-gravel
+        classes: 'Are any vehicles used to haul to or from oil & gas fields?'
+
+        Default No (most dirt/sand/gravel haulers are not oilfield). The
+        radiogroup carries the question as its accessible name (stable), even
+        though its DOM id/name are per-session ExtJS hashes. Optional: silently
+        skips when the question isn't rendered for this business type.
+        """
+        group = self.page.get_by_role(
+            "radiogroup",
+            name="Are any vehicles used to haul to or from oil & gas fields?",
+        )
+        if await group.count() == 0:
+            return
+        answer = "Yes" if hauls_oil_gas else "No"
+        print(f"    [Progressive] Oil & gas fields hauling: {answer}")
+        await group.get_by_role("radio", name=answer, exact=True).click()
+        await self.page.wait_for_timeout(300)
+
     async def _click_start_quote(self) -> None:
-        """Click 'Ok, start quote.' to proceed to VehicleSummary."""
+        """Click 'Ok, start quote.' and CONFIRM the page actually advances.
+
+        Progressive keeps us on pageName=BusinessOwnerInfo and shows inline
+        validation errors when a required field is missing/invalid, so a plain
+        networkidle wait would be a false "advanced" signal (this masked the
+        owner-DOB / oil&gas gaps). We wait for the URL to leave
+        BusinessOwnerInfo; if it doesn't, we collect the validation messages
+        and unanswered required questions so the failure is actionable for any
+        BlueQuote.
+        """
         print("    [Progressive] Clicking 'Ok, start quote.'...")
         await self.remove_overlays()
         btn = self.page.get_by_role("button", name="Ok, start quote.")
         await btn.first.click(timeout=10_000)
-        # The next page is VehicleSummary
-        await self.page.wait_for_load_state("networkidle", timeout=60_000)
-        print("    [Progressive] Quote started - moved to VehicleSummary")
+        try:
+            await self.page.wait_for_function(
+                "() => !location.href.includes('pageName=BusinessOwnerInfo')",
+                timeout=30_000,
+            )
+            await self.page.wait_for_load_state("networkidle", timeout=30_000)
+            print("    [Progressive] Quote started - moved to VehicleSummary")
+        except Exception:
+            errors = await self._collect_validation_errors()
+            await self.screenshot("start_quote_did_not_advance")
+            raise RuntimeError(
+                "START page did not advance after 'Ok, start quote.' — a "
+                f"required field is missing or invalid. Page reported: {errors}"
+            )
+
+    async def _collect_validation_errors(self) -> str:
+        """Scrape visible inline error messages + unanswered required questions
+        from the START page, to make a non-advance failure self-explanatory."""
+        try:
+            return await self.page.evaluate(
+                """() => {
+                    const msgs = [];
+                    document.querySelectorAll(
+                        '.error-message, .x-form-invalid-field, [class*="error"]'
+                    ).forEach(e => {
+                        const t = (e.textContent || '').replace(/\\s+/g,' ').trim();
+                        if (t && e.offsetParent !== null) msgs.push(t.slice(0,90));
+                    });
+                    // Required labels (label.requiredField) whose field group
+                    // has no checked/filled control.
+                    document.querySelectorAll('label.requiredField').forEach(l => {
+                        const grpId = (l.id || '').replace(/^c_/, 'f_');
+                        const grp = document.getElementById(grpId);
+                        if (!grp) return;
+                        const checked = grp.querySelector('input:checked');
+                        const filled = Array.from(grp.querySelectorAll('input,select'))
+                            .some(i => i.value && i.value.trim());
+                        if (!checked && !filled) {
+                            const q = (l.textContent || '').replace(/\\s+/g,' ').trim();
+                            if (q) msgs.push('UNANSWERED: ' + q.slice(0,70));
+                        }
+                    });
+                    return Array.from(new Set(msgs)).slice(0,10).join(' || ')
+                        || '(no visible validation message)';
+                }"""
+            )
+        except Exception:
+            return "(could not collect validation errors)"

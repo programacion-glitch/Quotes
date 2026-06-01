@@ -196,6 +196,15 @@ def map_profile_to_fields(
     # Drivers
     mapped_drivers = [_map_driver(d, profile.applicant.owner_name) for d in profile.drivers]
 
+    # Owner DOB: the BlueQuote applicant block rarely carries the owner's DOB,
+    # but the owner is almost always also listed as a driver (even when excluded
+    # from the policy). Progressive REQUIRES the DOB on the START page for an
+    # Individual / Sole Proprietor, so fall back to the matching driver's DOB.
+    owner_driver = next((d for d in mapped_drivers if d.is_policyholder), None)
+    owner_dob_val = profile.applicant.owner_dob or (
+        owner_driver.date_of_birth if owner_driver else None
+    )
+
     return MappedFields(
         usdot=profile.applicant.usdot or None,
         business_name=biz_name or None,
@@ -203,7 +212,7 @@ def map_profile_to_fields(
         entity_type=entity,
         state="TX",
         owner_name=profile.applicant.owner_name or None,
-        owner_dob=profile.applicant.owner_dob,
+        owner_dob=owner_dob_val,
         owner_street=profile.applicant.street_address,
         owner_city=profile.applicant.city,
         owner_zip=profile.applicant.zip_code,

@@ -43,12 +43,49 @@ class VehicleSummaryPage(BasePage):
     """
 
     async def add_vehicle(self) -> None:
-        """Click 'Add Vehicle' to open MostCommonVehicles page."""
+        """Open the add-vehicle (MostCommonVehicles) page.
+
+        The VehicleSummary renders different controls depending on whether
+        Progressive pre-detected vehicles for the USDOT. Try, in order:
+          1. a visible "Add Vehicle" button (various casings/labels),
+          2. an "Add another vehicle" link,
+          3. a pre-detected suggestion's "Add" button.
+        Waiting for visibility + scrolling avoids the flaky "element is not
+        visible" timeout seen on the ExtJS-rendered summary.
+        """
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         print("    [Progressive] Adding new vehicle...")
-        btn = self.page.get_by_role("button", name="Add Vehicle")
-        await btn.first.click(timeout=10_000)
-        await self.page.wait_for_load_state("networkidle", timeout=30_000)
+
+        candidates = [
+            self.page.get_by_role("button", name="Add Vehicle"),
+            self.page.get_by_role("button", name="Add a Vehicle"),
+            self.page.get_by_role("button", name="Add vehicle", exact=False),
+            self.page.get_by_role("link", name="Add Vehicle", exact=False),
+            self.page.get_by_role("button", name="Add another vehicle", exact=False),
+        ]
+        for loc in candidates:
+            n = await loc.count()
+            for i in range(n):
+                el = loc.nth(i)
+                try:
+                    if await el.is_visible():
+                        await el.scroll_into_view_if_needed(timeout=3_000)
+                        await el.click(timeout=10_000)
+                        await self.page.wait_for_load_state(
+                            "networkidle", timeout=30_000
+                        )
+                        return
+                except Exception:
+                    continue
+
+        # Fallback: a pre-detected suggestion with a plain "Add" button.
+        if await self.add_suggested_vehicle(0):
+            return
+
+        await self.screenshot("vehicle_summary_no_add_button")
+        raise RuntimeError(
+            "Could not find a visible 'Add Vehicle' control on VehicleSummary"
+        )
 
     async def add_trailer(self) -> None:
         """Click 'Add Trailer' / 'Add Another Trailer'."""

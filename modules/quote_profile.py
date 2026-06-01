@@ -67,8 +67,12 @@ class ApplicantProfile:
     owner_dob: Optional[str] = None       # mm/dd/yyyy
     street_address: Optional[str] = None  # garaging address (usually owner address)
     city: Optional[str] = None
-    state: str = "TX"                     # we only operate Texas
+    state: str = "TX"                     # default; overridden by extractor when address parses
     zip_code: Optional[str] = None        # 5-digit ZIP
+    # Added 2026-05-28 for GEICO (Step 2 form needs explicit phone/email).
+    # Source: Blue Quote applicant_info.phone / applicant_info.email.
+    phone: Optional[str] = None           # e.g. "(409) 656-7240"
+    email: Optional[str] = None           # owner/contact email
 
 
 @dataclass

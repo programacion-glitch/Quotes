@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from modules.quote_profile import QuoteProfile
-from modules.progressive.otp_reader import GmailOTPReader
+from modules.gmail_api_otp_reader import GmailAPIOTPReader
 from modules.progressive.field_mapper import map_profile_to_fields
 from modules.progressive.quote_flow import QuoteFlow, QuoteResult
 
@@ -121,8 +121,11 @@ async def _run_with_browser(config: ProgressiveConfig, fields) -> QuoteResult:
             )
             page = await context.new_page()
 
-            otp_reader = GmailOTPReader(
-                config.otp_email, config.otp_app_password
+            # OTP is read over the Gmail REST API (HTTPS/443). IMAP/993 is
+            # reset by the host's mail-scanning security stack on this machine
+            # (Docker bypasses it, but the bot runs on the host).
+            otp_reader = GmailAPIOTPReader(
+                config.otp_email, subject="Progressive"
             )
             flow = QuoteFlow(
                 page=page,
