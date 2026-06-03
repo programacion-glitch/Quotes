@@ -552,6 +552,10 @@ class DocumentAIExtractor:
         for src in (trucks, trailers):
             for t in src:
                 year_int = _first_int(t.get("year"))
+                # Value column from Blue Quote; presence implies the customer
+                # requested APD (Phys Damage). The pdf_extractor surfaces it
+                # in t["value"] (see modules/pdf_extractor.py:269,307).
+                value_raw = (t.get("value") or "").strip() or None
                 veh_records.append(VehicleProfile(
                     vin=(t.get("vin") or "").strip() or None,
                     year=year_int,
@@ -560,6 +564,7 @@ class DocumentAIExtractor:
                     trailer_type=(t.get("type") or "").strip().upper() or None,
                     gvw=(t.get("gvw") or "").strip() or None,
                     radius_miles=radius_str,
+                    value=value_raw,
                 ))
 
         units = UnitsProfile(

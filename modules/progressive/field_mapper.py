@@ -28,6 +28,10 @@ class MappedVehicle:
     radius_miles: str = "Over 500 miles"
     has_loan: str = "No"           # "No" | "Loan" | "Lease"
     garaging_zip: Optional[str] = None
+    value: Optional[str] = None    # Blue Quote "Value" column. If set, the
+                                   # customer wants APD (Comp+Coll); fill this
+                                   # value in the Vehicle Value textbox. If
+                                   # None, set Comp/Coll = No (liability-only).
 
 
 @dataclass
@@ -118,6 +122,15 @@ def _map_vehicle(v: VehicleProfile, fallback_zip: Optional[str], fallback_type: 
     loan_raw = (v.has_loan or "No").lower()
     has_loan = loan_map.get(loan_raw, "No")
 
+    # Normalize the value: keep only digits + decimal point. Blue Quote may
+    # surface "$80,000" / "80000" / "80,000.00" — all should reduce to a clean
+    # numeric string. If empty/None/zero, treat as no-APD-requested.
+    value_normalized = None
+    if v.value:
+        digits = "".join(ch for ch in v.value if ch.isdigit() or ch == ".")
+        if digits and digits not in ("0", "0.00", "0.0", "00"):
+            value_normalized = digits
+
     return MappedVehicle(
         vin=v.vin,
         year=v.year,
@@ -128,6 +141,7 @@ def _map_vehicle(v: VehicleProfile, fallback_zip: Optional[str], fallback_type: 
         radius_miles=v.radius_miles or "Over 500 miles",
         has_loan=has_loan,
         garaging_zip=v.garaging_zip or fallback_zip,
+        value=value_normalized,
     )
 
 

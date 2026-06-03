@@ -284,27 +284,41 @@ class AddVehiclePage(BasePage):
             pass
         await self.page.wait_for_timeout(600)
 
-        # Comp/Coll question appears when loan=No
+        # Comp/Coll question appears when loan=No. The customer's APD intent
+        # is signaled by the Blue Quote "Value" column:
+        #   - vehicle.value set    → customer wants APD (Comp + Coll = Yes)
+        #   - vehicle.value None   → liability-only (Comp + Coll = No, skips
+        #                            equipment+value sub-form entirely)
+        # Note: when has_loan != "No" Progressive auto-requires Comp/Coll
+        # (it's a lender mandate) so we DON'T expose this branch.
         if vehicle.has_loan == "No":
+            wants_apd = bool(vehicle.value)
+            apd_answer = "Yes" if wants_apd else "No"
             await self._set_radio(
                 "Does the customer need Comprehensive or Collision coverage",
-                "Yes",  # default Yes for accurate quote
+                apd_answer,
             )
             # Wait for ExtJS to render the equipment + value fields that
-            # are revealed by Comp/Coll=Yes.
+            # are revealed by Comp/Coll=Yes (no-op if we answered No).
             try:
                 await self.wait_for_extjs_idle(timeout_ms=5_000)
             except Exception:
                 pass
             await self.page.wait_for_timeout(800)
-            # Equipment value: Progressive's 2026-06 UI replaced the old radio
-            # ("$0 to $2,000" / etc.) with a free-text "Value" textbox plus a
-            # "Vehicle has no equipment" checkbox shortcut. Tick the checkbox.
-            await self._tick_no_equipment_checkbox()
-            # Vehicle market value (NEW required field): "If this vehicle was
-            # sold today, how much would it be worth..." — free-text input.
-            # Blue Quotes rarely carry vehicle value, so default conservatively.
-            await self._fill_vehicle_value(default="50000")
+
+            if wants_apd:
+                # Equipment value: Progressive's 2026-06 UI uses a free-text
+                # "Value" textbox plus a "Vehicle has no equipment" checkbox.
+                # We assume no permanently-attached equipment by default.
+                await self._tick_no_equipment_checkbox()
+                # Vehicle market value: use the Blue Quote Value column. If
+                # it's missing we'd never enter this branch (wants_apd=False).
+                await self._fill_vehicle_value(default=vehicle.value)
+            else:
+                print(
+                    "    [Progressive] APD = No (Blue Quote has no Value for "
+                    "this vehicle); skipping equipment + Vehicle Value section"
+                )
 
         await self._click_continue()
 

@@ -87,6 +87,10 @@ class VehicleProfile:
     radius_miles: Optional[str] = None    # e.g. "Over 500 miles"
     has_loan: str = "No"                  # "No" | "Loan" | "Lease"
     garaging_zip: Optional[str] = None    # defaults to applicant.zip_code if None
+    value: Optional[str] = None           # Vehicle/Trailer market value from Blue Quote
+                                          # "Value" column. Presence implies the customer
+                                          # wants APD (Comprehensive + Collision); absence
+                                          # means liability-only.
 
 
 @dataclass
