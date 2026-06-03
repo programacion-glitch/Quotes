@@ -251,12 +251,39 @@ class QuoteFlow:
         if not policyholder and fields.drivers:
             policyholder = fields.drivers[0]
 
+        # Progressive rule: 'There must be at least one driver that is not
+        # excluded.' If the Blue Quote marks the policyholder as excluded AND
+        # there are other non-excluded drivers to add, the order matters:
+        # saving the policyholder as excluded FIRST blocks Add Another Driver
+        # via this validation. So we DEFER policyholder exclusion: save them
+        # as NOT excluded initially, add the non-excluded driver(s), then
+        # Edit the policyholder row to set Exclude=Yes.
+        non_excluded_additional = [
+            d for d in fields.drivers
+            if not d.is_policyholder and not d.exclude_from_policy
+        ]
+        defer_policyholder_exclusion = bool(
+            policyholder
+            and policyholder.exclude_from_policy
+            and non_excluded_additional
+        )
+
         add_driver = AddDriverPage(wizard_page)
         if policyholder:
+            initial_exclude = (
+                False if defer_policyholder_exclusion
+                else policyholder.exclude_from_policy
+            )
+            if defer_policyholder_exclusion:
+                print(
+                    f"    [Progressive] Deferring policyholder exclusion "
+                    f"(Blue Quote marked '{policyholder.name}' EXCLUDED but "
+                    f"non-excluded additional driver(s) must be added first)"
+                )
             await add_driver.fill_and_submit(
                 license_state=policyholder.license_state,
                 license_number=policyholder.license_number or "",
-                exclude_from_policy=policyholder.exclude_from_policy,
+                exclude_from_policy=initial_exclude,
                 has_driving_history=policyholder.has_driving_history,
             )
         else:
@@ -280,6 +307,22 @@ class QuoteFlow:
                 license_number=driver.license_number or "",
                 exclude_from_policy=driver.exclude_from_policy,
                 has_driving_history=driver.has_driving_history,
+            )
+
+        # If we deferred policyholder exclusion, apply it now via Edit on the
+        # policyholder row (index 0 — Progressive renders policyholder first).
+        if defer_policyholder_exclusion and policyholder:
+            print(
+                f"    [Progressive] Applying deferred exclusion for "
+                f"policyholder '{policyholder.name}'"
+            )
+            await summary.edit_driver(0)
+            edit_form = AddDriverPage(wizard_page)
+            await edit_form.fill_and_submit(
+                license_state=policyholder.license_state,
+                license_number=policyholder.license_number or "",
+                exclude_from_policy=True,
+                has_driving_history=policyholder.has_driving_history,
             )
 
         # Click Continue from DriverSummary
