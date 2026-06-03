@@ -424,20 +424,29 @@ class CoveragesRatesPage(BasePage):
             pass
         await self.page.wait_for_timeout(800)  # extra cushion for animations
 
-        # NEW: Subform question for distributor commodities
-        # "Does the customer require cargo coverage for mobile/modular homes and buildings?"
-        # Default: No (customer's commodity is typically NOT mobile homes)
-        cargo_homes_group = await self.find_radiogroup(
-            "Does the customer require cargo coverage for mobile/modular homes",
-            timeout_ms=2_000,
-        )
-        if await self.field_exists(cargo_homes_group, wait_ms=1_500):
-            print(f"    [Progressive] MTC subform: cargo coverage for mobile/modular homes = No")
+        # Iteratively answer "Does the customer require cargo coverage for X?"
+        # Yes/No subform questions. Default No for all (RYD-style distributors
+        # don't need mobile homes / business documents / etc. extras). After
+        # each answer, Progressive may reveal the next question; loop up to 5x.
+        known_subform_questions = [
+            ("mobile/modular homes", "mobile/modular homes and buildings"),
+            ("business documents", "business documents or non-negotiable securities"),
+            ("refrigeration", "refrigeration"),
+            ("targeted commodities", "targeted commodities"),
+            ("explosives", "explosives"),
+        ]
+        for label_hint, full_label_token in known_subform_questions:
+            group = await self.find_radiogroup(
+                f"Does the customer require cargo coverage for {full_label_token}",
+                timeout_ms=1_500,
+            )
+            if not await self.field_exists(group, wait_ms=1_000):
+                continue
+            print(f"    [Progressive] MTC subform: cargo coverage for {label_hint} = No")
             try:
-                await self.safe_radio(cargo_homes_group, "No")
+                await self.safe_radio(group, "No")
             except Exception as e:
-                print(f"    [Progressive] WARN: MTC mobile homes radio failed: {e}")
-            # Wait for limit combobox to render after answering
+                print(f"    [Progressive] WARN: MTC '{label_hint}' radio failed: {e}")
             try:
                 await self.wait_for_extjs_idle(timeout_ms=5_000)
             except Exception:
