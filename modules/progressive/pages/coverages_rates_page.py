@@ -286,22 +286,71 @@ class CoveragesRatesPage(BasePage):
         except Exception as e:
             print(f"    [Progressive] WARN: radio '{group_label}' = '{value}' failed: {e}")
 
+    # Known "section-is-expanded" markers — visible text that appears only
+    # when the section is open. Used by _expand_coverage to detect whether
+    # our click toggled it open OR closed (Progressive caches expanded state
+    # across quotes for the same USDOT; a naive click would COLLAPSE an
+    # already-open section).
+    _EXPAND_MARKERS = {
+        "Motor Truck Cargo": [
+            "Does the customer require cargo coverage",
+            "Add a commodity",
+            "Commodities the customer hauls",
+            "Motor Truck Cargo coverage limit",
+        ],
+        "Hired Auto Liability": [
+            "Hired Auto Liability coverage limit",
+            "Does the customer require Hired Auto",
+        ],
+        "Employer Non-Owned Auto Liability": [
+            "Employer Non-Owned Auto Liability coverage limit",
+            "How many people does the customer utilize",
+        ],
+        "Non-Owned Trailer Physical Damage": [
+            "Non-Owned Trailer Physical Damage coverage limit",
+        ],
+    }
+
     async def _expand_coverage(self, name: str) -> bool:
         """Expand a '+' button next to a special coverage section if collapsed.
 
-        Returns True if the button was found and clicked, False if the section
-        was not present on the page (coverage not available for this quote).
+        Smart toggle: after clicking, verifies that a known expanded-state
+        marker is visible. If not, the section was likely already open and
+        our click COLLAPSED it — so click again to re-expand.
+
+        Returns True if the section is now expanded (or the click succeeded
+        on a section without registered markers); False if the button is
+        not on the page at all.
         """
         btn = self.page.get_by_role("button", name=name, exact=True)
         if await btn.count() == 0:
             return False
-        # Already expanded if attribute 'expanded' is true; safest is just to click
         try:
             await btn.first.click(timeout=5_000)
-            # Wait for ExtJS to finish rendering the expanded subform
             await self.wait_for_extjs_idle()
         except Exception:
             pass
+        await self.page.wait_for_timeout(400)
+
+        markers = self._EXPAND_MARKERS.get(name)
+        if not markers:
+            return True
+
+        # Verify at least one expanded-state marker is visible
+        for marker in markers:
+            marker_loc = self.page.get_by_text(marker, exact=False).first
+            if await self.field_exists(marker_loc, wait_ms=600):
+                return True
+
+        # No marker visible — we may have collapsed an already-open section.
+        # Click again to re-expand.
+        print(f"    [Progressive] _expand_coverage('{name}'): no expanded marker after click; re-clicking to re-expand")
+        try:
+            await btn.first.click(timeout=5_000)
+            await self.wait_for_extjs_idle()
+        except Exception:
+            pass
+        await self.page.wait_for_timeout(400)
         return True
 
     async def _recalculate_if_needed(self) -> None:
