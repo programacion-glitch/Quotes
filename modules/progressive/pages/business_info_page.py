@@ -715,7 +715,12 @@ class BusinessInfoPage(BasePage):
 
         btn = self.page.get_by_role("button", name="Ok, start quote.")
         await btn.first.scroll_into_view_if_needed(timeout=3_000)
-        await btn.first.click(timeout=10_000, force=True)
+        # NOTE: NO force=True on first attempt — Playwright's natural click
+        # auto-scrolls and verifies actionability; force=True paradoxically
+        # bypasses the auto-scroll and fails with "outside viewport" on
+        # long forms like Beverage Distributor's START page. Retries below
+        # use force=True as fallback.
+        await btn.first.click(timeout=10_000)
 
         # Retry the click up to 2 times if the page silently refuses to
         # advance (intermittent Progressive backend issue with non-trucking
