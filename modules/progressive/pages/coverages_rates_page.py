@@ -188,6 +188,14 @@ class CoveragesRatesPage(BasePage):
 
     async def capture_price(self) -> QuotePrice:
         """Extract the displayed premium without modifying the page."""
+        # Safety net: ensure ExtJS finished re-rendering the price banner
+        try:
+            await self.wait_for_extjs_idle(timeout_ms=10_000)
+        except Exception as e:
+            print(f"    [Progressive] WARN: capture_price extjs_idle: {e}")
+        # Diagnostic screenshot before reading so we can debug capture failures
+        await self.screenshot("rates_before_capture")
+
         price = QuotePrice()
 
         # Quote number from header
@@ -268,17 +276,22 @@ class CoveragesRatesPage(BasePage):
         await group.get_by_role("radio", name=value, exact=True).click()
         await self.page.wait_for_timeout(300)
 
-    async def _expand_coverage(self, name: str) -> None:
-        """Expand a '+' button next to a special coverage section if collapsed."""
+    async def _expand_coverage(self, name: str) -> bool:
+        """Expand a '+' button next to a special coverage section if collapsed.
+
+        Returns True if the button was found and clicked, False if the section
+        was not present on the page (coverage not available for this quote).
+        """
         btn = self.page.get_by_role("button", name=name, exact=True)
         if await btn.count() == 0:
-            return
+            return False
         # Already expanded if attribute 'expanded' is true; safest is just to click
         try:
             await btn.first.click(timeout=5_000)
             await self.page.wait_for_timeout(800)
         except Exception:
             pass
+        return True
 
     async def _recalculate_if_needed(self) -> None:
         """Click Recalculate button if it's visible (after coverage changes)."""
@@ -287,7 +300,12 @@ class CoveragesRatesPage(BasePage):
             print("    [Progressive] Recalculating premium...")
             await btn.last.click(timeout=10_000)
             await self.page.wait_for_load_state("networkidle", timeout=30_000)
-            await self.page.wait_for_timeout(2_000)
+            # ExtJS recalculate is an internal Ajax that may not trigger
+            # networkidle reliably. Wait for ExtJS idle + DOM stable.
+            try:
+                await self.wait_for_extjs_idle(timeout_ms=15_000)
+            except Exception as e:
+                print(f"    [Progressive] WARN: wait_for_extjs_idle after recalc: {e}")
 
     # ---- Special coverages ----
 
@@ -378,16 +396,19 @@ class CoveragesRatesPage(BasePage):
             await done.first.click(timeout=5_000)
             await self.page.wait_for_timeout(800)
 
-    async def _configure_motor_truck_cargo(self, limit: str) -> None:
-        """Fill Motor Truck Cargo subform with the given limit.
-
-        Note: Motor Truck Cargo typically has additional questions (refrigeration,
-        commodities, deductible) that appear progressively. Live exploration of
-        these specific fields is pending — current code sets only the limit
-        and hopes Progressive applies sensible defaults for the rest.
-        """
+    async def _configure_motor_truck_cargo(self, limit: str = "$100,000") -> None:
+        """Expand Motor Truck Cargo and set limit. Skip with WARN if subform shape changed."""
         print(f"    [Progressive] Configuring Motor Truck Cargo: {limit}")
-        await self._expand_coverage("Motor Truck Cargo")
+        expanded = await self._expand_coverage("Motor Truck Cargo")
+        if not expanded:
+            print(f"    [Progressive] WARN: could not expand Motor Truck Cargo; skipping")
+            return
+        # Subform may reveal additional required questions (commodity type,
+        # refrigeration) before the limit combobox appears. Use field_exists.
+        combo = self.page.get_by_role("combobox", name="Motor Truck Cargo coverage limit")
+        if not await self.field_exists(combo, wait_ms=2_000):
+            print(f"    [Progressive] WARN: MTC limit combobox not visible — subform may have additional required questions; skipping MTC config")
+            return
         await self._set_combobox("Motor Truck Cargo coverage limit", limit)
         done = self.page.get_by_role("button", name="Done with this coverage")
         if await done.count() > 0:
