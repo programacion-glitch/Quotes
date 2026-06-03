@@ -32,6 +32,9 @@ class MappedVehicle:
                                    # customer wants APD (Comp+Coll); fill this
                                    # value in the Vehicle Value textbox. If
                                    # None, set Comp/Coll = No (liability-only).
+    # Propagated from VehicleProfile by _map_vehicle. Drives the powered-vs-
+    # trailer split in quote_flow._add_all_vehicles (replaces substring heuristic).
+    is_trailer: bool = False
 
 
 @dataclass
@@ -142,6 +145,7 @@ def _map_vehicle(v: VehicleProfile, fallback_zip: Optional[str], fallback_type: 
         has_loan=has_loan,
         garaging_zip=v.garaging_zip or fallback_zip,
         value=value_normalized,
+        is_trailer=v.is_trailer,
     )
 
 
