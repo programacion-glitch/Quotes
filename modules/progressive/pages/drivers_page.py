@@ -152,13 +152,64 @@ class AddDriverPage(BasePage):
         print("    [Progressive] Saving driver...")
         await self.safe_click_continue(expect_url_changes_from="AddDriver")
 
+    async def _locate_input_by_placeholder_or_label(
+        self, *, placeholder_keywords: list, label_text: str
+    ):
+        """Multi-strategy locator for textboxes in the AddDriver form.
+
+        Verified live 2026-06-03 (Prueba1): exact `get_by_placeholder("...")`
+        with hardcoded curly/straight apostrophe didn't match the rendered
+        placeholders, so no log was emitted and the fields stayed empty.
+        Strategies (return first match):
+          1. CSS attribute selector with case-insensitive substring match
+             on placeholder (covers curly/straight apostrophes + variants)
+          2. XPath traversal from the visible label text (works regardless
+             of placeholder attribute presence)
+        """
+        # Strategy 1: case-insensitive partial placeholder
+        for kw in placeholder_keywords:
+            loc = self.page.locator(f'input[placeholder*="{kw}" i]').first
+            if await self.field_exists(loc, wait_ms=600):
+                return loc
+        # Strategy 2: XPath from visible label
+        label_loc = self.page.get_by_text(label_text, exact=False).first
+        if await self.field_exists(label_loc, wait_ms=600):
+            traversed = label_loc.locator("xpath=following::input[@type='text'][1]").first
+            if await self.field_exists(traversed, wait_ms=600):
+                return traversed
+        return None
+
+    async def _dump_addriver_inputs(self) -> None:
+        """Emit the actual placeholders / aria-labels / labels of all visible
+        textboxes on the AddDriver form. Called when fill_name/fill_dob can't
+        find a target — reveals the real DOM shape in a single iteration.
+        """
+        try:
+            info = await self.page.evaluate(
+                """() => {
+                    const out = [];
+                    document.querySelectorAll('input[type="text"], input:not([type])').forEach(el => {
+                        if (el.offsetParent === null) return;
+                        out.push({
+                            placeholder: el.getAttribute('placeholder') || '',
+                            ariaLabel: el.getAttribute('aria-label') || '',
+                            name: el.getAttribute('name') || '',
+                            id: el.id || '',
+                            value: (el.value || '').slice(0, 30),
+                        });
+                    });
+                    return out;
+                }"""
+            )
+            print(f"    [Progressive] AddDriver textbox DIAGNOSTIC (visible inputs):")
+            for inp in info[:15]:
+                print(f"    [Progressive]   {inp}")
+        except Exception as e:
+            print(f"    [Progressive] AddDriver diagnostic failed: {e}")
+
     async def _fill_name_if_empty(self, full_name: str) -> None:
         """Fill First / Last name textboxes if empty (additional drivers).
-
-        Progressive's First Name has placeholder 'Driver's First Name';
-        Last Name has placeholder 'Last Name'. We split the full_name on
-        the first whitespace — same logic the bot uses for the business
-        owner in business_info_page._fill_owner_info.
+        Uses multi-strategy locator to tolerate Sencha placeholder variants.
         """
         parts = full_name.strip().split()
         if not parts:
@@ -167,11 +218,11 @@ class AddDriverPage(BasePage):
         last = " ".join(parts[1:]) if len(parts) > 1 else ""
 
         # First name
-        first_input = self.page.get_by_placeholder("Driver's First Name").first
-        if not await self.field_exists(first_input, wait_ms=1_500):
-            # Apostrophe variant: Driver's vs Driver's
-            first_input = self.page.get_by_placeholder("Driver’s First Name").first
-        if await self.field_exists(first_input, wait_ms=800):
+        first_input = await self._locate_input_by_placeholder_or_label(
+            placeholder_keywords=["First Name", "First"],
+            label_text="Name",
+        )
+        if first_input is not None:
             current = ""
             try:
                 current = (await first_input.input_value()).strip()
@@ -180,11 +231,17 @@ class AddDriverPage(BasePage):
             if not current:
                 print(f"    [Progressive] First Name = {first!r}")
                 await self.safe_fill(first_input, first, verify=False)
+        else:
+            print("    [Progressive] WARN: First Name input not located")
+            await self._dump_addriver_inputs()
 
         # Last name
         if last:
-            last_input = self.page.get_by_placeholder("Last Name").first
-            if await self.field_exists(last_input, wait_ms=800):
+            last_input = await self._locate_input_by_placeholder_or_label(
+                placeholder_keywords=["Last Name", "Last"],
+                label_text="Name",
+            )
+            if last_input is not None:
                 current = ""
                 try:
                     current = (await last_input.input_value()).strip()
@@ -195,13 +252,14 @@ class AddDriverPage(BasePage):
                     await self.safe_fill(last_input, last, verify=False)
 
     async def _fill_dob_if_empty(self, dob: str) -> None:
-        """Fill Date of Birth textbox if empty.
-
-        Placeholder is 'MM/DD/YYYY'. Accepts strings like '02/07/1955'.
-        Skips if the field already has a value (policyholder auto-populated).
-        """
-        dob_input = self.page.get_by_placeholder("MM/DD/YYYY").first
-        if not await self.field_exists(dob_input, wait_ms=1_500):
+        """Fill Date of Birth textbox if empty."""
+        dob_input = await self._locate_input_by_placeholder_or_label(
+            placeholder_keywords=["MM/DD/YYYY", "MM/DD", "Birth"],
+            label_text="Date of Birth",
+        )
+        if dob_input is None:
+            print("    [Progressive] WARN: Date of Birth input not located")
+            await self._dump_addriver_inputs()
             return
         current = ""
         try:
