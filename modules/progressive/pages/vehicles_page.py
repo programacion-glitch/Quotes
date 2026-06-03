@@ -56,6 +56,27 @@ class VehicleSummaryPage(BasePage):
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         print("    [Progressive] Adding new vehicle...")
 
+        # Fresh quotes for USDOTs with no existing vehicles land DIRECTLY on
+        # MostCommonVehicles (tile picker: Dump Truck / Truck Tractor / Pickup
+        # Truck / Other / Add a trailer instead) — there is NO 'Add Vehicle'
+        # button to click because the tile picker IS the add-vehicle entry.
+        # Detect that page and return early; the caller's next step
+        # (MostCommonVehiclesPage.select_vehicle_type) will take it from here.
+        # Verified live 2026-06-03 Prueba1 (NOBLE LOGISTICS LLC).
+        try:
+            on_most_common = await self.page.get_by_text(
+                "Most common vehicles for the customer's business",
+                exact=False,
+            ).count() > 0
+        except Exception:
+            on_most_common = False
+        if on_most_common:
+            print(
+                "    [Progressive] Already on MostCommonVehicles tile picker; "
+                "skipping Add Vehicle button (caller will pick a tile next)"
+            )
+            return
+
         # Scroll to bottom so the gray footer with 'Add Vehicle' / 'Add
         # Trailer' is in view (otherwise the role lookup may pick a hidden
         # variant rendered elsewhere on the page).
