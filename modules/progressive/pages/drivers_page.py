@@ -42,19 +42,21 @@ class DriverSummaryPage(BasePage):
         await self.page.wait_for_load_state("networkidle", timeout=15_000)
 
     async def add_driver(self) -> None:
-        """Click 'Add' under 'Add another driver?' to open AddDriver page."""
+        """Click 'Add' under 'Add another driver?' to open AddDriver page.
+
+        This is NOT the wizard Continue — it's a non-wizard action button
+        that opens a sub-form. Use direct click with force=True.
+        """
         print("    [Progressive] Adding new driver...")
-        # There's an "Add" button in the "Add another driver?" section
-        add_btn = self.page.get_by_role("button", name="Add", exact=True).last
-        await add_btn.click(timeout=10_000)
+        # Not a wizard Continue; use force=True for ExtJS button reliability.
+        btn = self.page.get_by_role("button", name="Add", exact=True).last
+        await btn.click(timeout=10_000, force=True)
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
 
     async def click_continue(self) -> None:
-        """Click Continue to proceed to BUSINESS step."""
+        """Click Continue to proceed to BUSINESS step (wizard Continue)."""
         print("    [Progressive] Continuing to BUSINESS step...")
-        btn = self.page.get_by_role("button", name="Continue").first
-        await btn.click(timeout=10_000)
-        await self.page.wait_for_load_state("networkidle", timeout=60_000)
+        await self.safe_click_continue(expect_url_changes_from="DriverSummary")
 
 
 class AddDriverPage(BasePage):
@@ -208,8 +210,22 @@ class NoHitPage(BasePage):
         """Return True if this is the NoHit page (used after clicking Continue from DriverSummary)."""
         return "NoHit" in self.page.url or "Order Results" in await self.page.title()
 
+    async def report_and_halt(self) -> None:
+        """Screenshot the page for the operator and raise a clear HALT error.
+
+        POLICY: Do NOT fill SSN — it is sensitive data not collected by this
+        automation. The operator must handle this manually.
+        """
+        await self.screenshot("nohit_mvr_clue_failed")
+        raise RuntimeError(
+            "Progressive NoHit: MVR/CLUE lookup failed and SSN is required. "
+            "This is a HALT condition — SSN must not be auto-filled. "
+            "Operator intervention required."
+        )
+
     async def back(self) -> None:
-        """Click Back to return to DriverSummary."""
+        """Click Back to return to DriverSummary (non-wizard navigation button)."""
+        # Not a wizard Continue; direct click with force=True for ExtJS reliability.
         btn = self.page.get_by_role("button", name="Back")
-        await btn.click(timeout=10_000)
+        await btn.click(timeout=10_000, force=True)
         await self.page.wait_for_load_state("networkidle", timeout=15_000)
