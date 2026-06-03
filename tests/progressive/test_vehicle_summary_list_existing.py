@@ -62,3 +62,40 @@ async def test_parses_row_with_vin_visible(mock_page):
     assert result[0].make == "UTILITY"
     assert "DRY VAN" in (result[0].model or "")
     assert result[0].identifier == "1UYVS253XM7301310"
+
+
+@pytest.mark.asyncio
+async def test_parses_row_without_vin_falls_back_to_ymm(mock_page):
+    """A row without 'VIN:' marker (Y/M/M only) must still parse and produce
+    a composite identifier via normalize_identifier's YMM fallback.
+
+    This exercises the regex's lookahead-alternation branch
+    (?=Edit|Remove|\\Z) — the spec's original (?:\\s|$) anchor failed to
+    capture multi-token model strings in no-VIN rows.
+    """
+    row = AsyncMock()
+    row.text_content = AsyncMock(return_value="2021 UTILITY DRY VAN  Edit  Remove")
+    row.is_visible = AsyncMock(return_value=True)
+
+    rows = AsyncMock()
+    rows.count = AsyncMock(return_value=1)
+    rows.nth = MagicMock(return_value=row)
+    header = AsyncMock()
+    header.count = AsyncMock(return_value=0)
+
+    def get_by_text(text, **kwargs):
+        if "Most common vehicles" in str(text):
+            return header
+        return rows
+
+    mock_page.get_by_text = MagicMock(side_effect=get_by_text)
+    mock_page.locator = MagicMock(return_value=rows)
+
+    summary = VehicleSummaryPage(mock_page)
+    result = await summary.list_existing_units()
+    assert len(result) == 1
+    assert result[0].vin is None
+    assert result[0].year == 2021
+    assert result[0].make == "UTILITY"
+    assert "DRY VAN" in (result[0].model or "")
+    assert result[0].identifier == "2021|UTILITY|DRY VAN"

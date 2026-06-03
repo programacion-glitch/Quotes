@@ -176,6 +176,14 @@ class VehicleSummaryPage(BasePage):
         except Exception:
             return []
 
+        # Wait for ExtJS to finish hydrating the row grid before counting.
+        # Without this, count() can return 0 on the first probe and we'd
+        # mis-detect a populated VehicleSummary as empty → duplicate adds.
+        try:
+            await self.wait_for_extjs_idle(timeout_ms=3_000)
+        except Exception:
+            pass
+
         units: List[ExistingUnit] = []
         try:
             # Each VehicleSummary row contains both 'Edit' and 'Remove' actions;
@@ -692,11 +700,17 @@ class AddVehiclePage(BasePage):
 # Module-level helpers for VehicleSummaryPage.list_existing_units
 # ---------------------------------------------------------------------------
 
-# Capture groups: year (4 digits), make + model up to "VIN:" or "Edit"/end,
+# Capture groups: year (4 digits), make + model up to "VIN:" or end of row,
 # optional VIN (17 chars after "VIN:"). Tolerant of extra whitespace.
-# make_model is lazy but the alternation anchors it: if "VIN:" follows, it
-# consumes up to the VIN token; otherwise it expands to the "Edit"/"Remove"
-# boundary or end-of-string so it captures the full Y/M/M string.
+#
+# Deliberate deviation from the spec's draft regex:
+#   spec (buggy):  r"...(?:\s+VIN:\s*(?P<vin>...))?(?:\s|$)"
+#   here:          r"...(?:\s+VIN:\s*(?P<vin>...)|\s*(?=Edit|Remove|\Z))"
+# The spec's trailing (?:\s|$) anchor combined with the lazy make_model+?
+# group stopped at the first whitespace — capturing only "UTILITY" instead
+# of "UTILITY DRY VAN" on no-VIN rows. The alternation with a lookahead for
+# the action buttons (or end-of-string) anchors the lazy group correctly.
+# Verified by test_parses_row_without_vin_falls_back_to_ymm.
 _ROW_REGEX = re.compile(
     r"(?P<year>\d{4})\s+(?P<make_model>[A-Z][A-Z0-9 /\-]+?)"
     r"(?:\s+VIN:\s*(?P<vin>[A-HJ-NPR-Z0-9]{17})|\s*(?=Edit|Remove|\Z))",
