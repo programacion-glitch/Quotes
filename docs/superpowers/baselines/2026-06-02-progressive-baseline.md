@@ -17,3 +17,9 @@
 
 - M&D CUSTOM FREIGHT LLC: <no capturado — requiere ejecución live por el usuario>
 - RYD LLC: <no capturado — requiere ejecución live por el usuario>
+
+## Simulator baseline
+
+- Acciones trazadas: 135
+- Status: OK
+- Nota: el simulador requirió correcciones al MockLocator/MockPage (is_visible, scroll_into_view_if_needed, wait_for_function, page.on, get_by_label(exact=), get_by_placeholder, NOT_FOUND_MARKERS para banners de error). El conteo previo de 83 en memoria es de una versión anterior del módulo; el conteo actual refleja las ~37 mejoras de la sesión 2026-06-02 (más fallbacks robustos por campo).

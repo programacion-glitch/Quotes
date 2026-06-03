@@ -50,6 +50,12 @@ class MockLocator:
         " OTP",  # space to avoid USDOT match
         "Add a trailer instead",
         "NoHit",
+        # Validation / error banners that should NOT appear in a successful run
+        "Please take a look",
+        "This field is required",
+        "invalid",
+        # VehicleSummary presence check — absence means we DID advance
+        "Here are the vehicles on the quote",
     )
 
     def __init__(self, page: "MockPage", path: str, *, count: int | None = None):
@@ -110,6 +116,43 @@ class MockLocator:
     async def evaluate(self, _js: str):
         return None
 
+    async def is_visible(self) -> bool:
+        """Return True for any locator not in NOT_FOUND_MARKERS."""
+        for marker in self.NOT_FOUND_MARKERS:
+            if marker.lower() in self.path.lower():
+                return False
+        return True
+
+    async def is_enabled(self) -> bool:
+        return True
+
+    async def is_checked(self) -> bool:
+        return False
+
+    async def is_hidden(self) -> bool:
+        return not await self.is_visible()
+
+    async def scroll_into_view_if_needed(self, **_):
+        pass
+
+    async def focus(self, **_):
+        pass
+
+    async def blur(self, **_):
+        pass
+
+    async def hover(self, **_):
+        pass
+
+    async def dblclick(self, **_):
+        _t(f"DBLCLICK {self.path}")
+
+    async def tap(self, **_):
+        _t(f"TAP {self.path}")
+
+    async def dispatch_event(self, event_type: str, **_):
+        _t(f"EVENT {event_type} on {self.path}")
+
     async def count(self) -> int:
         if self._explicit_count is not None:
             return self._explicit_count
@@ -155,6 +198,18 @@ class MockPage:
     async def evaluate(self, _js: str):
         return None
 
+    async def wait_for_function(self, expression: str, **_):
+        """Mock: assume the condition is immediately true (page advanced)."""
+        pass
+
+    def on(self, event: str, handler):
+        """Mock: no-op event subscription."""
+        pass
+
+    def remove_listener(self, event: str, handler):
+        """Mock: no-op."""
+        pass
+
     async def inner_text(self, _selector: str):
         # Provide a fake body with price info so capture works
         return (
@@ -177,8 +232,11 @@ class MockPage:
     def get_by_text(self, text: str, exact=None):
         return MockLocator(self, f"text={text!r}")
 
-    def get_by_label(self, text: str):
+    def get_by_label(self, text: str, exact=None):
         return MockLocator(self, f"label={text!r}")
+
+    def get_by_placeholder(self, text: str, exact=None):
+        return MockLocator(self, f"placeholder={text!r}")
 
 
 class MockContext:
