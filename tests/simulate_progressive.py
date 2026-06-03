@@ -127,7 +127,9 @@ class MockLocator:
         return True
 
     async def is_checked(self) -> bool:
-        return False
+        # In the simulator, any radio/checkbox is considered "checked" after
+        # interaction so safe_radio / safe_checkbox verify steps succeed.
+        return "role=radio" in self.path or "role=checkbox" in self.path
 
     async def is_hidden(self) -> bool:
         return not await self.is_visible()

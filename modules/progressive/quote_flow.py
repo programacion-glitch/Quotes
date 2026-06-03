@@ -125,6 +125,7 @@ class QuoteFlow:
                 other_coverages="None",
                 eld_required=False,
             )
+            result.warnings.extend(more_biz.warnings)
 
             # Step 7: RATES (CoveragesRates) - the page with the premium
             result.step_reached = "rates"
