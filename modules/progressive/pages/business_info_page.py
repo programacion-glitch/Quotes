@@ -201,14 +201,39 @@ class BusinessInfoPage(BasePage):
 
     async def _confirm_usdot_belongs_to_customer(self, confirm: bool) -> None:
         """
-        After Verify, Progressive asks: 'Does this USDOT Number belong to
-        the customer's business?' — answer Yes to continue.
+        After Verify, Progressive USUALLY asks: 'Does this USDOT Number
+        belong to the customer's business?' — answer Yes to continue.
+
+        CONDITIONAL: Progressive sometimes auto-confirms (when the USDOT is
+        already trusted from prior quotes by the same agent / recently
+        verified) and skips this question entirely. Use field_exists to
+        soft-skip with a log instead of raising RadioStuckError.
+
+        Also waits a bit longer for the SAFER lookup + render — the 3s wait
+        in _click_verify_usdot is not always enough on slow connections.
         """
+        # Give SAFER + ExtJS more time to render the follow-up radio
+        try:
+            await self.wait_for_extjs_idle(timeout_ms=5_000)
+        except Exception:
+            pass
+
         answer = "Yes" if confirm else "No"
-        print(f"    [Progressive] USDOT belongs to customer: {answer}")
         group = await self.find_radiogroup(
-            "Does this USDOT Number belong to the customer's business?"
+            "Does this USDOT Number belong to the customer's business?",
+            timeout_ms=3_000,
         )
+        if not await self.field_exists(group, wait_ms=1_500):
+            print(
+                "    [Progressive] USDOT 'belongs to customer' radio not shown "
+                "(likely auto-confirmed by Progressive); skipped"
+            )
+            self._log_skipped(
+                "usdot_belongs_to_customer",
+                "field_not_rendered_likely_auto_confirmed",
+            )
+            return
+        print(f"    [Progressive] USDOT belongs to customer: {answer}")
         await self.safe_radio(group, answer)
 
     async def _select_entity_type(self, entity_type: str) -> None:
