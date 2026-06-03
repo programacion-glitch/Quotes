@@ -538,16 +538,21 @@ class CoveragesRatesPage(BasePage):
             await self.wait_for_extjs_idle()
 
     async def _add_mtc_commodities(self) -> None:
-        """Open the 'Add a commodity' dialog and pick a commodity that matches
-        the customer's profile. Beverage Distributor commodities require at
-        least one commodity to be added before Progressive accepts MTC config.
+        """Open the inline 'Add a commodity' form and pick a commodity for MTC.
 
-        Heuristic: try commodity name matches in order of RYD-style profile
-        (water/beverage > food/pet > charcoal). The dialog structure is
-        unknown the first time this runs; we instrument it with screenshot +
-        DOM dump so subsequent runs can refine the matching.
+        For Beverage Distributor commodities, Progressive shows TWO cascading
+        comboboxes (NOT a popup dialog):
+          1. 'Commodity Type:' with placeholder 'Select category'
+          2. 'Commodity:' with placeholder 'Select commodity' (filtered)
+
+        The row auto-commits when both combos have values (no Save button).
+        A small × button closes the row.
+
+        Strategy: enumerate Category options, pick the first one that exists
+        from our preference order; then enumerate Commodity options for that
+        category and pick the first that matches RYD-style keywords.
         """
-        print(f"    [Progressive] MTC: opening 'Add a commodity' dialog...")
+        print(f"    [Progressive] MTC: opening 'Add a commodity' inline form...")
         add_link = self.page.get_by_text("Add a commodity", exact=False).first
         try:
             await add_link.scroll_into_view_if_needed(timeout=2_000)
@@ -559,183 +564,194 @@ class CoveragesRatesPage(BasePage):
                 print(f"    [Progressive] WARN: 'Add a commodity' link click failed: {e}")
                 return
 
-        # Wait for dialog to render
-        try:
-            await self.wait_for_extjs_idle(timeout_ms=5_000)
-        except Exception:
-            pass
-        await self.page.wait_for_timeout(1_000)
-
-        # Diagnostic: screenshot + DOM dump of the dialog
-        await self.screenshot("mtc_commodity_dialog")
-        try:
-            dialog_info = await self.page.evaluate(
-                """() => {
-                    const out = {
-                        dialogTitle: '',
-                        labels: [],
-                        comboboxes: [],
-                        listbox_items: [],
-                        tree_items: [],
-                        buttons: [],
-                        inputs: [],
-                    };
-                    // Sencha dialog title is usually .x-window-header-title or [role="dialog"]
-                    const dialog = document.querySelector('[role="dialog"]:not([aria-hidden="true"]), .x-window:not(.x-hidden-clip), .x-message-box');
-                    const root = dialog || document.body;
-                    out.dialogTitle = (dialog?.querySelector('.x-window-header-title, [class*="title"]')?.innerText || '').trim();
-                    root.querySelectorAll('label, .x-form-item-label').forEach(el => {
-                        const t = (el.innerText || '').trim();
-                        if (t && el.offsetParent !== null) out.labels.push(t);
-                    });
-                    root.querySelectorAll('[role="combobox"]').forEach(el => {
-                        if (el.offsetParent !== null) {
-                            const name = el.getAttribute('aria-label') ||
-                                         el.previousElementSibling?.innerText || '';
-                            out.comboboxes.push(name.trim() || '(no name)');
-                        }
-                    });
-                    root.querySelectorAll('[role="listbox"] [role="option"], li.x-boundlist-item').forEach(el => {
-                        if (el.offsetParent !== null) {
-                            const t = (el.innerText || '').trim();
-                            if (t) out.listbox_items.push(t);
-                        }
-                    });
-                    root.querySelectorAll('[role="treeitem"], .x-tree-node-text').forEach(el => {
-                        if (el.offsetParent !== null) {
-                            const t = (el.innerText || '').trim();
-                            if (t) out.tree_items.push(t);
-                        }
-                    });
-                    root.querySelectorAll('button, a.x-btn, .x-btn-inner').forEach(el => {
-                        const t = (el.innerText || '').trim();
-                        if (t && el.offsetParent !== null) out.buttons.push(t);
-                    });
-                    root.querySelectorAll('input[type="text"], textarea').forEach(el => {
-                        if (el.offsetParent !== null) {
-                            out.inputs.push({
-                                placeholder: el.getAttribute('placeholder') || '',
-                                name: el.getAttribute('name') || '',
-                                id: el.id || '',
-                            });
-                        }
-                    });
-                    const dedupe = arr => [...new Set(arr.map(x => typeof x === 'string' ? x : JSON.stringify(x)))].slice(0, 40);
-                    return {
-                        dialogTitle: out.dialogTitle,
-                        labels: dedupe(out.labels),
-                        comboboxes: dedupe(out.comboboxes),
-                        listbox_items: dedupe(out.listbox_items),
-                        tree_items: dedupe(out.tree_items),
-                        buttons: dedupe(out.buttons),
-                        inputs: dedupe(out.inputs),
-                    };
-                }"""
-            )
-            print(f"    [Progressive] MTC COMMODITY DIALOG DIAGNOSTIC:")
-            print(f"    [Progressive]   title: {dialog_info.get('dialogTitle', '')!r}")
-            print(f"    [Progressive]   labels: {dialog_info.get('labels', [])[:20]}")
-            print(f"    [Progressive]   comboboxes: {dialog_info.get('comboboxes', [])}")
-            print(f"    [Progressive]   listbox items: {dialog_info.get('listbox_items', [])[:30]}")
-            print(f"    [Progressive]   tree items: {dialog_info.get('tree_items', [])[:30]}")
-            print(f"    [Progressive]   buttons: {dialog_info.get('buttons', [])}")
-            print(f"    [Progressive]   inputs: {dialog_info.get('inputs', [])}")
-        except Exception as e:
-            print(f"    [Progressive] MTC commodity dialog diagnostic failed: {e}")
-
-        # Heuristic 1: dialog has a listbox/tree option → click a matching commodity name
-        # Heuristic 2: dialog has a combobox labeled "Commodity" → use safe_select_combo
-        candidates = [
-            "Water",        # BOTTLED WATER 30%
-            "Beverage",
-            "Beverages",
-            "Drink",
-            "Food",         # PET FOOD 25%
-            "Pet food",
-            "Pet",
-            "Charcoal",     # PACKED CHARCOAL 20%
-            "General freight",
-            "Other",
-        ]
-        selected = False
-        for cand in candidates:
-            try:
-                # Try clicking a listbox/tree option with this name first
-                opt = self.page.get_by_role("option", name=cand, exact=False).first
-                if await self.field_exists(opt, wait_ms=500):
-                    await opt.click(timeout=3_000)
-                    print(f"    [Progressive] MTC commodity selected via listbox option: {cand!r}")
-                    selected = True
-                    break
-                # Try a tree item
-                tree = self.page.get_by_role("treeitem", name=cand, exact=False).first
-                if await self.field_exists(tree, wait_ms=500):
-                    await tree.click(timeout=3_000)
-                    print(f"    [Progressive] MTC commodity selected via tree item: {cand!r}")
-                    selected = True
-                    break
-                # Try a visible text element inside the dialog
-                txt = self.page.get_by_text(cand, exact=False).first
-                if await self.field_exists(txt, wait_ms=400):
-                    await txt.click(timeout=3_000)
-                    print(f"    [Progressive] MTC commodity selected via text click: {cand!r}")
-                    selected = True
-                    break
-            except Exception:
-                continue
-
-        if not selected:
-            # Heuristic 3: dialog has a combobox labeled "Commodity" → try safe_select_combo
-            for cand in candidates:
-                try:
-                    combo = await self.find_combo("Commodity")
-                    if await self.field_exists(combo, wait_ms=500):
-                        try:
-                            await self.safe_select_combo(combo, cand)
-                            print(f"    [Progressive] MTC commodity selected via combo: {cand!r}")
-                            selected = True
-                            break
-                        except Exception:
-                            continue
-                except Exception:
-                    continue
-
-        if not selected:
-            print(f"    [Progressive] WARN: could not select any commodity in MTC dialog; trying to cancel and continue")
-            # Best-effort cancel so we don't leave the dialog open
-            for btn_name in ("Cancel", "Close", "x"):
-                try:
-                    btn = self.page.get_by_role("button", name=btn_name, exact=False).first
-                    if await self.field_exists(btn, wait_ms=400):
-                        await btn.click(timeout=2_000, force=True)
-                        break
-                except Exception:
-                    continue
-            return
-
-        # Click Save / Add / OK to commit the selection
-        saved = False
-        for btn_name in ("Save", "Add", "OK", "Apply", "Done"):
-            try:
-                btn = self.page.get_by_role("button", name=btn_name, exact=True).first
-                if await self.field_exists(btn, wait_ms=500):
-                    await btn.click(timeout=3_000)
-                    print(f"    [Progressive] MTC commodity dialog saved via {btn_name!r}")
-                    saved = True
-                    break
-            except Exception:
-                continue
-
-        if not saved:
-            print(f"    [Progressive] WARN: could not find a Save/Add/OK button in MTC commodity dialog")
-            return
-
-        # Let ExtJS settle after dialog close
+        # Wait for the inline form (two combos) to render
         try:
             await self.wait_for_extjs_idle(timeout_ms=5_000)
         except Exception:
             pass
         await self.page.wait_for_timeout(800)
+
+        # Save a screenshot of the inline form for debugging
+        await self.screenshot("mtc_commodity_dialog")
+
+        # Step 1: open the Commodity Type (category) combo by clicking its
+        # placeholder-bearing input, then enumerate visible options and pick
+        # the first match from our preference list.
+        category_input = self.page.locator(
+            'input[placeholder="Select category"]'
+        ).first
+        if not await self.field_exists(category_input, wait_ms=1_500):
+            print("    [Progressive] WARN: MTC 'Select category' input not visible")
+            return
+
+        category_preferences = [
+            "Food", "Beverage", "Drink", "Water",
+            "Wholesale", "Retail", "Grocery",
+            "Pet", "Animal",
+            "General", "Other",
+        ]
+        chosen_category = await self._pick_first_combo_option(
+            category_input, category_preferences, label="Commodity Type"
+        )
+        if not chosen_category:
+            print("    [Progressive] WARN: no matching commodity category found; canceling row")
+            await self._cancel_commodity_row()
+            return
+
+        # Step 2: open the Commodity combo (now filtered by category) and
+        # pick the first available option from our preference list.
+        try:
+            await self.wait_for_extjs_idle(timeout_ms=3_000)
+        except Exception:
+            pass
+        await self.page.wait_for_timeout(500)
+
+        commodity_input = self.page.locator(
+            'input[placeholder="Select commodity"]'
+        ).first
+        if not await self.field_exists(commodity_input, wait_ms=1_500):
+            print("    [Progressive] WARN: MTC 'Select commodity' input not visible after category")
+            await self._cancel_commodity_row()
+            return
+
+        commodity_preferences = [
+            "Water", "Bottled water",
+            "Food", "Pet food", "Packaged food",
+            "Beverage", "Beverages",
+            "Charcoal",
+            "General", "Other", "Misc",
+        ]
+        chosen_commodity = await self._pick_first_combo_option(
+            commodity_input, commodity_preferences, label="Commodity"
+        )
+        if not chosen_commodity:
+            # Last resort: pick whatever the first option is (we already
+            # committed to a category; better any commodity than none).
+            chosen_commodity = await self._pick_first_visible_combo_option(
+                commodity_input, label="Commodity (first available)"
+            )
+
+        if not chosen_commodity:
+            print("    [Progressive] WARN: no commodity selectable; canceling row")
+            await self._cancel_commodity_row()
+            return
+
+        # Both combos filled — Progressive auto-commits the row. Just let
+        # ExtJS settle.
+        try:
+            await self.wait_for_extjs_idle(timeout_ms=5_000)
+        except Exception:
+            pass
+        await self.page.wait_for_timeout(800)
+        print(f"    [Progressive] MTC commodity row committed: {chosen_category!r} / {chosen_commodity!r}")
+
+    async def _pick_first_combo_option(
+        self, combo_input, preferences: list, *, label: str
+    ) -> Optional[str]:
+        """Click an ExtJS combo input, enumerate visible options, click the first
+        one whose name contains a preference keyword. Returns the selected text or None.
+        """
+        try:
+            await combo_input.click(timeout=3_000)
+        except Exception:
+            try:
+                await combo_input.click(timeout=3_000, force=True)
+            except Exception as e:
+                print(f"    [Progressive] WARN: {label} combo click failed: {e}")
+                return None
+        await self.page.wait_for_timeout(500)
+
+        # ExtJS dropdown panel: x-boundlist with li.x-boundlist-item children
+        try:
+            visible_options = await self.page.evaluate(
+                """() => {
+                    const out = [];
+                    document.querySelectorAll('li.x-boundlist-item').forEach(el => {
+                        if (el.offsetParent !== null) {
+                            const t = (el.innerText || '').trim();
+                            if (t) out.push(t);
+                        }
+                    });
+                    return out;
+                }"""
+            )
+        except Exception:
+            visible_options = []
+        print(f"    [Progressive] {label} options visible: {visible_options[:30]}")
+
+        # Pick first preference that matches (case-insensitive substring)
+        for pref in preferences:
+            pref_lower = pref.lower()
+            for opt_text in visible_options:
+                if pref_lower in opt_text.lower():
+                    try:
+                        opt = self.page.get_by_role(
+                            "option", name=opt_text, exact=True
+                        ).first
+                        if not await self.field_exists(opt, wait_ms=500):
+                            opt = self.page.locator(
+                                f"li.x-boundlist-item:has-text({opt_text!r})"
+                            ).first
+                        await opt.click(timeout=3_000)
+                        print(f"    [Progressive] {label} selected: {opt_text!r}")
+                        return opt_text
+                    except Exception as e:
+                        print(f"    [Progressive] {label} option click failed for {opt_text!r}: {e}")
+                        continue
+        return None
+
+    async def _pick_first_visible_combo_option(
+        self, combo_input, *, label: str
+    ) -> Optional[str]:
+        """Re-open the combo and click whatever the first visible option is.
+        Used as last-resort fallback when no preference keyword matches.
+        """
+        try:
+            await combo_input.click(timeout=3_000, force=True)
+        except Exception:
+            return None
+        await self.page.wait_for_timeout(500)
+
+        try:
+            visible_options = await self.page.evaluate(
+                """() => {
+                    const out = [];
+                    document.querySelectorAll('li.x-boundlist-item').forEach(el => {
+                        if (el.offsetParent !== null) {
+                            const t = (el.innerText || '').trim();
+                            if (t) out.push(t);
+                        }
+                    });
+                    return out;
+                }"""
+            )
+        except Exception:
+            visible_options = []
+
+        if not visible_options:
+            return None
+        first = visible_options[0]
+        try:
+            opt = self.page.locator(
+                f"li.x-boundlist-item:has-text({first!r})"
+            ).first
+            await opt.click(timeout=3_000)
+            print(f"    [Progressive] {label} = {first!r} (first available)")
+            return first
+        except Exception:
+            return None
+
+    async def _cancel_commodity_row(self) -> None:
+        """Click the small × button to cancel an open commodity row."""
+        try:
+            x_btn = self.page.locator(
+                'a.x-tool[aria-label*="close" i], a.x-tool-close, .x-tool-img.x-tool-img-default-close'
+            ).first
+            if await self.field_exists(x_btn, wait_ms=500):
+                await x_btn.click(timeout=2_000, force=True)
+                print("    [Progressive] MTC commodity row canceled (× clicked)")
+        except Exception:
+            pass
 
     async def _configure_non_owned_trailer_phys_damage(self, limit: str) -> None:
         """Fill Non-Owned Trailer Physical Damage subform."""
