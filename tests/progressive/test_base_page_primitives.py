@@ -280,3 +280,41 @@ async def test_safe_click_continue_raises_ContinueStuckError(mock_page, mock_loc
     with pytest.raises(ContinueStuckError) as exc_info:
         await bp.safe_click_continue(expect_url_changes_from="MoreAboutBusiness", retries=2)
     assert exc_info.value.primitive == "safe_click_continue"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_page_polls_until_token_appears(mock_page):
+    mock_page.url = "https://x.com/?pageName=Rates"
+    bp = BasePage(mock_page)
+    await bp.wait_for_page("Rates", timeout_ms=1000)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_page_raises_on_timeout(mock_page):
+    mock_page.url = "https://x.com/?pageName=Other"
+    bp = BasePage(mock_page)
+    with pytest.raises(TimeoutError):
+        await bp.wait_for_page("Rates", timeout_ms=300)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_field_revealed_by_calls_trigger_then_returns_field(mock_page, mock_locator):
+    triggered = {"count": 0}
+
+    async def trigger():
+        triggered["count"] += 1
+
+    async def find():
+        return mock_locator
+
+    bp = BasePage(mock_page)
+    result = await bp.wait_for_field_revealed_by(trigger, find, timeout_ms=2000)
+    assert triggered["count"] == 1
+    assert result is mock_locator
+
+
+@pytest.mark.asyncio
+async def test_wait_for_currency_formatted_returns_when_dollar_present(mock_page, mock_locator):
+    mock_locator.input_value = AsyncMock(return_value="$50,000")
+    bp = BasePage(mock_page)
+    await bp.wait_for_currency_formatted(mock_locator, timeout_ms=1000)

@@ -437,6 +437,70 @@ class BasePage:
             timeout=timeout_ms,
         )
 
+    async def wait_for_page(self, page_name_token: str, *, timeout_ms: int = 30_000) -> None:
+        """Poll until URL contains pageName=<page_name_token>. Raises TimeoutError if not."""
+        import asyncio
+        deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+        while asyncio.get_event_loop().time() < deadline:
+            token = await self.current_page_token()
+            if token == page_name_token or page_name_token in self.page.url:
+                return
+            await self.page.wait_for_timeout(200)
+        raise TimeoutError(
+            f"wait_for_page: token '{page_name_token}' not seen within {timeout_ms}ms; url={self.page.url}"
+        )
+
+    async def wait_for_field_revealed_by(
+        self,
+        trigger_fn,
+        target_finder,
+        *,
+        timeout_ms: int = 5_000,
+    ) -> Locator:
+        """Run trigger_fn, then poll target_finder until the returned locator is visible."""
+        import asyncio
+        import inspect
+
+        if inspect.iscoroutinefunction(trigger_fn):
+            await trigger_fn()
+        else:
+            trigger_fn()
+
+        deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+        while asyncio.get_event_loop().time() < deadline:
+            result = target_finder()
+            if inspect.iscoroutine(result):
+                result = await result
+            try:
+                if (await result.count()) > 0 and await result.is_visible():
+                    return result
+            except Exception:
+                pass
+            await self.page.wait_for_timeout(150)
+
+        result = target_finder()
+        if inspect.iscoroutine(result):
+            result = await result
+        return result
+
+    async def wait_for_currency_formatted(
+        self,
+        locator: Locator,
+        *,
+        timeout_ms: int = 3_000,
+    ) -> None:
+        """Wait until input_value contains '$' (ExtJS finished currency formatting)."""
+        import asyncio
+        deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                v = await locator.input_value()
+                if "$" in (v or ""):
+                    return
+            except Exception:
+                pass
+            await self.page.wait_for_timeout(150)
+
     # ============================================================
     # DEPRECATED helpers — kept until phase 7 cleanup
     # ============================================================
