@@ -433,23 +433,27 @@ class NoHitPage(BasePage):
         match the USDOT and MVR/CLUE returns no credit history, Progressive
         shows a 'Please verify the following information' page with the
         SSN field marked 'Recommended for most accurate quote' — not
-        required. There are NO red 'field is required' errors on this page.
-        Clicking Continue should proceed (Progressive prices with reduced
-        underwriting accuracy).
+        required. Clicking Continue should proceed (Progressive prices with
+        reduced underwriting accuracy).
 
         POLICY preserved: never AUTO-FILL the SSN. We just click Continue
         with the field empty.
 
-        Returns True if the URL advances past NoHit / Order Results,
-        False if Progressive blocks (e.g. SSN was actually required in
-        a different page variant).
+        Returns True if the URL advances past NoHit / Order Results, False
+        otherwise. Logs URL transitions + visible error text for debugging.
         """
         initial_url = self.page.url
+        initial_title = await self.page.title()
+        initial_token = await self.current_page_token()
         print(
             "    [Progressive] NoHit-style 'verify info' page; "
             "trying Continue without SSN (field is optional here)"
         )
+        print(f"    [Progressive]   pre-click URL  : {initial_url}")
+        print(f"    [Progressive]   pre-click title: {initial_title!r}")
+        print(f"    [Progressive]   pre-click token: {initial_token!r}")
         await self.screenshot("nohit_before_continue_attempt")
+
         try:
             await self.blur_active_element()
             await self.page.wait_for_timeout(300)
@@ -465,9 +469,40 @@ class NoHitPage(BasePage):
             print(f"    [Progressive] WARN: NoHit Continue click failed: {e}")
             return False
 
+        final_url = self.page.url
+        final_title = await self.page.title()
+        final_token = await self.current_page_token()
+        print(f"    [Progressive]   post-click URL  : {final_url}")
+        print(f"    [Progressive]   post-click title: {final_title!r}")
+        print(f"    [Progressive]   post-click token: {final_token!r}")
+
+        # Dump any visible error/warning banners on the post-click page
+        try:
+            banners = await self.page.evaluate(
+                """() => {
+                    const errors = [];
+                    document.querySelectorAll(
+                        '.x-form-invalid-icon-default, [class*="error"], [class*="invalid"], '
+                        + '[role="alert"], .x-mb-error, .x-mb-warning, .error-message-placeholder'
+                    ).forEach(el => {
+                        if (el.offsetParent === null) return;
+                        const t = (el.innerText || el.textContent || '').trim();
+                        if (t && t.length < 200) errors.push(t);
+                    });
+                    return [...new Set(errors)].slice(0, 10);
+                }"""
+            )
+            if banners:
+                print(f"    [Progressive]   visible error/warning banners: {banners}")
+        except Exception:
+            pass
+
+        # An "advance" can be:
+        #   - pageName changed (token differs from initial)
+        #   - OR URL/title no longer indicate NoHit
         advanced = (
-            "NoHit" not in self.page.url
-            and "Order Results" not in (await self.page.title())
+            final_token != initial_token
+            or ("NoHit" not in final_url and "Order Results" not in final_title)
         )
         if advanced:
             print("    [Progressive] NoHit page advanced without SSN")
