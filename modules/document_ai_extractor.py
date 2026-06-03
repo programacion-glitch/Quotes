@@ -47,45 +47,63 @@ _STREET_SUFFIXES = {
 def _parse_us_address(addr: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Split a US address string into (street, city, state, zip).
 
-    Handles the common Blue Quote formats:
-        "585 NOLAN ST BEAUMONT, TX 77705"
-        "319 CARLITO CV UNIVERSAL CTY, TX   78148"
-        "8464 BRAHMA DR JUSTIN, TX 76247"
+    Handles Blue Quote variants observed live:
+        "585 NOLAN ST BEAUMONT, TX 77705"              (comma between city & state)
+        "319 CARLITO CV UNIVERSAL CTY, TX   78148"      (with extra spacing)
+        "2627 SUNSET BND, San Antonio, TX 78244"        (two commas — RYD)
+        "311 Pine Forest , Crosby TX 77532"             (no comma before state — Prueba1)
 
-    Split anchors:
-      * trailing 5 (or 5+4) digit ZIP
-      * 2-letter state code immediately before the ZIP
-      * the comma between city and state
-      * within the pre-comma segment: the LAST street-suffix token (ST, DR,
-        CV, ...) ends the street; remaining tokens are the city.
+    Strategy:
+      1. Normalize whitespace + collapse 'word , word' typos to 'word, word'.
+      2. Strict regex: `<left>, ST ZIP` (comma immediately before state).
+      3. Lenient regex if strict fails: `<left> ST ZIP` (just whitespace).
+      4. Split `left` into street + city by LAST street-suffix token (ST, DR,
+         CV, ...). If no suffix found, last token is city.
+      5. Strip any residual commas from the street output.
 
     Returns (None, None, None, None) on unparseable input.
     """
     import re as _re
     if not addr or not isinstance(addr, str):
         return (None, None, None, None)
+
+    # Step 1: normalize whitespace and remove " ," spacing
     s = " ".join(addr.split())
+    s = _re.sub(r"\s+,", ",", s)
+
+    # Step 2: strict — comma immediately before state code
     m = _re.search(r"^(.*?),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$", s, _re.IGNORECASE)
     if not m:
+        # Step 3: lenient — just whitespace before state code
+        m = _re.search(r"^(.*?)\s+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$", s, _re.IGNORECASE)
+    if not m:
         return (None, None, None, None)
-    left, state, zipc = m.group(1).strip(), m.group(2).upper(), m.group(3)
+
+    left = m.group(1).strip().rstrip(",").strip()
+    state = m.group(2).upper()
+    zipc = m.group(3)
+    if not left:
+        return (None, None, state, zipc)
+
     tokens = left.split()
     if len(tokens) < 2:
         return (None, left or None, state, zipc)
 
-    # Find LAST street suffix; everything up to and including it = street.
+    # Step 4: split street + city by LAST street-suffix token.
     suffix_idx = -1
     for i, tok in enumerate(tokens):
-        if tok.upper().strip(".") in _STREET_SUFFIXES:
+        # Strip trailing punctuation (Sencha or BlueQuote leaks commas)
+        clean = tok.upper().strip(".,")
+        if clean in _STREET_SUFFIXES:
             suffix_idx = i
 
     if suffix_idx >= 0 and suffix_idx < len(tokens) - 1:
-        street = " ".join(tokens[: suffix_idx + 1]).strip() or None
-        city = " ".join(tokens[suffix_idx + 1:]).strip() or None
+        street = " ".join(tokens[: suffix_idx + 1]).rstrip(",").strip() or None
+        city = " ".join(tokens[suffix_idx + 1:]).strip(",").strip() or None
     else:
-        # No recognized suffix; fall back to "last 1 token is city" heuristic.
-        street = " ".join(tokens[:-1]).strip() or None
-        city = tokens[-1] or None
+        # No recognized suffix → last token is city, rest is street
+        street = " ".join(tokens[:-1]).rstrip(",").strip() or None
+        city = tokens[-1].strip(",").strip() or None
     return (street, city, state, zipc)
 
 # System prompts per document type — each requests specific fields as JSON
