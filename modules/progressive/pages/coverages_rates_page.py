@@ -579,46 +579,12 @@ class CoveragesRatesPage(BasePage):
                 pass
             await self.page.wait_for_timeout(800)
 
-        # Diagnostic snapshot (kept to detect further subform questions next iteration)
+        # NOTE: a verbose MTC DIAGNOSTIC (labels/comboboxes/buttons/radios)
+        # was here during initial Beverage-Distributor subform discovery
+        # and is now emitted ONLY on the failure path (see the WARN at the
+        # bottom of this method). The 'mtc_after_expansion' screenshot is
+        # still saved for post-mortem if needed.
         await self.screenshot("mtc_after_expansion")
-        try:
-            nearby = await self.page.evaluate(
-                """() => {
-                    const out = {labels: [], comboboxes: [], buttons: [], radios: []};
-                    document.querySelectorAll('label, .x-form-item-label').forEach(el => {
-                        const t = (el.innerText || '').trim();
-                        if (t && el.offsetParent !== null) out.labels.push(t);
-                    });
-                    document.querySelectorAll('[role="combobox"]').forEach(el => {
-                        const name = el.getAttribute('aria-label') ||
-                                     (el.previousElementSibling && el.previousElementSibling.innerText) || '';
-                        if (el.offsetParent !== null) out.comboboxes.push(name.trim());
-                    });
-                    document.querySelectorAll('button, a.x-btn, .x-btn-inner').forEach(el => {
-                        const t = (el.innerText || '').trim();
-                        if (t && el.offsetParent !== null) out.buttons.push(t);
-                    });
-                    document.querySelectorAll('[role="radio"]').forEach(el => {
-                        const name = el.getAttribute('aria-label') ||
-                                     (el.closest('label') && el.closest('label').innerText) || '';
-                        if (el.offsetParent !== null) out.radios.push(name.trim());
-                    });
-                    const dedupe = arr => [...new Set(arr)].slice(0, 40);
-                    return {
-                        labels: dedupe(out.labels),
-                        comboboxes: dedupe(out.comboboxes),
-                        buttons: dedupe(out.buttons),
-                        radios: dedupe(out.radios),
-                    };
-                }"""
-            )
-            print(f"    [Progressive] MTC DIAGNOSTIC — visible after expansion/subform:")
-            print(f"    [Progressive]   labels (first 40): {nearby.get('labels', [])[:40]}")
-            print(f"    [Progressive]   comboboxes: {nearby.get('comboboxes', [])}")
-            print(f"    [Progressive]   buttons: {nearby.get('buttons', [])}")
-            print(f"    [Progressive]   radios: {nearby.get('radios', [])}")
-        except Exception as e:
-            print(f"    [Progressive] MTC DIAGNOSTIC failed: {e}")
 
         # MTC configuration logic. Two paths share the SAME final step (set limit),
         # but the Distributor path adds a commodity FIRST which then reveals the
@@ -687,6 +653,30 @@ class CoveragesRatesPage(BasePage):
                 "    [Progressive]   Screenshot saved at "
                 "logs/progressive_mtc_after_expansion.png"
             )
+            # Emit the DOM dump only on this failure path so the operator
+            # can diagnose subform shape changes without verbose logs on
+            # the happy path.
+            try:
+                nearby = await self.page.evaluate(
+                    """() => {
+                        const out = {labels: [], comboboxes: [], buttons: [], radios: []};
+                        document.querySelectorAll('label, .x-form-item-label').forEach(el => {
+                            const t = (el.innerText || '').trim();
+                            if (t && el.offsetParent !== null) out.labels.push(t);
+                        });
+                        document.querySelectorAll('[role="combobox"]').forEach(el => {
+                            const name = el.getAttribute('aria-label') ||
+                                         (el.previousElementSibling && el.previousElementSibling.innerText) || '';
+                            if (el.offsetParent !== null) out.comboboxes.push(name.trim());
+                        });
+                        const dedupe = arr => [...new Set(arr)].slice(0, 30);
+                        return {labels: dedupe(out.labels), comboboxes: dedupe(out.comboboxes)};
+                    }"""
+                )
+                print(f"    [Progressive]   visible labels: {nearby.get('labels', [])[:20]}")
+                print(f"    [Progressive]   visible comboboxes: {nearby.get('comboboxes', [])}")
+            except Exception:
+                pass
             return
 
         done = self.page.get_by_role("button", name="Done with this coverage")

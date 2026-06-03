@@ -209,7 +209,12 @@ class AddDriverPage(BasePage):
 
     async def _fill_name_if_empty(self, full_name: str) -> None:
         """Fill First / Last name textboxes if empty (additional drivers).
-        Uses multi-strategy locator to tolerate Sencha placeholder variants.
+
+        Silent no-op for the POLICYHOLDER (whose Name + DOB are pre-filled
+        by Progressive from BusinessOwnerInfo — these inputs don't render on
+        the form). We detect that context by 'no First Name input visible'
+        and just return; only emit WARN+diagnostic if it's an ADDITIONAL
+        driver form (Name label is visible but inputs can't be located).
         """
         parts = full_name.strip().split()
         if not parts:
@@ -222,18 +227,17 @@ class AddDriverPage(BasePage):
             placeholder_keywords=["First Name", "First"],
             label_text="Name",
         )
-        if first_input is not None:
-            current = ""
-            try:
-                current = (await first_input.input_value()).strip()
-            except Exception:
-                pass
-            if not current:
-                print(f"    [Progressive] First Name = {first!r}")
-                await self.safe_fill(first_input, first, verify=False)
-        else:
-            print("    [Progressive] WARN: First Name input not located")
-            await self._dump_addriver_inputs()
+        if first_input is None:
+            # Policyholder context: name fields aren't rendered. Silent skip.
+            return
+        current = ""
+        try:
+            current = (await first_input.input_value()).strip()
+        except Exception:
+            pass
+        if not current:
+            print(f"    [Progressive] First Name = {first!r}")
+            await self.safe_fill(first_input, first, verify=False)
 
         # Last name. The "Name" label is SHARED by First Name + MI + Last Name
         # (single label, 3 inputs). XPath from "Name" with [1] gives First
@@ -270,20 +274,20 @@ class AddDriverPage(BasePage):
                 if not current:
                     print(f"    [Progressive] Last Name = {last!r}")
                     await self.safe_fill(last_input, last, verify=False)
-            else:
-                print("    [Progressive] WARN: Last Name input not located")
-                await self._dump_addriver_inputs()
+            # If last_input is None: silent (policyholder context — pre-filled)
 
     async def _fill_dob_if_empty(self, dob: str) -> None:
-        """Fill Date of Birth textbox if empty."""
+        """Fill Date of Birth textbox if empty.
+
+        Silent no-op for the policyholder (DOB pre-filled by Progressive
+        and the input isn't rendered on the form).
+        """
         dob_input = await self._locate_input_by_placeholder_or_label(
             placeholder_keywords=["MM/DD/YYYY", "MM/DD", "Birth"],
             label_text="Date of Birth",
         )
         if dob_input is None:
-            print("    [Progressive] WARN: Date of Birth input not located")
-            await self._dump_addriver_inputs()
-            return
+            return  # policyholder context — DOB pre-filled, no input on form
         current = ""
         try:
             current = (await dob_input.input_value()).strip()
@@ -442,17 +446,11 @@ class NoHitPage(BasePage):
         Returns True if the URL advances past NoHit / Order Results, False
         otherwise. Logs URL transitions + visible error text for debugging.
         """
-        initial_url = self.page.url
-        initial_title = await self.page.title()
         initial_token = await self.current_page_token()
         print(
-            "    [Progressive] NoHit-style 'verify info' page; "
-            "trying Continue without SSN (field is optional here)"
+            "    [Progressive] MVR/CLUE 'verify info' page; "
+            "trying Continue without SSN"
         )
-        print(f"    [Progressive]   pre-click URL  : {initial_url}")
-        print(f"    [Progressive]   pre-click title: {initial_title!r}")
-        print(f"    [Progressive]   pre-click token: {initial_token!r}")
-        await self.screenshot("nohit_before_continue_attempt")
 
         try:
             await self.blur_active_element()
@@ -466,17 +464,27 @@ class NoHitPage(BasePage):
             except Exception:
                 pass
         except Exception as e:
-            print(f"    [Progressive] WARN: NoHit Continue click failed: {e}")
+            print(f"    [Progressive] WARN: MVR/CLUE Continue click failed: {e}")
             return False
 
+        final_token = await self.current_page_token()
         final_url = self.page.url
         final_title = await self.page.title()
-        final_token = await self.current_page_token()
-        print(f"    [Progressive]   post-click URL  : {final_url}")
-        print(f"    [Progressive]   post-click title: {final_title!r}")
-        print(f"    [Progressive]   post-click token: {final_token!r}")
+        advanced = (
+            final_token != initial_token
+            or ("NoHit" not in final_url and "Order Results" not in final_title)
+        )
+        if advanced:
+            print("    [Progressive] MVR/CLUE page advanced without SSN")
+            return True
 
-        # Dump any visible error/warning banners on the post-click page
+        # Failure path only — emit diagnostic so the operator can see why
+        print(
+            "    [Progressive] MVR/CLUE page DID NOT advance — "
+            "SSN may be required in this variant"
+        )
+        print(f"    [Progressive]   post-click URL  : {final_url}")
+        print(f"    [Progressive]   post-click token: {final_token!r}")
         try:
             banners = await self.page.evaluate(
                 """() => {
@@ -496,22 +504,7 @@ class NoHitPage(BasePage):
                 print(f"    [Progressive]   visible error/warning banners: {banners}")
         except Exception:
             pass
-
-        # An "advance" can be:
-        #   - pageName changed (token differs from initial)
-        #   - OR URL/title no longer indicate NoHit
-        advanced = (
-            final_token != initial_token
-            or ("NoHit" not in final_url and "Order Results" not in final_title)
-        )
-        if advanced:
-            print("    [Progressive] NoHit page advanced without SSN")
-        else:
-            print(
-                "    [Progressive] NoHit page DID NOT advance after Continue — "
-                "SSN may actually be required in this variant"
-            )
-        return advanced
+        return False
 
     async def back(self) -> None:
         """Click Back to return to DriverSummary (non-wizard navigation button)."""
