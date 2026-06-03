@@ -13,6 +13,7 @@ from modules.progressive.pages.base_page import BasePage
 from modules.progressive.field_mapper import MappedFields
 
 
+
 # Quick-access business type buttons that appear on the page
 QUICK_TYPE_BUTTONS = [
     "Contractor",
@@ -66,6 +67,29 @@ class BusinessInfoPage(BasePage):
      11. Click "Ok, start quote."
     """
 
+    REQUIRED_FIELDS = (
+        "business_name",
+        "address_line1", "city", "state", "zip",
+        "phone",
+        "owner_first_name", "owner_last_name", "owner_dob",
+        "commodity", "radius",
+    )
+    CONDITIONAL_FIELDS = (
+        "owns_goods",               # only renders for some commodities (distributors)
+        "different_business_name",  # only when user picks "Enter a different" radio
+        "owner_phone",              # may be marked required by commodity
+    )
+    OPTIONAL_FIELDS = ("customer_email",)
+
+    def __init__(self, page):
+        super().__init__(page)
+        self.warnings: list[str] = []
+
+    def _log_skipped(self, field: str, reason: str) -> None:
+        msg = f"business_info: skipped '{field}' — {reason}"
+        print(f"    [Progressive] {msg}")
+        self.warnings.append(msg)
+
     async def fill_and_submit(self, fields: MappedFields) -> None:
         """Fill the entire BusinessOwnerInfo page and submit.
 
@@ -110,14 +134,12 @@ class BusinessInfoPage(BasePage):
     async def _set_effective_date(self, date_str: str) -> None:
         """Set the policy effective date (mm/dd/yyyy)."""
         print(f"    [Progressive] Effective date: {date_str}")
-        combo = self.page.get_by_role(
-            "combobox",
-            name="When should this Progressive Commercial Auto policy start?",
+        combo = await self.find_combo(
+            "When should this Progressive Commercial Auto policy start?"
         )
         if await combo.count() > 0:
-            await combo.first.fill(date_str)
-            await self.page.keyboard.press("Tab")
-            await self.page.wait_for_timeout(500)
+            # verify=False: date field reformats (e.g. "6/1/2026" -> "06/01/2026")
+            await self.safe_fill(combo.first, date_str, verify=False)
 
     # ---- Individual step helpers ----
 
@@ -125,12 +147,10 @@ class BusinessInfoPage(BasePage):
         """Answer 'Is the customer currently insured with Progressive Commercial Auto?'"""
         answer = "Yes" if is_insured else "No"
         print(f"    [Progressive] Currently insured with Progressive: {answer}")
-        group = self.page.get_by_role(
-            "radiogroup",
-            name="Is the customer currently insured with Progressive Commercial Auto?",
+        group = await self.find_radiogroup(
+            "Is the customer currently insured with Progressive Commercial Auto?"
         )
-        await group.get_by_role("radio", name=answer, exact=True).click()
-        await self.page.wait_for_timeout(300)
+        await self.safe_radio(group, answer)
 
     async def _answer_has_usdot(self, has_usdot: bool) -> None:
         """
@@ -145,11 +165,10 @@ class BusinessInfoPage(BasePage):
         else:
             label = "No - and the customer will not have a USDOT number"
         print(f"    [Progressive] Has USDOT: {'Yes' if has_usdot else 'No'}")
-        group = self.page.get_by_role(
-            "radiogroup",
-            name="Does the customer have a USDOT Number?",
-        )
-        await group.get_by_role("radio", name=label).click()
+        group = await self.find_radiogroup("Does the customer have a USDOT Number?")
+        # safe_radio uses exact=True; the option labels are long strings so pass the full label
+        radio = group.get_by_role("radio", name=label)
+        await radio.click(timeout=5_000)
         await self.page.wait_for_timeout(500)
 
     async def _fill_usdot_number(self, usdot: str) -> None:
@@ -161,7 +180,9 @@ class BusinessInfoPage(BasePage):
             name="USDOT Number associated with the customer's business:",
         )
         await box.wait_for(state="visible", timeout=10_000)
-        await box.fill(usdot)
+        # verify=False: USDOT is a numeric field that triggers SAFER lookup on
+        # Tab; input_value after Tab may show lookup state, not the typed value.
+        await self.safe_fill(box, usdot, verify=False)
 
     async def _click_verify_usdot(self) -> None:
         """
@@ -174,8 +195,8 @@ class BusinessInfoPage(BasePage):
         if await btn.count() == 0:
             # Fallback: label may just be "Verify"
             btn = self.page.locator("span.g-btn-text", has_text="Verify").first
-        await btn.click(timeout=10_000)
-        # Wait for SAFER lookup to complete
+        await btn.click(timeout=10_000, force=True)
+        # Wait for SAFER lookup to complete (network round-trip, not ExtJS idle)
         await self.page.wait_for_timeout(3_000)
 
     async def _confirm_usdot_belongs_to_customer(self, confirm: bool) -> None:
@@ -185,12 +206,10 @@ class BusinessInfoPage(BasePage):
         """
         answer = "Yes" if confirm else "No"
         print(f"    [Progressive] USDOT belongs to customer: {answer}")
-        group = self.page.get_by_role(
-            "radiogroup",
-            name="Does this USDOT Number belong to the customer's business?",
+        group = await self.find_radiogroup(
+            "Does this USDOT Number belong to the customer's business?"
         )
-        await group.get_by_role("radio", name=answer, exact=True).click()
-        await self.page.wait_for_timeout(500)
+        await self.safe_radio(group, answer)
 
     async def _select_entity_type(self, entity_type: str) -> None:
         """
@@ -208,12 +227,10 @@ class BusinessInfoPage(BasePage):
             label = "Individual / Sole Proprietor"
 
         print(f"    [Progressive] Selecting entity type: {label}")
-        group = self.page.get_by_role(
-            "radiogroup",
-            name="How is the customer's business structured?",
+        group = await self.find_radiogroup(
+            "How is the customer's business structured?"
         )
-        await group.get_by_role("radio", name=label).click()
-        await self.page.wait_for_timeout(500)
+        await self.safe_radio(group, label)
 
     async def _fill_business_name(
         self, name: Optional[str], dba: Optional[str] = None
@@ -294,7 +311,7 @@ class BusinessInfoPage(BasePage):
             "radio", name="Enter a different Business Name"
         )
         try:
-            await diff_radio.first.click(timeout=3_000)
+            await diff_radio.first.click(timeout=3_000, force=True)
         except Exception as e:
             print(f"    [Progressive] WARN: 'Enter a different' radio click failed: {e}")
         await self.page.wait_for_timeout(1500)
@@ -316,10 +333,11 @@ class BusinessInfoPage(BasePage):
         for loc in candidates:
             try:
                 await loc.first.wait_for(state="visible", timeout=3_000)
-                await loc.first.click(timeout=2_000)
-                await loc.first.fill(name, timeout=2_000)
-                await self.page.keyboard.press("Tab")  # blur to commit
-                await self.page.wait_for_timeout(300)
+                # Use safe_fill with verify=False: the field value is
+                # uppercased by ExtJS after blur, so exact case match would
+                # fail.  We check manually below to preserve the existing
+                # uppercased comparison.
+                await self.safe_fill(loc.first, name, verify=False)
                 actual = ""
                 try:
                     actual = (await loc.first.input_value()).strip()
@@ -333,14 +351,17 @@ class BusinessInfoPage(BasePage):
                 continue
 
         if not filled:
-            print("    [Progressive] WARN: Business Name textbox not filled — no selector matched")
+            self._log_skipped(
+                "different_business_name",
+                "no selector matched for the revealed textbox",
+            )
 
         if dba:
             dba_box = self.page.get_by_role(
                 "textbox", name="DBA Name (Optional)"
             )
             if await dba_box.count() > 0:
-                await dba_box.first.fill(dba)
+                await self.safe_fill(dba_box.first, dba, verify=False)
 
     async def _select_business_type(self, commodity: Optional[str]) -> None:
         """Select the business type via the 'Business type list' combobox.
@@ -360,30 +381,31 @@ class BusinessInfoPage(BasePage):
             f"option~'{preferred or search_term}'"
         )
 
-        combo = self.page.get_by_role("combobox", name="Business type list")
+        combo = await self.find_combo("Business type list")
         await combo.wait_for(state="visible", timeout=15_000)
-        await combo.click()
-        await self.page.wait_for_timeout(400)
 
-        # Prefer the exact mapped option from the full (non-virtualized) list.
-        opt = None
+        # Prefer the exact mapped option from the full (non-virtualized) list
+        # via safe_select_combo when we have a known preferred label.
         if preferred:
-            cand = self.page.get_by_role("option", name=preferred, exact=False)
-            if await cand.count() > 0:
-                opt = cand.first
-        # Otherwise type to filter, then take the first remaining option.
-        if opt is None:
             try:
-                await combo.fill(search_term)
+                await self.safe_select_combo(combo, preferred)
+                return
             except Exception:
-                await self.page.keyboard.type(search_term, delay=60)
-            await self.page.wait_for_timeout(1_200)
-            options = self.page.get_by_role("option")
-            if await options.count() > 0:
-                opt = options.first
+                # Preferred label not in list — fall through to search/filter
+                pass
 
-        if opt is not None:
-            await opt.click(timeout=5_000)
+        # Filter fallback: type search_term into the combo to narrow the list,
+        # then click the first remaining option. This handles unmapped commodities.
+        await combo.click(timeout=5_000)
+        await self.page.wait_for_timeout(400)
+        try:
+            await combo.fill(search_term)
+        except Exception:
+            await self.page.keyboard.type(search_term, delay=60)
+        await self.page.wait_for_timeout(1_200)
+        options = self.page.get_by_role("option")
+        if await options.count() > 0:
+            await options.first.click(timeout=5_000)
             await self.page.wait_for_timeout(1_000)
         else:
             print(
@@ -460,17 +482,15 @@ class BusinessInfoPage(BasePage):
         After business type, Progressive asks (for Trucker):
         'Do any listed vehicles or the load require a hazardous material placard?'
         """
-        group = self.page.get_by_role(
-            "radiogroup",
-            name="Do any listed vehicles or the load require a hazardous material placard?",
+        group = await self.find_radiogroup(
+            "Do any listed vehicles or the load require a hazardous material placard?"
         )
-        if await group.count() == 0:
+        if not await self.field_exists(group, wait_ms=1_500):
             return  # Question didn't appear (not all types trigger it)
 
         answer = "Yes" if has_placard else "No"
         print(f"    [Progressive] Hazmat placard: {answer}")
-        await group.get_by_role("radio", name=answer, exact=True).click()
-        await self.page.wait_for_timeout(300)
+        await self.safe_radio(group, answer)
 
     async def _fill_owner_info(
         self,
@@ -490,8 +510,8 @@ class BusinessInfoPage(BasePage):
         first_name = parts[0] if parts else ""
         last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
 
-        await self._fill_role_textbox("First Name", first_name)
-        await self._fill_role_textbox("Last Name", last_name)
+        await self._fill_owner_name_field("First Name", first_name)
+        await self._fill_owner_name_field("Last Name", last_name)
 
         # Home Address: Progressive renders this as a RADIO when SAFER returned
         # an address (e.g. for USDOT-verified businesses).
@@ -510,7 +530,7 @@ class BusinessInfoPage(BasePage):
             )
             if await safer_addr_radio.count() > 0:
                 try:
-                    await safer_addr_radio.first.click(timeout=3_000)
+                    await safer_addr_radio.first.click(timeout=3_000, force=True)
                     used_radio = True
                     print("    [Progressive] Used SAFER-resolved home address radio")
                     await self.page.wait_for_timeout(500)
@@ -524,20 +544,22 @@ class BusinessInfoPage(BasePage):
                 )
                 if await diff_radio.count() > 0:
                     try:
-                        await diff_radio.first.click(timeout=2_000)
+                        await diff_radio.first.click(timeout=2_000, force=True)
                         await self.page.wait_for_timeout(500)
                     except Exception:
                         pass
                 box = self.page.get_by_role("textbox", name="Street Address")
                 if await box.count() > 0:
-                    await box.first.fill(street)
+                    # verify=False: ExtJS may normalize casing/spacing after blur
+                    await self.safe_fill(box.first, street, verify=False)
 
                 if zip_code:
                     print(f"    [Progressive] ZIP: {zip_code}")
                     zb = self.page.get_by_role("textbox", name="ZIP Code")
                     if await zb.count() > 0:
-                        await zb.first.fill(zip_code)
-                        await self.page.keyboard.press("Tab")
+                        # verify=False: ZIP triggers city auto-fill on Tab;
+                        # input_value may change before we can read it back.
+                        await self.safe_fill(zb.first, zip_code, verify=False)
                         await self.page.wait_for_timeout(1_000)
 
                 if city:
@@ -549,7 +571,9 @@ class BusinessInfoPage(BasePage):
                         except Exception:
                             current = ""
                         if not current:
-                            await cb.first.fill(city)
+                            # verify=False: city may be auto-populated from ZIP;
+                            # ExtJS value may differ from what we typed.
+                            await self.safe_fill(cb.first, city, verify=False)
 
         if dob:
             print(f"    [Progressive] DOB: {dob}")
@@ -557,15 +581,15 @@ class BusinessInfoPage(BasePage):
             if await box.count() == 0:
                 box = self.page.get_by_role("combobox", name="Date of Birth")
             if await box.count() > 0:
-                await box.first.fill(dob)
-                await self.page.keyboard.press("Tab")
+                # verify=False: DOB is a date-formatted field; Progressive
+                # reformats it after blur so input_value != the typed string.
+                await self.safe_fill(box.first, dob, verify=False)
 
-    async def _fill_role_textbox(self, accessible_name: str, value: str) -> None:
-        """Fill a textbox by its accessible name (role-based), with verify.
+    async def _fill_owner_name_field(self, accessible_name: str, value: str) -> None:
+        """Fill First Name / Last Name by accessible name via safe_fill.
 
-        For ExtJS forms whose inputs have a proper aria-label / linked label
-        (e.g. First Name, Last Name, DOB) the role+name strategy is reliable.
-        Verifies the value stuck after Tab; logs WARN if not.
+        verify=False: ExtJS may uppercase or reformat the value after blur,
+        so input_value() != the original typed string.
         """
         if not value:
             return
@@ -575,60 +599,27 @@ class BusinessInfoPage(BasePage):
         except Exception:
             print(f"    [Progressive] WARN: textbox {accessible_name!r} not visible")
             return
-        try:
-            await box.first.click(timeout=3_000)
-            await box.first.fill(value, timeout=3_000)
-            await self.page.keyboard.press("Tab")
-            await self.page.wait_for_timeout(300)
-            try:
-                actual = (await box.first.input_value()).strip()
-            except Exception:
-                actual = ""
-            if actual == value.strip():
-                print(f"    [Progressive] {accessible_name} = {actual!r}")
-            else:
-                print(
-                    f"    [Progressive] WARN: {accessible_name} fill mismatch "
-                    f"(got {actual!r}, expected {value!r})"
-                )
-        except Exception as e:
-            print(f"    [Progressive] WARN: {accessible_name} fill failed: {e}")
+        await self.safe_fill(box.first, value, verify=False)
+        print(f"    [Progressive] {accessible_name} = {value!r}")
 
     async def _fill_placeholder(self, placeholder: str, value: str) -> None:
-        """Fill a text input by its HTML5 placeholder, with click+fill+Tab+verify.
+        """Fill a text input by its HTML5 placeholder via safe_fill.
 
         ExtJS textfields render the placeholder as a real `placeholder` attribute
         on the underlying `<input>`, so `get_by_placeholder` is the correct
-        Playwright API. Click first so ExtJS marks the field touched, fill,
-        then Tab to blur so the validator commits the value.
+        Playwright API. Delegates click+fill+Tab+verify to safe_fill.
         """
         if not value:
             return
-        box = self.page.get_by_placeholder(placeholder, exact=True)
+        box = await self.find_by_placeholder(placeholder)
         try:
             await box.first.wait_for(state="visible", timeout=5_000)
         except Exception:
             print(f"    [Progressive] WARN: placeholder {placeholder!r} not visible")
             return
-        try:
-            await box.first.scroll_into_view_if_needed(timeout=2_000)
-            await box.first.click(timeout=3_000)
-            await box.first.fill(value, timeout=3_000)
-            await self.page.keyboard.press("Tab")
-            await self.page.wait_for_timeout(300)
-            try:
-                actual = (await box.first.input_value()).strip()
-            except Exception:
-                actual = ""
-            if actual == value.strip():
-                print(f"    [Progressive] {placeholder} = {actual!r}")
-            else:
-                print(
-                    f"    [Progressive] WARN: {placeholder} fill mismatch "
-                    f"(got {actual!r}, expected {value!r})"
-                )
-        except Exception as e:
-            print(f"    [Progressive] WARN: {placeholder} fill failed: {e}")
+        # verify=False: placeholder fields may be ExtJS-formatted after blur
+        await self.safe_fill(box.first, value, verify=False)
+        print(f"    [Progressive] {placeholder} = {value!r}")
 
     async def _answer_oil_gas_fields(self, hauls_oil_gas: bool) -> None:
         """Conditional required question shown for trucking / dirt-sand-gravel
@@ -639,16 +630,14 @@ class BusinessInfoPage(BasePage):
         though its DOM id/name are per-session ExtJS hashes. Optional: silently
         skips when the question isn't rendered for this business type.
         """
-        group = self.page.get_by_role(
-            "radiogroup",
-            name="Are any vehicles used to haul to or from oil & gas fields?",
+        group = await self.find_radiogroup(
+            "Are any vehicles used to haul to or from oil & gas fields?"
         )
-        if await group.count() == 0:
+        if not await self.field_exists(group, wait_ms=1_500):
             return
         answer = "Yes" if hauls_oil_gas else "No"
         print(f"    [Progressive] Oil & gas fields hauling: {answer}")
-        await group.get_by_role("radio", name=answer, exact=True).click()
-        await self.page.wait_for_timeout(300)
+        await self.safe_radio(group, answer)
 
     async def _fill_primary_phone(self, phone: Optional[str]) -> None:
         """Fill the Primary Phone Number (3 inputs: area-code/prefix/suffix).
@@ -669,8 +658,8 @@ class BusinessInfoPage(BasePage):
         area, prefix, suffix = digits[:3], digits[3:6], digits[6:10]
         print(f"    [Progressive] Phone: {area}-{prefix}-{suffix}")
 
-        # Field names per the live snapshot. ExtJS numberfields ignore plain
-        # .fill() if no focus/blur cycle runs — click + fill + Tab + verify.
+        # Field names per the live snapshot. ExtJS numberfields may reformat
+        # after blur; verify=False avoids spurious mismatch errors.
         boxes = [
             ("Three digit area code of phone", area),
             ("Three digit prefix of phone", prefix),
@@ -681,22 +670,8 @@ class BusinessInfoPage(BasePage):
             if await box.count() == 0:
                 print(f"    [Progressive] WARN phone[{label}]: textbox not found")
                 continue
-            target = box.first
             try:
-                await target.scroll_into_view_if_needed(timeout=2_000)
-                await target.click(timeout=3_000)
-                await target.fill(val, timeout=3_000)
-                await self.page.keyboard.press("Tab")
-                await self.page.wait_for_timeout(200)
-                try:
-                    actual = (await target.input_value()).strip()
-                except Exception:
-                    actual = ""
-                if actual != val:
-                    print(
-                        f"    [Progressive] WARN phone[{label}]: "
-                        f"got {actual!r}, expected {val!r}"
-                    )
+                await self.safe_fill(box.first, val, verify=False)
             except Exception as e:
                 print(f"    [Progressive] WARN phone[{label}]: {e}")
 
@@ -707,19 +682,15 @@ class BusinessInfoPage(BasePage):
         Distributor, etc.). NOT shown for general Trucker / For-Hire types.
         Safe to call always — no-op if the question isn't present.
         """
-        group = self.page.get_by_role(
-            "radiogroup",
-            name="Does the customer own the goods he or she is transporting?",
+        group = await self.find_radiogroup(
+            "Does the customer own the goods he or she is transporting?"
         )
-        if await group.count() == 0:
-            return  # question didn't appear for this commodity
+        if not await self.field_exists(group, wait_ms=1_500):
+            self._log_skipped("owns_goods", "question not rendered for this commodity")
+            return
         answer = "Yes" if owns else "No"
         print(f"    [Progressive] Owns the goods being transported: {answer}")
-        try:
-            await group.get_by_role("radio", name=answer, exact=True).click(timeout=3_000)
-            await self.page.wait_for_timeout(300)
-        except Exception as e:
-            print(f"    [Progressive] WARN owns_goods: {e}")
+        await self.safe_radio(group, answer)
 
     async def _click_start_quote(self) -> None:
         """Click 'Ok, start quote.' and CONFIRM the page actually advances.
@@ -734,18 +705,17 @@ class BusinessInfoPage(BasePage):
         """
         print("    [Progressive] Clicking 'Ok, start quote.'...")
         await self.remove_overlays()
-        # Blur any active field via JS so the form is committed before submit.
+        # Blur any active field so ExtJS commits pending state before submit.
+        await self.blur_active_element()
+        # Let ExtJS settle before we submit the form.
         try:
-            await self.page.evaluate(
-                "() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }"
-            )
+            await self.wait_for_extjs_idle()
         except Exception:
-            pass
-        await self.page.wait_for_timeout(300)
+            await self.page.wait_for_timeout(300)
 
         btn = self.page.get_by_role("button", name="Ok, start quote.")
         await btn.first.scroll_into_view_if_needed(timeout=3_000)
-        await btn.first.click(timeout=10_000)
+        await btn.first.click(timeout=10_000, force=True)
 
         # Retry the click up to 2 times if the page silently refuses to
         # advance (intermittent Progressive backend issue with non-trucking

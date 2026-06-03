@@ -106,6 +106,8 @@ class QuoteFlow:
             result.step_reached = "business_info"
             biz_page = BusinessInfoPage(wizard_page)
             await biz_page.fill_and_submit(fields)
+            if hasattr(biz_page, "warnings") and biz_page.warnings:
+                result.warnings.extend(biz_page.warnings)
 
             # Step 4: VEHICLES (loop over fields.vehicles)
             result.step_reached = "vehicles"
