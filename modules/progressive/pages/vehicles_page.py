@@ -228,6 +228,19 @@ class AddVehiclePage(BasePage):
       - Continue button
     """
 
+    REQUIRED_FIELDS = ("year", "make", "model", "vin", "vehicle_value")
+    CONDITIONAL_FIELDS = ("vehicle_has_no_equipment", "plate_number")
+    OPTIONAL_FIELDS = ("body_type", "garaging_zip")
+
+    def __init__(self, page):
+        super().__init__(page)
+        self.warnings: list[str] = []
+
+    def _log_skipped(self, field: str, reason: str) -> None:
+        msg = f"add_vehicle: skipped '{field}' — {reason}"
+        print(f"    [Progressive] {msg}")
+        self.warnings.append(msg)
+
     async def fill_from_mapped(self, vehicle: MappedVehicle) -> None:
         """Fill the AddVehicle form from a MappedVehicle and click Continue."""
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
@@ -307,7 +320,9 @@ class AddVehiclePage(BasePage):
         except Exception:
             pass
 
-        await vin_box.first.fill(vin)
+        # VIN is format-restricted; verify=False avoids mismatch on raw vs
+        # formatted input_value (ExtJS may auto-uppercase or mask mid-stream).
+        await self.safe_fill(vin_box.first, vin, verify=False)
         lookup_btn = self.page.get_by_role("button", name="Lookup VIN")
         if await lookup_btn.count() > 0:
             await lookup_btn.first.click(timeout=10_000)
@@ -342,20 +357,20 @@ class AddVehiclePage(BasePage):
             await ymm_radio.first.click(timeout=2_000)
             await self.page.wait_for_timeout(500)
 
-        await self._set_combobox_by_label("Year", str(year))
+        await self.safe_select_combo(await self.find_combo("Year"), str(year))
         # Try a Tab to nudge the cascade. Does not fix all cases.
         try:
             await self.page.keyboard.press("Tab")
             await self.page.wait_for_timeout(800)
         except Exception:
             pass
-        await self._set_combobox_by_label("Make", make)
-        await self._set_combobox_by_label("Model", model)
+        await self.safe_select_combo(await self.find_combo("Make"), make)
+        await self.safe_select_combo(await self.find_combo("Model"), model)
 
     async def _handle_vehicle_type_mismatch(self, trailer_type: Optional[str]) -> None:
         """If a 'Vehicle Type' combobox appeared (VIN didn't match selected type),
         pick the best option."""
-        combo = self.page.get_by_role("combobox", name="Vehicle Type")
+        combo = await self.find_combo("Vehicle Type")
         if await combo.count() == 0:
             return
         # Map trailer type to a Vehicle Type combo option
@@ -376,7 +391,7 @@ class AddVehiclePage(BasePage):
             await self.page.wait_for_timeout(1_000)
 
         # If "What type of SUV is this?" appeared after picking SUV, pick "SUV"
-        suv_combo = self.page.get_by_role("combobox", name="What type of SUV is this?")
+        suv_combo = await self.find_combo("What type of SUV is this?")
         if await suv_combo.count() > 0:
             await suv_combo.first.click()
             await self.page.wait_for_timeout(400)
@@ -393,9 +408,8 @@ class AddVehiclePage(BasePage):
             except Exception:
                 current = ""
             if current != zip_code:
-                await zip_box.first.fill(zip_code)
-                await self.page.keyboard.press("Tab")
-                await self.page.wait_for_timeout(800)
+                # verify=False because the ZIP field may auto-format (add dash)
+                await self.safe_fill(zip_box.first, zip_code, verify=False)
 
     async def _set_distance(self, radius_miles: str) -> None:
         """Convert simple radius string to Progressive's option label."""
@@ -417,27 +431,21 @@ class AddVehiclePage(BasePage):
         )
 
     async def _set_combobox_by_label(self, label: str, option_text: str) -> None:
-        """Generic helper for Sencha ExtJS comboboxes."""
-        combo = self.page.get_by_role("combobox", name=label, exact=False)
+        """Generic helper for Sencha ExtJS comboboxes via BasePage primitives."""
+        combo = await self.find_combo(label)
         if await combo.count() == 0:
             return
         try:
-            await combo.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(500)
-            opt = self.page.get_by_role("option", name=option_text, exact=False).first
-            if await opt.count() > 0:
-                await opt.click(timeout=5_000)
-                await self.page.wait_for_timeout(500)
+            await self.safe_select_combo(combo, option_text)
         except Exception as e:
             print(f"    [Progressive] WARN: combobox '{label}' = '{option_text}' failed: {e}")
 
     async def _set_radio(self, group_label: str, value: str) -> None:
-        group = self.page.get_by_role("radiogroup", name=group_label, exact=False)
+        group = await self.find_radiogroup(group_label)
         if await group.count() == 0:
             return
         try:
-            await group.get_by_role("radio", name=value, exact=True).click(timeout=5_000)
-            await self.page.wait_for_timeout(300)
+            await self.safe_radio(group, value)
         except Exception as e:
             print(f"    [Progressive] WARN: radio '{group_label}' = '{value}' failed: {e}")
 
@@ -445,16 +453,14 @@ class AddVehiclePage(BasePage):
         """Tick the 'Vehicle has no equipment' checkbox to satisfy the
         'value of permanently attached equipment' required field."""
         cb = self.page.get_by_role("checkbox", name="Vehicle has no equipment")
-        if await cb.count() == 0:
-            print("    [Progressive] WARN: 'Vehicle has no equipment' checkbox not present")
-            return
-        try:
-            if not await cb.first.is_checked():
-                await cb.first.click(timeout=5_000)
+        if await self.field_exists(cb, wait_ms=1500):
+            try:
+                await self.safe_checkbox(cb, check=True)
                 print("    [Progressive] Equipment value: ticked 'Vehicle has no equipment'")
-                await self.page.wait_for_timeout(300)
-        except Exception as e:
-            print(f"    [Progressive] WARN: 'Vehicle has no equipment' click failed: {e}")
+            except Exception as e:
+                print(f"    [Progressive] WARN: 'Vehicle has no equipment' click failed: {e}")
+        else:
+            self._log_skipped("vehicle_has_no_equipment", "field_not_rendered")
 
     async def _fill_vehicle_value(self, default: str = "50000") -> None:
         """Fill the 'If this vehicle was sold today, how much would it be worth'
@@ -462,7 +468,9 @@ class AddVehiclePage(BasePage):
 
         The visible input has placeholder 'Vehicle Value'. ExtJS numberfields
         accept Playwright's .fill() reliably; .type() with delay can be lost
-        if the field's validator runs mid-stream. Verify after fill.
+        if the field's validator runs mid-stream. Verify=False because ExtJS
+        applies currency formatting ($) post-fill, changing the raw input_value.
+        wait_for_currency_formatted ensures ExtJS finished before Continue.
         """
         candidates = [
             self.page.locator('input[placeholder="Vehicle Value"]'),
@@ -480,13 +488,13 @@ class AddVehiclePage(BasePage):
                     if not await el.is_visible():
                         continue
                     await el.scroll_into_view_if_needed(timeout=2_000)
-                    await el.click(timeout=3_000)
-                    await el.fill(default, timeout=3_000)
-                    await self.page.keyboard.press("Tab")
-                    # Long wait: ExtJS applies currency formatting + dispatches
-                    # the model change asynchronously. Continue too early and
-                    # Progressive silently rejects the vehicle save.
-                    await self.page.wait_for_timeout(1500)
+                    # verify=False: ExtJS formats the value with $ after Tab,
+                    # so raw input_value won't match the plain "50000" we filled.
+                    await self.safe_fill(el, default, verify=False)
+                    # Wait for currency formatting to complete before Continue —
+                    # Progressive silently rejects the vehicle save if ExtJS
+                    # hasn't committed the model change yet (known 2026-06 bug).
+                    await self.wait_for_currency_formatted(el)
                     actual = ""
                     try:
                         actual = (await el.input_value()).strip()
@@ -511,14 +519,15 @@ class AddVehiclePage(BasePage):
         a validation banner ('Please take a look at the N item(s) below'),
         raise a clear error so the operator knows what's missing instead of
         marching forward into the next step blindly.
+
+        BasePage.safe_click_continue handles blur → force click → JS dispatch
+        → retry → URL verification against 'AddVehicle' token.
         """
         print("    [Progressive] Saving vehicle...")
-        btn = self.page.get_by_role("button", name="Continue").last
-        await btn.click(timeout=10_000)
-        await self.page.wait_for_load_state("networkidle", timeout=30_000)
-        await self.page.wait_for_timeout(1_500)
+        await self.safe_click_continue(expect_url_changes_from="AddVehicle")
 
-        # Validation banner check — if it's visible we never left this page.
+        # Validation banner check — if we're somehow still here with a banner,
+        # raise a clear error.
         banner = self.page.get_by_text(
             "Please take a look at the", exact=False
         )

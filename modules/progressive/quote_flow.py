@@ -213,6 +213,8 @@ class QuoteFlow:
             add_form = AddVehiclePage(wizard_page)
             await add_form.fill_from_mapped(vehicle)
             # add_form.fill_from_mapped() clicks Continue and returns to VehicleSummary
+            if hasattr(add_form, "warnings") and add_form.warnings:
+                result.warnings.extend(add_form.warnings)
 
         # All vehicles added; continue to drivers
         await summary.click_continue()
