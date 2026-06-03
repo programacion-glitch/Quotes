@@ -297,6 +297,51 @@ class BasePage:
             debug_context=debug,
         )
 
+    async def safe_select_combo(
+        self,
+        combo: Locator,
+        option_text: str,
+        *,
+        retries: int = 2,
+    ) -> None:
+        """ExtJS combo: click combo → click option by role → verify input_value contains text."""
+        from modules.progressive.pages._exceptions import ComboSelectError
+
+        attempts = 0
+        last_value = ""
+        for attempt in range(retries + 1):
+            attempts = attempt + 1
+            try:
+                await combo.click(timeout=5_000)
+                await self.page.wait_for_timeout(300)
+                option = self.page.get_by_role("option", name=option_text, exact=True)
+                await option.click(timeout=5_000)
+                await self.page.keyboard.press("Tab")
+            except Exception:
+                pass
+
+            try:
+                last_value = (await combo.input_value()) or ""
+            except Exception:
+                last_value = ""
+
+            if option_text.lower() in last_value.lower():
+                return
+
+            if attempt < retries:
+                await self.page.wait_for_timeout(500 * (attempt + 1))
+
+        debug = await self.dump_debug_context("safe_select_combo")
+        screenshot = await self.screenshot(f"safe_combo_failed_{attempts}")
+        raise ComboSelectError(
+            f"safe_select_combo expected '{option_text}' got '{last_value}' after {attempts} attempts",
+            primitive="safe_select_combo",
+            field=option_text,
+            attempts=attempts,
+            screenshot_path=screenshot,
+            debug_context=debug,
+        )
+
     # ============================================================
     # Familia C — Esperas dinámicas
     # ============================================================

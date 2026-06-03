@@ -229,3 +229,26 @@ async def test_safe_checkbox_unchecks_when_check_false(mock_page, mock_locator):
     bp = BasePage(mock_page)
     await bp.safe_checkbox(mock_locator, check=False)
     mock_locator.click.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_safe_select_combo_clicks_combo_then_option(mock_page, mock_locator):
+    mock_option = AsyncMock()
+    mock_option.click = AsyncMock()
+    mock_locator.input_value = AsyncMock(return_value="Texas")
+    mock_page.get_by_role = MagicMock(side_effect=[mock_locator, mock_option, mock_option])
+    bp = BasePage(mock_page)
+    await bp.safe_select_combo(mock_locator, "Texas")
+    mock_locator.click.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_safe_select_combo_raises_ComboSelectError_when_value_not_set(mock_page, mock_locator):
+    from modules.progressive.pages._exceptions import ComboSelectError
+    mock_option = AsyncMock()
+    mock_option.click = AsyncMock()
+    mock_locator.input_value = AsyncMock(return_value="")
+    mock_page.get_by_role = MagicMock(return_value=mock_option)
+    bp = BasePage(mock_page)
+    with pytest.raises(ComboSelectError):
+        await bp.safe_select_combo(mock_locator, "Texas", retries=1)
