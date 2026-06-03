@@ -128,3 +128,41 @@ async def test_field_exists_false_when_not_visible(mock_page, mock_locator):
     mock_locator.is_visible = AsyncMock(return_value=False)
     bp = BasePage(mock_page)
     assert await bp.field_exists(mock_locator, wait_ms=100) is False
+
+
+@pytest.mark.asyncio
+async def test_safe_fill_clicks_fills_tabs_and_verifies(mock_page, mock_locator):
+    mock_locator.input_value = AsyncMock(return_value="hello")
+    bp = BasePage(mock_page)
+    await bp.safe_fill(mock_locator, "hello")
+    mock_locator.click.assert_awaited()
+    mock_locator.fill.assert_awaited_with("hello")
+    mock_page.keyboard.press.assert_awaited_with("Tab")
+    mock_locator.input_value.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_safe_fill_retries_when_value_mismatch(mock_page, mock_locator):
+    mock_locator.input_value = AsyncMock(side_effect=["wrong", "wrong", "hello"])
+    bp = BasePage(mock_page)
+    await bp.safe_fill(mock_locator, "hello", retries=2)
+    assert mock_locator.fill.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_safe_fill_raises_FillVerifyError_after_retries(mock_page, mock_locator):
+    from modules.progressive.pages._exceptions import FillVerifyError
+    mock_locator.input_value = AsyncMock(return_value="wrong")
+    bp = BasePage(mock_page)
+    with pytest.raises(FillVerifyError) as exc_info:
+        await bp.safe_fill(mock_locator, "hello", retries=2)
+    assert exc_info.value.primitive == "safe_fill"
+    assert exc_info.value.attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_safe_fill_skips_verify_when_verify_false(mock_page, mock_locator):
+    mock_locator.input_value = AsyncMock(return_value="wrong")
+    bp = BasePage(mock_page)
+    await bp.safe_fill(mock_locator, "hello", verify=False)
+    mock_locator.input_value.assert_not_awaited()

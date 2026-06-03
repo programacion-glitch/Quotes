@@ -149,6 +149,69 @@ class BasePage:
             return False
 
     # ============================================================
+    # Familia B — Interacción ExtJS-safe (obligatorias)
+    # ============================================================
+
+    async def safe_fill(
+        self,
+        locator: Locator,
+        value: str,
+        *,
+        verify: bool = True,
+        retries: int = 2,
+    ) -> None:
+        """Click → fill → Tab → verify input_value(). Retry on mismatch."""
+        from modules.progressive.pages._exceptions import FillVerifyError
+
+        attempts = 0
+        last_seen = ""
+        for attempt in range(retries + 1):
+            attempts = attempt + 1
+            try:
+                await locator.click(timeout=5_000)
+                await locator.fill(value)
+                await self.page.keyboard.press("Tab")
+            except Exception as e:
+                if attempt == retries:
+                    debug = await self.dump_debug_context("safe_fill_action")
+                    screenshot = await self.screenshot(f"safe_fill_action_failed_{attempts}")
+                    raise FillVerifyError(
+                        f"safe_fill action failed after {attempts} attempts: {e}",
+                        primitive="safe_fill",
+                        field=value,
+                        attempts=attempts,
+                        screenshot_path=screenshot,
+                        debug_context=debug,
+                    ) from e
+                await self.page.wait_for_timeout(500 * (attempt + 1))
+                continue
+
+            if not verify:
+                return
+
+            try:
+                last_seen = (await locator.input_value()) or ""
+            except Exception:
+                last_seen = ""
+
+            if last_seen == value:
+                return
+
+            if attempt < retries:
+                await self.page.wait_for_timeout(500 * (attempt + 1))
+
+        debug = await self.dump_debug_context("safe_fill_verify")
+        screenshot = await self.screenshot(f"safe_fill_verify_failed_{attempts}")
+        raise FillVerifyError(
+            f"safe_fill expected '{value}' got '{last_seen}' after {attempts} attempts",
+            primitive="safe_fill",
+            field=value,
+            attempts=attempts,
+            screenshot_path=screenshot,
+            debug_context=debug,
+        )
+
+    # ============================================================
     # Familia C — Esperas dinámicas
     # ============================================================
 
