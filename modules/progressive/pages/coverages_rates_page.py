@@ -397,17 +397,75 @@ class CoveragesRatesPage(BasePage):
             await self.page.wait_for_timeout(800)
 
     async def _configure_motor_truck_cargo(self, limit: str = "$100,000") -> None:
-        """Expand Motor Truck Cargo and set limit. Skip with WARN if subform shape changed."""
+        """Expand Motor Truck Cargo and set limit. Skip with WARN if subform shape changed.
+
+        Diagnostic: captures screenshot + visible labels after expansion to help
+        identify the MTC subform fields for distributors (discovery in progress).
+        """
         print(f"    [Progressive] Configuring Motor Truck Cargo: {limit}")
         expanded = await self._expand_coverage("Motor Truck Cargo")
         if not expanded:
             print(f"    [Progressive] WARN: could not expand Motor Truck Cargo; skipping")
             return
+
+        # Wait for ExtJS to render the subform (commodities pages can have animations)
+        try:
+            await self.wait_for_extjs_idle(timeout_ms=5_000)
+        except Exception:
+            pass
+        await self.page.wait_for_timeout(800)  # extra cushion for animations
+
+        # Diagnostic snapshot of the MTC section state
+        await self.screenshot("mtc_after_expansion")
+        try:
+            nearby = await self.page.evaluate(
+                """() => {
+                    // Collect labels, buttons, comboboxes visible anywhere on the page
+                    // (filtered to MTC subform area would be ideal but we capture all
+                    // and let the human eyeball it).
+                    const out = {labels: [], comboboxes: [], buttons: [], radios: []};
+                    document.querySelectorAll('label, .x-form-item-label').forEach(el => {
+                        const t = (el.innerText || '').trim();
+                        if (t && el.offsetParent !== null) out.labels.push(t);
+                    });
+                    document.querySelectorAll('[role="combobox"]').forEach(el => {
+                        const name = el.getAttribute('aria-label') ||
+                                     (el.previousElementSibling && el.previousElementSibling.innerText) || '';
+                        if (el.offsetParent !== null) out.comboboxes.push(name.trim());
+                    });
+                    document.querySelectorAll('button, a.x-btn, .x-btn-inner').forEach(el => {
+                        const t = (el.innerText || '').trim();
+                        if (t && el.offsetParent !== null) out.buttons.push(t);
+                    });
+                    document.querySelectorAll('[role="radio"]').forEach(el => {
+                        const name = el.getAttribute('aria-label') ||
+                                     (el.closest('label') && el.closest('label').innerText) || '';
+                        if (el.offsetParent !== null) out.radios.push(name.trim());
+                    });
+                    // Dedupe and limit
+                    const dedupe = arr => [...new Set(arr)].slice(0, 40);
+                    return {
+                        labels: dedupe(out.labels),
+                        comboboxes: dedupe(out.comboboxes),
+                        buttons: dedupe(out.buttons),
+                        radios: dedupe(out.radios),
+                    };
+                }"""
+            )
+            print(f"    [Progressive] MTC DIAGNOSTIC — visible after expansion:")
+            print(f"    [Progressive]   labels (first 40): {nearby.get('labels', [])[:40]}")
+            print(f"    [Progressive]   comboboxes: {nearby.get('comboboxes', [])}")
+            print(f"    [Progressive]   buttons: {nearby.get('buttons', [])}")
+            print(f"    [Progressive]   radios: {nearby.get('radios', [])}")
+        except Exception as e:
+            print(f"    [Progressive] MTC DIAGNOSTIC failed: {e}")
+
         # Subform may reveal additional required questions (commodity type,
         # refrigeration) before the limit combobox appears. Use field_exists.
         combo = self.page.get_by_role("combobox", name="Motor Truck Cargo coverage limit")
         if not await self.field_exists(combo, wait_ms=2_000):
             print(f"    [Progressive] WARN: MTC limit combobox not visible — subform may have additional required questions; skipping MTC config")
+            print(f"    [Progressive]   Screenshot saved at logs/progressive_mtc_after_expansion.png — please inspect for the subform shape")
             return
         await self._set_combobox("Motor Truck Cargo coverage limit", limit)
         done = self.page.get_by_role("button", name="Done with this coverage")
