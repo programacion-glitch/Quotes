@@ -623,14 +623,19 @@ class CoveragesRatesPage(BasePage):
         # Save a screenshot of the inline form for debugging
         await self.screenshot("mtc_commodity_dialog")
 
-        # Step 1: open the Commodity Type (category) combo by clicking its
-        # placeholder-bearing input, then enumerate visible options and pick
-        # the first match from our preference list.
-        category_input = self.page.locator(
-            'input[placeholder="Select category"]'
-        ).first
-        if not await self.field_exists(category_input, wait_ms=1_500):
-            print("    [Progressive] WARN: MTC 'Select category' input not visible")
+        # Step 1: locate the Commodity Type (category) combo input.
+        # Sencha ExtJS may render the visible placeholder as either:
+        #   - the input's `placeholder` attribute (HTML5)
+        #   - an emptyText overlay (separate element, not the input)
+        #   - the input's `value` (older Sencha)
+        # We try 3 strategies in order so we don't depend on a single DOM shape.
+        category_input = await self._locate_commodity_combo_input(
+            label_text="Commodity Type:",
+            placeholder_text="Select category",
+        )
+        if category_input is None:
+            print("    [Progressive] WARN: MTC 'Select category' input not located by any strategy")
+            await self._dump_inline_form_dom("mtc_commodity_form_dom")
             return
 
         category_preferences = [
@@ -655,11 +660,13 @@ class CoveragesRatesPage(BasePage):
             pass
         await self.page.wait_for_timeout(500)
 
-        commodity_input = self.page.locator(
-            'input[placeholder="Select commodity"]'
-        ).first
-        if not await self.field_exists(commodity_input, wait_ms=1_500):
-            print("    [Progressive] WARN: MTC 'Select commodity' input not visible after category")
+        commodity_input = await self._locate_commodity_combo_input(
+            label_text="Commodity:",
+            placeholder_text="Select commodity",
+        )
+        if commodity_input is None:
+            print("    [Progressive] WARN: MTC 'Select commodity' input not located by any strategy")
+            await self._dump_inline_form_dom("mtc_commodity_form_dom_after_category")
             await self._cancel_commodity_row()
             return
 
@@ -789,6 +796,95 @@ class CoveragesRatesPage(BasePage):
             return first
         except Exception:
             return None
+
+    async def _locate_commodity_combo_input(
+        self, *, label_text: str, placeholder_text: str
+    ):
+        """Locate a combobox input by trying 3 strategies in order:
+
+        1. Visible placeholder text overlay (click target = the text node)
+        2. XPath traversal from the section label (most robust)
+        3. Case-insensitive partial placeholder attribute match
+
+        Returns a Locator if found and visible, None otherwise. Each strategy
+        logs which one succeeded so we learn the actual DOM shape for next time.
+        """
+        # Strategy 1: click the visible placeholder text directly
+        text_node = self.page.get_by_text(placeholder_text, exact=True).first
+        if await self.field_exists(text_node, wait_ms=800):
+            print(f"    [Progressive] commodity combo located via visible text: {placeholder_text!r}")
+            return text_node
+
+        # Strategy 2: XPath traversal from the section label
+        # We use the EXACT match on the label, then walk to the next input
+        # or any combobox-shaped element.
+        label_loc = self.page.get_by_text(label_text, exact=False).first
+        if await self.field_exists(label_loc, wait_ms=600):
+            traversed = label_loc.locator(
+                "xpath=following::input[@type='text' or not(@type)][1] | "
+                "following::*[@role='combobox'][1]"
+            ).first
+            if await self.field_exists(traversed, wait_ms=800):
+                print(f"    [Progressive] commodity combo located via label traversal from {label_text!r}")
+                return traversed
+
+        # Strategy 3: case-insensitive partial placeholder attribute
+        key_word = placeholder_text.split()[-1]  # "category" or "commodity"
+        partial = self.page.locator(f'input[placeholder*="{key_word}" i]').first
+        if await self.field_exists(partial, wait_ms=600):
+            print(f"    [Progressive] commodity combo located via partial placeholder: '*{key_word}*'")
+            return partial
+
+        # Strategy 4: original exact placeholder (kept for completeness)
+        exact_ph = self.page.locator(f'input[placeholder="{placeholder_text}"]').first
+        if await self.field_exists(exact_ph, wait_ms=400):
+            print(f"    [Progressive] commodity combo located via exact placeholder: {placeholder_text!r}")
+            return exact_ph
+
+        return None
+
+    async def _dump_inline_form_dom(self, label: str) -> None:
+        """Dump the FULL inline commodity-form DOM to stdout for diagnostic.
+
+        Called when no strategy finds the combo inputs — gives us the actual
+        DOM shape so we can fix in a single iteration.
+        """
+        try:
+            info = await self.page.evaluate(
+                """() => {
+                    // Find the commodity form container: look for the panel
+                    // containing the 'Commodity Type:' label.
+                    const labels = Array.from(document.querySelectorAll('label, .x-form-item-label, div, span'))
+                        .filter(el => (el.innerText || '').trim() === 'Commodity Type:' && el.offsetParent !== null);
+                    const container = labels.length > 0 ? labels[0].closest('.x-panel, .x-container, fieldset, form') || labels[0].parentElement : document.body;
+                    const inputs = Array.from(container.querySelectorAll('input, [role="combobox"], select'))
+                        .filter(el => el.offsetParent !== null)
+                        .map(el => ({
+                            tag: el.tagName.toLowerCase(),
+                            type: el.getAttribute('type') || '',
+                            role: el.getAttribute('role') || '',
+                            placeholder: el.getAttribute('placeholder') || '',
+                            ariaLabel: el.getAttribute('aria-label') || '',
+                            ariaLabelledby: el.getAttribute('aria-labelledby') || '',
+                            name: el.getAttribute('name') || '',
+                            id: el.id || '',
+                            className: el.className || '',
+                            value: (el.value || '').slice(0, 40),
+                        }));
+                    const visibleTexts = Array.from(container.querySelectorAll('label, span, div'))
+                        .filter(el => el.offsetParent !== null && el.children.length === 0)
+                        .map(el => (el.innerText || '').trim())
+                        .filter(t => t.length > 0 && t.length < 60)
+                        .slice(0, 30);
+                    return {inputs, visibleTexts};
+                }"""
+            )
+            print(f"    [Progressive] {label} INPUTS:")
+            for inp in info.get("inputs", [])[:15]:
+                print(f"    [Progressive]   {inp}")
+            print(f"    [Progressive] {label} VISIBLE TEXTS: {info.get('visibleTexts', [])}")
+        except Exception as e:
+            print(f"    [Progressive] {label} dump failed: {e}")
 
     async def _cancel_commodity_row(self) -> None:
         """Click the small × button to cancel an open commodity row."""
