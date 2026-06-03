@@ -43,6 +43,7 @@ from modules.progressive.pages.vehicles_page import (
     MostCommonVehiclesPage,
     VehicleSummaryPage,
 )
+from modules.progressive.unit_matching import normalize_identifier, diff_unit_vs_pdf
 
 
 @dataclass
@@ -175,36 +176,57 @@ class QuoteFlow:
     ) -> None:
         """Loop over fields.vehicles, adding each via VehicleSummary -> AddVehicle.
 
-        Trailers are SKIPPED with a warning: Progressive routes them through
-        a separate "Add Trailer" form (different fields, different selectors)
-        that isn't supported yet. For initial pricing, the tractor + skipping
-        trailers gives a usable quote — the trailer can be endorsed after bind.
+        Pre-check: read units already on the quote (Progressive remembers them
+        between quotes for the same USDOT). Skip any PDF unit whose identifier
+        matches a row already present, logging field-level diffs for visibility.
+
+        Split remaining units into powered (Add Vehicle flow) and trailers
+        (Add Trailer flow). Phase 0: trailer loop still skipped with WARN.
+        Phase 1 wires AddTrailerPage in Task 11.
         """
         if not fields.vehicles:
             raise RuntimeError("At least one vehicle is required to quote")
 
-        # Filter out trailers; flag them in warnings so the operator knows.
-        powered, trailers = [], []
-        for v in fields.vehicles:
-            (trailers if self._looks_like_trailer(v) else powered).append(v)
-
-        if trailers:
-            msg = (
-                f"Skipped {len(trailers)} trailer(s) — Progressive's Add "
-                f"Trailer flow is not yet automated. VIN(s): "
-                + ", ".join((t.vin or "(no vin)") for t in trailers)
-            )
-            print(f"    [Progressive] WARN: {msg}")
-            result.warnings.append(msg)
-
-        if not powered:
-            raise RuntimeError(
-                "All vehicles in the profile look like trailers; "
-                "at least one powered unit is required to quote."
-            )
-
         summary = VehicleSummaryPage(wizard_page)
 
+        # Pre-existing detection
+        existing = await summary.list_existing_units()
+        existing_by_id = {u.identifier: u for u in existing if u.identifier}
+        if existing:
+            print(
+                f"    [Progressive] VehicleSummary has {len(existing)} "
+                f"pre-existing unit(s); pre-check enabled"
+            )
+
+        to_add: list = []
+        for v in fields.vehicles:
+            pdf_id = normalize_identifier(v.vin, v.year, v.make, v.model)
+            if pdf_id and pdf_id in existing_by_id:
+                diffs = diff_unit_vs_pdf(existing_by_id[pdf_id], v)
+                msg = f"Pre-existing unit {pdf_id} kept as-is"
+                if diffs:
+                    msg += f" (diffs vs PDF: {diffs})"
+                print(f"    [Progressive] SKIP {msg}")
+                result.warnings.append(msg)
+                continue
+            to_add.append(v)
+
+        # Split by is_trailer; substring fallback only if extractor failed to set
+        # the flag (older fixtures / hand-built profiles in tests).
+        powered, trailers = [], []
+        for v in to_add:
+            if v.is_trailer or self._looks_like_trailer_fallback(v):
+                trailers.append(v)
+            else:
+                powered.append(v)
+
+        if not (powered or existing):
+            raise RuntimeError(
+                "No powered vehicle to add and none pre-existing; "
+                "Progressive requires at least one to quote."
+            )
+
+        # Powered loop (unchanged)
         for i, vehicle in enumerate(powered):
             print(f"    [Progressive] Vehicle {i + 1} / {len(powered)}")
             await summary.add_vehicle()
@@ -214,23 +236,35 @@ class QuoteFlow:
 
             add_form = AddVehiclePage(wizard_page)
             await add_form.fill_from_mapped(vehicle)
-            # add_form.fill_from_mapped() clicks Continue and returns to VehicleSummary
             if hasattr(add_form, "warnings") and add_form.warnings:
                 result.warnings.extend(add_form.warnings)
 
-        # All vehicles added; continue to drivers
+        # Trailer loop: Phase 1 will wire AddTrailerPage here. Until then,
+        # log skip so live runs show the trailer count clearly.
+        if trailers:
+            msg = (
+                f"Skipped {len(trailers)} trailer(s) — Phase 1 wiring "
+                f"pending. VIN(s): " + ", ".join((t.vin or "(no vin)") for t in trailers)
+            )
+            print(f"    [Progressive] WARN: {msg}")
+            result.warnings.append(msg)
+
+        # All units added; continue to drivers
         await summary.click_continue()
 
     @staticmethod
-    def _looks_like_trailer(vehicle) -> bool:
-        """Detect trailers by VIN signature or model/type containing TRAILER.
-
-        Trailer VINs commonly start with letters indicating a non-powered unit
-        (e.g. WABASH, GREAT DANE, UTILITY VINs). The safest reliable signal
-        is the model/type string from the blue quote.
+    def _looks_like_trailer_fallback(vehicle) -> bool:
+        """Substring heuristic kept as a safety net when an upstream extractor
+        failed to set MappedVehicle.is_trailer (older fixtures / hand-built
+        profiles in tests). Emits a one-line WARN so we can monitor for stray
+        callers in production logs.
         """
         for s in (vehicle.trailer_type, vehicle.model, vehicle.make):
             if s and "TRAILER" in s.upper():
+                print(
+                    f"    [Progressive] WARN: _looks_like_trailer_fallback "
+                    f"matched on '{s}' — extractor should be setting is_trailer"
+                )
                 return True
         return False
 
