@@ -45,13 +45,48 @@ class DriverSummaryPage(BasePage):
         """Click 'Add' under 'Add another driver?' to open AddDriver page.
 
         This is NOT the wizard Continue — it's a non-wizard action button
-        that opens a sub-form. Use direct click with force=True.
+        that opens a sub-form. Verified live 2026-06-03 (Prueba1) that the
+        'Add' control is NOT a <button role="button" name="Add"> match:
+        Progressive renders it as an <a> with role="button" or as a styled
+        div. Multi-strategy locator + force=True for ExtJS reliability.
         """
         print("    [Progressive] Adding new driver...")
-        # Not a wizard Continue; use force=True for ExtJS button reliability.
-        btn = self.page.get_by_role("button", name="Add", exact=True).last
-        await btn.click(timeout=10_000, force=True)
-        await self.page.wait_for_load_state("networkidle", timeout=30_000)
+        await self.page.wait_for_load_state("networkidle", timeout=15_000)
+        # Scroll to bottom so the 'Add another driver?' footer is in view.
+        try:
+            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await self.page.wait_for_timeout(400)
+        except Exception:
+            pass
+
+        candidates = [
+            # Most likely: link with 'Add' text near 'Add another driver?'
+            self.page.get_by_role("link", name="Add", exact=True),
+            self.page.get_by_role("button", name="Add", exact=True),
+            # Sometimes the accessible name includes the full prompt
+            self.page.get_by_role("button", name="Add another driver", exact=False),
+            self.page.get_by_role("link", name="Add another driver", exact=False),
+            # Final fallback: any visible element with exact text 'Add'
+            self.page.get_by_text("Add", exact=True),
+        ]
+        for loc in candidates:
+            n = await loc.count()
+            for i in range(n):
+                el = loc.nth(i)
+                try:
+                    if not await el.is_visible():
+                        continue
+                    await el.scroll_into_view_if_needed(timeout=2_000)
+                    await el.click(timeout=5_000, force=True)
+                    await self.page.wait_for_load_state("networkidle", timeout=30_000)
+                    return
+                except Exception:
+                    continue
+
+        await self.screenshot("driver_summary_no_add_button")
+        raise RuntimeError(
+            "DriverSummaryPage.add_driver: no clickable 'Add' control found"
+        )
 
     async def click_continue(self) -> None:
         """Click Continue to proceed to BUSINESS step (wizard Continue)."""
