@@ -14,6 +14,7 @@ from modules.quote_profile import (
     DriverProfile,
     CoveragesProfile,
 )
+from modules.progressive.unit_matching import NON_OWNED_MARKERS
 
 
 @dataclass
@@ -119,6 +120,24 @@ class MappedFields:
 
 # ---------- Mapping helpers --------------------------------------------------
 
+def _is_non_owned(
+    vin: Optional[str], make: Optional[str], model: Optional[str]
+) -> bool:
+    """True when the unit is a 'non-owned' trailer marker — must be routed
+    to Non-Owned Trailer Phys Damage coverage instead of Add Trailer.
+
+    Detection by vin first, then make/model fallback (some PDFs surface the
+    marker on a different column).
+    """
+    vin_clean = (vin or "").strip().upper()
+    if vin_clean in NON_OWNED_MARKERS:
+        return True
+    for s in (make, model):
+        if s and "NON OWNED" in s.upper():
+            return True
+    return False
+
+
 def _map_vehicle(v: VehicleProfile, fallback_zip: Optional[str], fallback_type: str) -> MappedVehicle:
     """Map a single VehicleProfile to MappedVehicle, applying defaults."""
     loan_map = {"loan": "Loan", "lease": "Lease", "no": "No", "": "No", None: "No"}
@@ -213,6 +232,26 @@ def map_profile_to_fields(
                 for i in range(count)
             ]
 
+    # Route NON OWNED trailers to Non-Owned Trailer Phys Damage coverage —
+    # Progressive's Add Trailer form requires a real VIN. The rates-page
+    # handler at coverages_rates_page.py:1030 picks up the bumped limit.
+    non_owned_count = sum(
+        1 for mv in mapped_vehicles if _is_non_owned(mv.vin, mv.make, mv.model)
+    )
+    mapped_vehicles = [
+        mv for mv in mapped_vehicles if not _is_non_owned(mv.vin, mv.make, mv.model)
+    ]
+    coverages_out = profile.coverages_detail
+    if non_owned_count and not coverages_out.non_owned_trailer_phys_damage_limit:
+        # CoveragesProfile is a dataclass; mutate the field on the existing
+        # instance so RATES picks it up. Tests confirm the default does not
+        # override an operator-set value.
+        coverages_out.non_owned_trailer_phys_damage_limit = "$25,000"
+        print(
+            f"    [Progressive] field_mapper: {non_owned_count} NON OWNED "
+            f"trailer(s) → Non-Owned Trailer Phys Damage = $25,000 (default)"
+        )
+
     # Drivers
     mapped_drivers = [_map_driver(d, profile.applicant.owner_name) for d in profile.drivers]
 
@@ -242,5 +281,5 @@ def map_profile_to_fields(
         dba_name=dba,
         vehicles=mapped_vehicles,
         drivers=mapped_drivers,
-        coverages=profile.coverages_detail,
+        coverages=coverages_out,
     )
