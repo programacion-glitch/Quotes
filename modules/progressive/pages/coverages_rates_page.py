@@ -57,11 +57,16 @@ class CoveragesRatesPage(BasePage):
         # ---- Per-policy coverages (apply to all vehicles) ----
 
         # Bodily Injury + Property Damage Liability limit
-        if coverages.bodily_injury_limit and coverages.bodily_injury_limit != "$1,000,000 CSL":
-            await self._set_combobox(
-                "Bodily Injury and Property Damage Liability",
-                coverages.bodily_injury_limit,
-            )
+        # Normalize abbreviated labels (e.g. "$1M CSL" → "$1 million CSL") to match
+        # Progressive's actual dropdown option text.
+        if coverages.bodily_injury_limit:
+            bi_label = self._normalize_bi_limit(coverages.bodily_injury_limit)
+            # "$1 million CSL" is Progressive's default — skip unless value differs
+            if bi_label != "$1 million CSL":
+                await self._set_combobox(
+                    "Bodily Injury and Property Damage Liability",
+                    bi_label,
+                )
 
         # Uninsured / Underinsured Motorist Bodily Injury
         if coverages.uninsured_motorist_limit:
@@ -245,6 +250,21 @@ class CoveragesRatesPage(BasePage):
 
     # ---- Helpers ----
 
+    # BI/PD liability option text normalization:
+    # BlueQuote PDF uses abbreviated forms; Progressive UI uses spelled-out forms.
+    _BI_LIMIT_PROGRESSIVE_LABEL: dict = {
+        "$500K CSL":       "$500,000 CSL",
+        "$750K CSL":       "$750,000 CSL",
+        "$1M CSL":         "$1 million CSL",
+        "$1,000,000 CSL":  "$1 million CSL",
+        "$500,000 CSL":    "$500,000 CSL",
+        "$750,000 CSL":    "$750,000 CSL",
+    }
+
+    def _normalize_bi_limit(self, limit: str) -> str:
+        """Translate abbreviated BI/PD limit labels to Progressive's displayed option text."""
+        return self._BI_LIMIT_PROGRESSIVE_LABEL.get(limit, limit)
+
     async def _set_combobox(self, label: str, option_text: str) -> None:
         """Open a Sencha combobox by label and pick an option by visible text."""
         combo = await self.find_combo(label, exact=False)
@@ -390,11 +410,7 @@ class CoveragesRatesPage(BasePage):
             await self.wait_for_extjs_idle()
 
     async def _configure_motor_truck_cargo(self, limit: str = "$100,000") -> None:
-        """Expand Motor Truck Cargo and set limit. Skip with WARN if subform shape changed.
-
-        Diagnostic: captures screenshot + visible labels after expansion to help
-        identify the MTC subform fields for distributors (discovery in progress).
-        """
+        """Expand Motor Truck Cargo and set limit. Handles subform questions for distributor commodities."""
         print(f"    [Progressive] Configuring Motor Truck Cargo: {limit}")
         expanded = await self._expand_coverage("Motor Truck Cargo")
         if not expanded:
@@ -408,14 +424,31 @@ class CoveragesRatesPage(BasePage):
             pass
         await self.page.wait_for_timeout(800)  # extra cushion for animations
 
-        # Diagnostic snapshot of the MTC section state
+        # NEW: Subform question for distributor commodities
+        # "Does the customer require cargo coverage for mobile/modular homes and buildings?"
+        # Default: No (customer's commodity is typically NOT mobile homes)
+        cargo_homes_group = await self.find_radiogroup(
+            "Does the customer require cargo coverage for mobile/modular homes",
+            timeout_ms=2_000,
+        )
+        if await self.field_exists(cargo_homes_group, wait_ms=1_500):
+            print(f"    [Progressive] MTC subform: cargo coverage for mobile/modular homes = No")
+            try:
+                await self.safe_radio(cargo_homes_group, "No")
+            except Exception as e:
+                print(f"    [Progressive] WARN: MTC mobile homes radio failed: {e}")
+            # Wait for limit combobox to render after answering
+            try:
+                await self.wait_for_extjs_idle(timeout_ms=5_000)
+            except Exception:
+                pass
+            await self.page.wait_for_timeout(800)
+
+        # Diagnostic snapshot (kept to detect further subform questions next iteration)
         await self.screenshot("mtc_after_expansion")
         try:
             nearby = await self.page.evaluate(
                 """() => {
-                    // Collect labels, buttons, comboboxes visible anywhere on the page
-                    // (filtered to MTC subform area would be ideal but we capture all
-                    // and let the human eyeball it).
                     const out = {labels: [], comboboxes: [], buttons: [], radios: []};
                     document.querySelectorAll('label, .x-form-item-label').forEach(el => {
                         const t = (el.innerText || '').trim();
@@ -435,7 +468,6 @@ class CoveragesRatesPage(BasePage):
                                      (el.closest('label') && el.closest('label').innerText) || '';
                         if (el.offsetParent !== null) out.radios.push(name.trim());
                     });
-                    // Dedupe and limit
                     const dedupe = arr => [...new Set(arr)].slice(0, 40);
                     return {
                         labels: dedupe(out.labels),
@@ -445,7 +477,7 @@ class CoveragesRatesPage(BasePage):
                     };
                 }"""
             )
-            print(f"    [Progressive] MTC DIAGNOSTIC — visible after expansion:")
+            print(f"    [Progressive] MTC DIAGNOSTIC — visible after expansion/subform:")
             print(f"    [Progressive]   labels (first 40): {nearby.get('labels', [])[:40]}")
             print(f"    [Progressive]   comboboxes: {nearby.get('comboboxes', [])}")
             print(f"    [Progressive]   buttons: {nearby.get('buttons', [])}")
@@ -453,8 +485,7 @@ class CoveragesRatesPage(BasePage):
         except Exception as e:
             print(f"    [Progressive] MTC DIAGNOSTIC failed: {e}")
 
-        # Subform may reveal additional required questions (commodity type,
-        # refrigeration) before the limit combobox appears. Use field_exists.
+        # Now try to set the limit
         combo = self.page.get_by_role("combobox", name="Motor Truck Cargo coverage limit")
         if not await self.field_exists(combo, wait_ms=2_000):
             print(f"    [Progressive] WARN: MTC limit combobox not visible — subform may have additional required questions; skipping MTC config")

@@ -111,11 +111,25 @@ class AddDriverPage(BasePage):
         ExtJS combobox — uses safe_select_combo (click + option click).
         Progressive pre-fills the state from the policyholder’s address,
         so re-selecting Texas is usually a no-op; we still ensure the value.
+
+        Tries multiple candidate accessible-name labels because Progressive’s
+        aria-label for this combobox differs across page variants.
         """
         print(f"    [Progressive] Driver’s license state: {state}")
-        combo = await self.find_combo("Driver’s License State")
-        if await combo.count() == 0:
-            print("    [Progressive] WARN: License State combobox not present, skipping")
+        candidates = [
+            "Driver’s License State",
+            "License State",
+            "Driver License State",
+        ]
+        combo = None
+        for label in candidates:
+            c = await self.find_combo(label)
+            if await self.field_exists(c, wait_ms=800):
+                combo = c
+                print(f"    [Progressive] License State combo matched on label=’{label}’")
+                break
+        if combo is None:
+            print(f"    [Progressive] WARN: License State combobox not present (tried: {candidates}), skipping")
             return
         try:
             await self.safe_select_combo(combo.first, state)

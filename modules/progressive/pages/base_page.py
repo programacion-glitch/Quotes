@@ -304,7 +304,12 @@ class BasePage:
         *,
         retries: int = 2,
     ) -> None:
-        """ExtJS combo: click combo → click option by role → verify input_value contains text."""
+        """ExtJS combo: click combo → click option by role → verify input_value contains text.
+
+        Option name matching strategy: exact match first, then case-insensitive
+        substring match via .first. Verification uses bidirectional substring
+        (option_text in input_value OR a key token of option_text in input_value).
+        """
         from modules.progressive.pages._exceptions import ComboSelectError
 
         attempts = 0
@@ -314,7 +319,13 @@ class BasePage:
             try:
                 await combo.click(timeout=5_000)
                 await self.page.wait_for_timeout(300)
+
+                # Strategy 1: exact match
                 option = self.page.get_by_role("option", name=option_text, exact=True)
+                if await option.count() == 0:
+                    # Strategy 2: case-insensitive contains, take first
+                    option = self.page.get_by_role("option", name=option_text, exact=False).first
+
                 await option.click(timeout=5_000)
                 await self.page.keyboard.press("Tab")
             except Exception:
@@ -325,7 +336,15 @@ class BasePage:
             except Exception:
                 last_value = ""
 
-            if option_text.lower() in last_value.lower():
+            # Bidirectional verification: option_text fully present OR
+            # option_text's key token (first word) present in input value
+            opt_lower = option_text.lower()
+            val_lower = last_value.lower()
+            if opt_lower in val_lower:
+                return
+            # Extract key token (e.g., "$1,000" from "$1,000 Deductible")
+            key_token = opt_lower.split(" ", 1)[0] if " " in opt_lower else opt_lower
+            if len(key_token) >= 3 and key_token in val_lower:
                 return
 
             if attempt < retries:
