@@ -595,8 +595,38 @@ class CoveragesRatesPage(BasePage):
 
         # Step B: set the limit combobox (Trucker path had it from the start;
         # Distributor path just had it revealed).
+        #
+        # Use option-enumeration instead of safe_select_combo because the
+        # Distributor-revealed limit combo has different option text formatting
+        # than the Trucker one (verified live 2026-06-03: safe_select_combo
+        # returned input_value='' for limit='$100,000'). Enumeration picks the
+        # first li.x-boundlist-item matching any of the preference variants.
         if await self.field_exists(limit_combo, wait_ms=2_000):
-            await self._set_combobox("Motor Truck Cargo coverage limit", limit)
+            limit_preferences = [
+                limit,                              # user-requested literal, e.g. "$100,000"
+                limit.replace("$", "").replace(",", ""),  # "100000"
+                limit.replace(",", ""),             # "$100000"
+                limit.replace("$", ""),             # "100,000"
+            ]
+            # Dedupe while preserving order
+            seen = set()
+            limit_preferences = [
+                p for p in limit_preferences
+                if not (p in seen or seen.add(p))
+            ]
+            chosen_limit = await self._pick_first_combo_option(
+                limit_combo, limit_preferences, label="Motor Truck Cargo limit"
+            )
+            if not chosen_limit:
+                # Fall back: pick whatever first option is available
+                chosen_limit = await self._pick_first_visible_combo_option(
+                    limit_combo, label="Motor Truck Cargo limit (first available)"
+                )
+            if not chosen_limit:
+                print(
+                    f"    [Progressive] WARN: could not set Motor Truck Cargo limit "
+                    f"(tried {limit_preferences})"
+                )
         else:
             print(
                 "    [Progressive] WARN: MTC limit combobox still not visible "
