@@ -108,6 +108,10 @@ class BusinessInfoPage(BasePage):
             await self._fill_usdot_number(fields.usdot)
             await self._click_verify_usdot()
             await self._confirm_usdot_belongs_to_customer(True)
+            # If SAFER returned 'USDOT information was not found', Progressive
+            # reveals a follow-up Y/N: "Did the customer obtain their USDOT
+            # Number within the last 60 days?". Soft-skipped when not shown.
+            await self._answer_usdot_recently_obtained(recently_obtained=False)
 
         await self._select_entity_type(fields.entity_type)
         await self._fill_business_name(fields.business_name, fields.dba_name)
@@ -198,6 +202,33 @@ class BusinessInfoPage(BasePage):
         await btn.click(timeout=10_000, force=True)
         # Wait for SAFER lookup to complete (network round-trip, not ExtJS idle)
         await self.page.wait_for_timeout(3_000)
+
+    async def _answer_usdot_recently_obtained(self, recently_obtained: bool = False) -> None:
+        """
+        Handles the conditional radio that appears ONLY when Progressive's
+        SAFER lookup says 'USDOT information was not found' (typical for
+        DOTs registered very recently or in a state SAFER hasn't synced):
+
+          'Did the customer obtain their USDOT Number within the last 60 days?'
+
+        Default: No (most customers have had their USDOT for >60 days; if the
+        customer JUST got it the underwriter will likely need manual review
+        anyway). Soft-skips if the radio isn't rendered (USDOT found in SAFER).
+        """
+        try:
+            await self.wait_for_extjs_idle(timeout_ms=3_000)
+        except Exception:
+            pass
+        group = await self.find_radiogroup(
+            "Did the customer obtain their USDOT Number within the last 60 days",
+            timeout_ms=2_000,
+        )
+        if not await self.field_exists(group, wait_ms=1_500):
+            # USDOT was found in SAFER — this conditional doesn't apply
+            return
+        answer = "Yes" if recently_obtained else "No"
+        print(f"    [Progressive] USDOT obtained in last 60 days: {answer}")
+        await self.safe_radio(group, answer)
 
     async def _confirm_usdot_belongs_to_customer(self, confirm: bool) -> None:
         """
