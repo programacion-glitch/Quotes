@@ -181,3 +181,31 @@ Otros mejoramientos sugeridos:
 - Usar **USDot CL widget** como fallback automático si Blue Quote no trae dirección
 - Detectar trailer types más amplios (tank, low-boy, etc.)
 - Captura de **PDF de la quote** desde botón "Print, Email, Fax" en RATES page
+
+## 2026-06-02 — BasePage hardening (partial close)
+
+Refactor del módulo Progressive: `base_page.py` ahora es el hub de primitivas
+ExtJS-safe obligatorias. `more_business_page` migrado a las primitivas y
+declara REQUIRED/CONDITIONAL/OPTIONAL fields. `coverages_rates_page` recibió
+fix narrow para race condition de price capture (no migración completa).
+
+Resultados LIVE:
+- M&D Trucker: $53,064/year (sin regresión)
+- RYD Beverage Distributor: **$42,387/year, Quote #CA117049229 — primera cotización end-to-end exitosa de RYD en la historia del proyecto**
+
+Discoveries durante implementación:
+- **Snapshot ProView** field condicional: NO renderiza para Trucker, SÍ para
+  Beverage Distributor. Manejado con `field_exists` + default "No".
+- **ELD** field condicional: SÍ para Trucker, NO para Distributor. Soft-skip
+  con `field_exists`.
+- **MTC subform** para distributors: expandir "Motor Truck Cargo" revela
+  preguntas extra ANTES del limit combobox. Skipeado con WARN claro;
+  cotización se completa SIN MTC. Discovery pendiente.
+
+Pendiente para PR siguiente: migrar drivers/vehicles/coverages_rates/business_info
+pages a primitivas (siguen funcionando con código pre-refactor robusto).
+
+Referencias:
+- Spec: `docs/superpowers/specs/2026-06-02-progressive-basepage-hardening-design.md`
+- Plan: `docs/superpowers/plans/2026-06-02-progressive-basepage-hardening.md`
+- Métricas: `docs/superpowers/baselines/2026-06-02-progressive-baseline.md`
