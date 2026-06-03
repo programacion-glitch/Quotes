@@ -95,6 +95,31 @@ class BasePage:
         }
 
     # ============================================================
+    # Familia A — Localización tolerante
+    # ============================================================
+
+    async def find_by_label_text(
+        self, label: str, *, kind: str = "input", timeout_ms: int = 5_000
+    ) -> Locator:
+        """Find an input by XPath traversal from its visible label text.
+
+        Used for fields where Progressive's ExtJS overlay hides the
+        placeholder attribute, so get_by_placeholder fails.
+        """
+        label_loc = self.page.get_by_text(label, exact=True)
+        xpath_target = {
+            "input": "xpath=following::input[@type='text'][1]",
+            "textarea": "xpath=following::textarea[1]",
+        }.get(kind, "xpath=following::input[@type='text'][1]")
+        return label_loc.locator(xpath_target)
+
+    async def find_by_placeholder(
+        self, placeholder: str, *, timeout_ms: int = 5_000
+    ) -> Locator:
+        """Find an input by its real placeholder attribute (when ExtJS exposes it)."""
+        return self.page.get_by_placeholder(placeholder)
+
+    # ============================================================
     # Familia C — Esperas dinámicas
     # ============================================================
 

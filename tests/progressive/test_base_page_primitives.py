@@ -59,3 +59,25 @@ async def test_wait_for_extjs_idle_respects_timeout_ms(mock_page):
     await bp.wait_for_extjs_idle(timeout_ms=5000)
     args, kwargs = mock_page.wait_for_function.call_args
     assert kwargs.get("timeout") == 5000
+
+
+@pytest.mark.asyncio
+async def test_find_by_label_text_uses_xpath_following_input(mock_page, mock_locator):
+    bp = BasePage(mock_page)
+    result = await bp.find_by_label_text("Driver's License Number")
+    mock_page.get_by_text.assert_called_once()
+    args, kwargs = mock_page.get_by_text.call_args
+    assert args[0] == "Driver's License Number"
+    assert kwargs.get("exact") is True
+    mock_locator.locator.assert_called_with(
+        "xpath=following::input[@type='text'][1]"
+    )
+    assert result is mock_locator
+
+
+@pytest.mark.asyncio
+async def test_find_by_placeholder_uses_get_by_placeholder(mock_page, mock_locator):
+    bp = BasePage(mock_page)
+    result = await bp.find_by_placeholder("Business Name")
+    mock_page.get_by_placeholder.assert_called_once_with("Business Name")
+    assert result is mock_locator
