@@ -69,7 +69,8 @@ class VehicleSummaryPage(BasePage):
 
         # Try text-based and role-based selectors. ExtJS can render the
         # "Add Vehicle" control as a button, link or styled div, so text
-        # match catches all.
+        # match catches all. force=True bypasses overlap/visibility checks
+        # from ExtJS overlays that may cover the button.
         candidates = [
             self.page.get_by_text("Add Vehicle", exact=True),
             self.page.get_by_role("button", name="Add Vehicle", exact=True),
@@ -85,7 +86,7 @@ class VehicleSummaryPage(BasePage):
                     if not await el.is_visible():
                         continue
                     await el.scroll_into_view_if_needed(timeout=3_000)
-                    await el.click(timeout=10_000)
+                    await el.click(force=True, timeout=10_000)
                     await self.page.wait_for_load_state(
                         "networkidle", timeout=30_000
                     )
@@ -155,120 +156,9 @@ class VehicleSummaryPage(BasePage):
         except Exception:
             pass
 
-        initial_url = self.page.url
-        # Try text-based selector first (ExtJS may render Continue as <a> or
-        # <div>); iterate from the LAST visible match to pick the bottom one.
-        candidates = [
-            self.page.get_by_text("Continue", exact=True),
-            self.page.get_by_role("button", name="Continue", exact=True),
-        ]
-        clicked = False
-        for loc in candidates:
-            n = await loc.count()
-            for i in range(n - 1, -1, -1):
-                el = loc.nth(i)
-                try:
-                    if not await el.is_visible():
-                        continue
-                    await el.scroll_into_view_if_needed(timeout=2_000)
-                    # force=True bypasses Playwright's overlap/visibility
-                    # checks — needed because Progressive's gray footer
-                    # ("Add another vehicle or trailer?") may overlap the
-                    # bottom Continue when there are SAFER suggestions.
-                    await el.click(timeout=10_000, force=True)
-                    clicked = True
-                    break
-                except Exception:
-                    continue
-            if clicked:
-                break
-
-        # Wait briefly to see if the page started navigating.
-        await self.page.wait_for_timeout(2_000)
-
-        # If still on VehicleSummary after first click, walk up from the
-        # visual "Continue" text to the actual ExtJS button wrapper and
-        # click that — ExtJS attaches its click handler on the .x-btn
-        # container, not on the inner <span> that holds the visible text.
-        if "VehicleSummary" in self.page.url:
-            print("    [Progressive] Continue click did not navigate; trying ExtJS-wrapper click")
-            try:
-                result = await self.page.evaluate(
-                    """() => {
-                        // Find all elements whose text is exactly 'Continue'
-                        const textNodes = Array.from(document.querySelectorAll(
-                            'button, a, div, span'
-                        )).filter(e => {
-                            const t = (e.textContent || '').trim();
-                            if (t !== 'Continue') return false;
-                            const r = e.getBoundingClientRect();
-                            return r.width > 0 && r.height > 0;
-                        });
-                        if (textNodes.length === 0) return 'no Continue text found';
-                        // Pick the lowest text element on the page (highest top).
-                        textNodes.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
-                        const txt = textNodes[0];
-                        // Walk up to the nearest ExtJS button container or <button>.
-                        let target = txt;
-                        for (let i = 0; i < 10 && target; i++) {
-                            if (target.tagName === 'BUTTON') break;
-                            const c = target.className || '';
-                            if (typeof c === 'string' && (c.includes('x-btn') && !c.includes('x-btn-text'))) break;
-                            target = target.parentElement;
-                        }
-                        if (!target) target = txt;
-                        target.scrollIntoView({block: 'center'});
-                        // Fire a full mouse-event sequence so ExtJS sees a real click.
-                        for (const type of ['mousedown', 'mouseup', 'click']) {
-                            target.dispatchEvent(new MouseEvent(type, {
-                                bubbles: true, cancelable: true, view: window
-                            }));
-                        }
-                        return 'clicked ' + target.tagName + '.' + (target.className||'').slice(0,40);
-                    }"""
-                )
-                print(f"    [Progressive] JS dispatch: {result}")
-            except Exception as e:
-                print(f"    [Progressive] JS click also failed: {e}")
-
-        if not clicked:
-            await self.screenshot("vehicle_summary_continue_not_clickable")
-            raise RuntimeError(
-                "VehicleSummary: no clickable Continue button found"
-            )
-
-        await self.page.wait_for_load_state("networkidle", timeout=60_000)
-        await self.page.wait_for_timeout(1_500)
-
-        # If still on VehicleSummary, retry up to 2 more times with longer
-        # waits between (Progressive sometimes needs an extra moment for
-        # its backing store to commit the vehicle save before accepting
-        # the page-level Continue).
-        for attempt in range(2):
-            if "VehicleSummary" not in self.page.url:
-                break
-            print(f"    [Progressive] Still on VehicleSummary; retry continue {attempt + 1}/2")
-            await self.page.wait_for_timeout(3000)
-            try:
-                btn = self.page.get_by_text("Continue", exact=True).last
-                await btn.scroll_into_view_if_needed(timeout=2_000)
-                await btn.click(timeout=10_000, force=True)
-                await self.page.wait_for_load_state("networkidle", timeout=60_000)
-                await self.page.wait_for_timeout(1_500)
-            except Exception as e:
-                print(f"    [Progressive] Retry continue failed: {e}")
-
-        # Verify we actually left VehicleSummary; if not, screenshot + raise.
-        if "VehicleSummary" in self.page.url or self.page.url == initial_url:
-            still_summary = await self.page.get_by_text(
-                "Here are the vehicles on the quote", exact=False
-            ).count()
-            if still_summary > 0:
-                await self.screenshot("vehicle_summary_did_not_advance")
-                raise RuntimeError(
-                    "VehicleSummary Continue did not advance to DRIVERS — "
-                    f"URL still {self.page.url}"
-                )
+        # BasePage.safe_click_continue handles: blur → text/role fallback →
+        # force=True → JS dispatch → retry loop → URL verification.
+        await self.safe_click_continue(expect_url_changes_from="VehicleSummary")
 
 
 class MostCommonVehiclesPage(BasePage):
@@ -278,12 +168,17 @@ class MostCommonVehiclesPage(BasePage):
     """
 
     async def select_vehicle_type(self, trailer_type: str) -> None:
-        """Pick the most appropriate type for the trailer string."""
+        """Pick the most appropriate type for the trailer string.
+
+        The vehicle type options are rendered as clickable tiles (styled divs
+        or buttons). Use get_by_text to find the tile by visible label and
+        force=True to bypass any overlay checks.
+        """
         label = self._map_to_button(trailer_type)
         print(f"    [Progressive] Selecting vehicle type: {label}")
-        btn = self.page.get_by_role("button", name=label, exact=True)
-        await btn.click(timeout=10_000)
-        await self.page.wait_for_load_state("networkidle", timeout=30_000)
+        tile = self.page.get_by_text(label, exact=True).first
+        await tile.click(force=True)
+        await self.wait_for_extjs_idle()
 
     async def click_add_trailer_instead(self) -> None:
         """Switch from vehicle flow to trailer flow."""
