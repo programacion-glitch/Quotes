@@ -563,21 +563,49 @@ class CoveragesRatesPage(BasePage):
         except Exception as e:
             print(f"    [Progressive] MTC DIAGNOSTIC failed: {e}")
 
-        # Detect which MTC configuration path is active:
-        #   Trucker path     → "Motor Truck Cargo coverage limit" combobox visible
-        #   Distributor path → "+ Add a commodity" link visible
-        limit_combo = self.page.get_by_role("combobox", name="Motor Truck Cargo coverage limit")
+        # MTC configuration logic. Two paths share the SAME final step (set limit),
+        # but the Distributor path adds a commodity FIRST which then reveals the
+        # limit combobox.
+        #
+        #   Trucker path     → limit combobox visible from the start, no commodities
+        #   Distributor path → commodity picker visible; after selecting a commodity,
+        #                      Progressive reveals the limit combobox as required
+        #
+        # Verified via screenshot logs/progressive_rates_before_capture.png on
+        # 2026-06-03 — after committing a Food & Beverage / Other Food & Beverages
+        # row, "Motor Truck Cargo coverage limit" appears with a red "This field
+        # is required" marker. Without setting it, recalc returns no premium.
+
+        limit_combo = self.page.get_by_role(
+            "combobox", name="Motor Truck Cargo coverage limit"
+        )
         add_commodity = self.page.get_by_text("Add a commodity", exact=False)
 
-        if await self.field_exists(limit_combo, wait_ms=1_500):
-            # Trucker path: set limit directly
-            await self._set_combobox("Motor Truck Cargo coverage limit", limit)
-        elif await self.field_exists(add_commodity, wait_ms=1_500):
-            # Distributor path: open Add a commodity dialog and add at least one
+        # Step A: if the Distributor commodity picker is visible, add a commodity.
+        # The limit combobox is hidden until at least one commodity is committed.
+        if await self.field_exists(add_commodity, wait_ms=1_500):
             await self._add_mtc_commodities()
+            # After commit, wait for Progressive to render the now-required
+            # limit combobox.
+            try:
+                await self.wait_for_extjs_idle(timeout_ms=5_000)
+            except Exception:
+                pass
+            await self.page.wait_for_timeout(800)
+
+        # Step B: set the limit combobox (Trucker path had it from the start;
+        # Distributor path just had it revealed).
+        if await self.field_exists(limit_combo, wait_ms=2_000):
+            await self._set_combobox("Motor Truck Cargo coverage limit", limit)
         else:
-            print(f"    [Progressive] WARN: MTC neither limit combobox nor Add-commodity link visible; skipping")
-            print(f"    [Progressive]   Screenshot saved at logs/progressive_mtc_after_expansion.png")
+            print(
+                "    [Progressive] WARN: MTC limit combobox still not visible "
+                "after commodity flow; quote will lack MTC limit"
+            )
+            print(
+                "    [Progressive]   Screenshot saved at "
+                "logs/progressive_mtc_after_expansion.png"
+            )
             return
 
         done = self.page.get_by_role("button", name="Done with this coverage")
