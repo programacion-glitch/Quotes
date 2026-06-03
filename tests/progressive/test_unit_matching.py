@@ -37,3 +37,13 @@ def test_invalid_vin_chars_fall_back():
     """VINs use a restricted alphabet (no I, O, Q). 17 chars with O → not a VIN."""
     bad_vin = "1OOOOOOOOOOOOOOOO"   # 17 chars but contains O
     assert normalize_identifier(bad_vin, 2020, "X", "Y") == "2020|X|Y"
+
+
+def test_whitespace_only_make_returns_none():
+    """Whitespace-only make/model collapses to empty after strip → fallback fails."""
+    assert normalize_identifier(None, 2021, "   ", "FLATBED") is None
+
+
+def test_none_vin_with_valid_ymm_uses_ymm():
+    """Most common no-VIN path: vin=None + complete YMM → composite identifier."""
+    assert normalize_identifier(None, 2021, "UTILITY", "FLATBED") == "2021|UTILITY|FLATBED"

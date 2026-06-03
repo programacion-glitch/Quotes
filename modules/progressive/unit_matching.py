@@ -11,7 +11,10 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-NON_OWNED_MARKERS = {"NON OWNED", "NONOWNED", "NON-OWNED", "N/A", ""}
+# Markers that look like a VIN field but are not real VINs. "" entry is
+# defensive — the truthiness check on the caller path already excludes it,
+# but listing it here makes the intent visible alongside the named markers.
+NON_OWNED_MARKERS = frozenset({"NON OWNED", "NONOWNED", "NON-OWNED", "N/A", ""})
 
 # Standard VIN: 17 characters from A-Z (excluding I, O, Q) and 0-9.
 _VIN_PATTERN = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
@@ -34,7 +37,7 @@ def normalize_identifier(
     if vin_clean and vin_clean not in NON_OWNED_MARKERS and _VIN_PATTERN.match(vin_clean):
         return vin_clean
 
-    if year and make and model:
+    if year is not None and make and model:
         make_norm = make.strip().upper()
         model_norm = model.strip().upper()
         if make_norm and model_norm:
