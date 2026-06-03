@@ -54,7 +54,10 @@ _DIFF_FIELDS = ("year", "make", "model", "gvw", "value", "has_loan", "radius_mil
 def diff_unit_vs_pdf(progressive_unit, pdf_unit) -> dict:
     """Compare a unit Progressive already has on the quote against the PDF.
 
-    Returns {field: (pdf_value, progressive_value)} for fields that differ.
+    Returns {field: (progressive_value, pdf_value)} for fields that differ.
+    Argument ordering: progressive_unit first, pdf_unit second; the returned
+    tuple mirrors that order. Downstream WARN message renders as
+    "gvw: ('26,001 lbs or greater', '10,001 - 16,000 lbs')" → Progressive has X, PDF says Y.
     Empty dict means perfect match. Logged in WARN when SKIPping the add to
     give the operator visibility into what the existing state looks like.
 
