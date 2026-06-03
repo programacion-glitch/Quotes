@@ -310,10 +310,19 @@ class BusinessInfoPage(BasePage):
         diff_radio = self.page.get_by_role(
             "radio", name="Enter a different Business Name"
         )
+        # NOTE: try natural click first (auto-scrolls + verifies actionability).
+        # force=True paradoxically bypasses auto-scroll and fails with
+        # "outside viewport" on long START forms. Fall back to scroll+force
+        # only if natural click rejects.
         try:
-            await diff_radio.first.click(timeout=3_000, force=True)
+            await diff_radio.first.scroll_into_view_if_needed(timeout=2_000)
+            await diff_radio.first.click(timeout=5_000)
         except Exception as e:
-            print(f"    [Progressive] WARN: 'Enter a different' radio click failed: {e}")
+            print(f"    [Progressive] 'Enter a different' natural click rejected: {e}; retrying with force=True")
+            try:
+                await diff_radio.first.click(timeout=3_000, force=True)
+            except Exception as e2:
+                print(f"    [Progressive] WARN: 'Enter a different' radio click failed: {e2}")
         await self.page.wait_for_timeout(1500)
 
         # The textbox is the next <input type="text"> in DOM order AFTER the

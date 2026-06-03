@@ -424,27 +424,47 @@ class CoveragesRatesPage(BasePage):
             pass
         await self.page.wait_for_timeout(800)  # extra cushion for animations
 
-        # Iteratively answer "Does the customer require cargo coverage for X?"
-        # Yes/No subform questions. Default No for all (RYD-style distributors
-        # don't need mobile homes / business documents / etc. extras). After
-        # each answer, Progressive may reveal the next question; loop up to 5x.
+        # Iteratively answer MTC subform Yes/No questions that Progressive
+        # reveals for distributor commodities. Default No for all (RYD-style
+        # bottled-water/food carriers don't need refrigeration / mobile homes /
+        # documents extras). After each answer, Progressive may reveal the
+        # next question; the loop runs once per known question.
+        #
+        # Each tuple: (display_name, full_question_text_for_find, answer)
         known_subform_questions = [
-            ("mobile/modular homes", "mobile/modular homes and buildings"),
-            ("business documents", "business documents or non-negotiable securities"),
-            ("refrigeration", "refrigeration"),
-            ("targeted commodities", "targeted commodities"),
-            ("explosives", "explosives"),
+            (
+                "mobile/modular homes",
+                "Does the customer require cargo coverage for mobile/modular homes",
+                "No",
+            ),
+            (
+                "business documents",
+                "Does the customer require cargo coverage for business documents",
+                "No",
+            ),
+            (
+                "refrigeration breakdown",
+                "Does the customer require Refrigeration Breakdown coverage",
+                "No",
+            ),
+            (
+                "targeted commodities",
+                "Does the customer require cargo coverage for targeted commodities",
+                "No",
+            ),
+            (
+                "explosives",
+                "Does the customer require cargo coverage for explosives",
+                "No",
+            ),
         ]
-        for label_hint, full_label_token in known_subform_questions:
-            group = await self.find_radiogroup(
-                f"Does the customer require cargo coverage for {full_label_token}",
-                timeout_ms=1_500,
-            )
+        for label_hint, question, answer in known_subform_questions:
+            group = await self.find_radiogroup(question, timeout_ms=1_500)
             if not await self.field_exists(group, wait_ms=1_000):
                 continue
-            print(f"    [Progressive] MTC subform: cargo coverage for {label_hint} = No")
+            print(f"    [Progressive] MTC subform: {label_hint} = {answer}")
             try:
-                await self.safe_radio(group, "No")
+                await self.safe_radio(group, answer)
             except Exception as e:
                 print(f"    [Progressive] WARN: MTC '{label_hint}' radio failed: {e}")
             try:
