@@ -18,10 +18,30 @@ Dynamic-fields warnings:
   - Selecting Comp/Coll=Yes reveals "What is the total value of all permanently attached equipment..."
 """
 
+import re
+from dataclasses import dataclass
 from typing import List, Optional
 
 from modules.progressive.field_mapper import MappedVehicle
 from modules.progressive.pages.base_page import BasePage
+from modules.progressive.unit_matching import normalize_identifier
+
+
+@dataclass
+class ExistingUnit:
+    """A vehicle/trailer Progressive already has on the quote.
+
+    Returned by VehicleSummaryPage.list_existing_units() so the orchestrator
+    can SKIP duplicate adds. row_locator is kept for future Edit support;
+    Phase 0 only reads identifiers.
+    """
+    identifier: str
+    vin: Optional[str]
+    year: Optional[int]
+    make: Optional[str]
+    model: Optional[str]
+    is_trailer: bool = False
+    row_locator: object = None     # Playwright Locator; typed loose for tests
 
 
 VEHICLE_TYPES = [
@@ -133,6 +153,64 @@ class VehicleSummaryPage(BasePage):
             btn = self.page.get_by_role("button", name="Add Trailer")
         await btn.first.click(timeout=10_000)
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
+
+    async def list_existing_units(self) -> List["ExistingUnit"]:
+        """Read VehicleSummary rows for units Progressive already has on the quote.
+
+        Best-effort: returns [] on MostCommonVehicles, empty page, or any DOM
+        read failure. Never raises — callers treat empty as "fresh quote, add
+        everything".
+
+        Row text is parsed with a tolerant regex because ExtJS renders the
+        whole row as concatenated text content like:
+            "2021 UTILITY DRY VAN  VIN: 1UYVS253XM7301310  Edit  Remove"
+        """
+        try:
+            # Skip when on the tile picker (no list rendered yet).
+            on_most_common = await self.page.get_by_text(
+                "Most common vehicles for the customer's business",
+                exact=False,
+            ).count() > 0
+            if on_most_common:
+                return []
+        except Exception:
+            return []
+
+        units: List[ExistingUnit] = []
+        try:
+            # Each VehicleSummary row contains both 'Edit' and 'Remove' actions;
+            # using has-text on a grid row narrows past header/banner content.
+            row_loc = self.page.locator(
+                "div.x-grid-row:has-text('Edit'):has-text('Remove'),"
+                " tr:has-text('Edit'):has-text('Remove')"
+            )
+            n = await row_loc.count()
+            for i in range(n):
+                row = row_loc.nth(i)
+                try:
+                    if not await row.is_visible():
+                        continue
+                    text = (await row.text_content()) or ""
+                except Exception:
+                    continue
+
+                year, make, model, vin = _parse_summary_row(text)
+                ident = normalize_identifier(vin, year, make, model)
+                if not ident:
+                    continue
+                units.append(ExistingUnit(
+                    identifier=ident,
+                    vin=vin,
+                    year=year,
+                    make=make,
+                    model=model,
+                    is_trailer=False,    # row-vs-section detection deferred; see spec
+                    row_locator=row,
+                ))
+        except Exception:
+            # DOM gone, page navigated away, etc. — fail soft.
+            return units
+        return units
 
     async def add_suggested_vehicle(self, index: int = 0) -> bool:
         """Click 'Add' on the Nth pre-detected suggestion.
@@ -608,3 +686,43 @@ class AddVehiclePage(BasePage):
                 f"AddVehicle Continue did not advance — validation error on page: "
                 f"{full.strip()[:300]}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for VehicleSummaryPage.list_existing_units
+# ---------------------------------------------------------------------------
+
+# Capture groups: year (4 digits), make + model up to "VIN:" or "Edit"/end,
+# optional VIN (17 chars after "VIN:"). Tolerant of extra whitespace.
+# make_model is lazy but the alternation anchors it: if "VIN:" follows, it
+# consumes up to the VIN token; otherwise it expands to the "Edit"/"Remove"
+# boundary or end-of-string so it captures the full Y/M/M string.
+_ROW_REGEX = re.compile(
+    r"(?P<year>\d{4})\s+(?P<make_model>[A-Z][A-Z0-9 /\-]+?)"
+    r"(?:\s+VIN:\s*(?P<vin>[A-HJ-NPR-Z0-9]{17})|\s*(?=Edit|Remove|\Z))",
+    re.IGNORECASE,
+)
+
+
+def _parse_summary_row(text: str) -> tuple:
+    """Pull (year, make, model, vin) from a VehicleSummary row's text content.
+
+    Heuristic: make is the FIRST token after year, model is the remaining
+    tokens until 'VIN:' (or end of string). VIN is the 17-char token after
+    'VIN:' if present. Returns (None, None, None, None) when the row text
+    doesn't match the expected shape.
+    """
+    m = _ROW_REGEX.search(text or "")
+    if not m:
+        return None, None, None, None
+    year_str = m.group("year")
+    make_model = (m.group("make_model") or "").strip()
+    vin = (m.group("vin") or "").strip().upper() or None
+    year = int(year_str) if year_str else None
+
+    tokens = make_model.split()
+    if not tokens:
+        return year, None, None, vin
+    make = tokens[0].upper()
+    model = " ".join(tokens[1:]).upper() if len(tokens) > 1 else None
+    return year, make, model, vin
