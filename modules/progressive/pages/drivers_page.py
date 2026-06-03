@@ -63,20 +63,24 @@ class AddDriverPage(BasePage):
     URL: pageName=AddDriver
 
     Page title: "A few more questions about {FIRST_NAME}:"
-    Link "{FIRST_NAME} isn't a driver" to decline this person as a driver.
+    Link "{FIRST_NAME} isn’t a driver" to decline this person as a driver.
 
     Fields validated:
-      - Driver's License State (combobox) — default Texas
-      - Driver's License Number (textbox)
+      - Driver’s License State (combobox) — default Texas
+      - Driver’s License Number (textbox)
       - "Exclude this driver from the policy? (No Coverage)" — radio Yes/No
       - "Has this driver had any accidents, claims or violations in the past 5 years?"
         — radio Yes/No (Driving History section)
       - Link "Need an SR22?"
       - Continue button
 
-    Note: MVR/CLUE reports are NOT ordered here - "You'll be prompted to order those
+    Note: MVR/CLUE reports are NOT ordered here - "You’ll be prompted to order those
     reports after the Rates page." So license number validation is lightweight.
     """
+
+    REQUIRED_FIELDS = ("license_state", "license_number")
+    CONDITIONAL_FIELDS = ("exclude_from_policy", "has_driving_history")
+    OPTIONAL_FIELDS = ()
 
     async def fill_and_submit(
         self,
@@ -96,53 +100,46 @@ class AddDriverPage(BasePage):
         await self._set_exclude_driver(exclude_from_policy)
         await self._set_has_driving_history(has_driving_history)
 
-        await self._click_continue()
+        print("    [Progressive] Saving driver...")
+        await self.safe_click_continue(expect_url_changes_from="AddDriver")
 
     async def _select_license_state(self, state: str) -> None:
-        """Select Driver's License State (default Texas).
+        """Select Driver’s License State (default Texas).
 
-        ExtJS combobox — MUST use click + option click. Never .fill() or
-        .select_option() (per CLAUDE.md). Progressive pre-fills the state
-        from the policyholder's address, so re-selecting Texas is usually
-        a no-op; we still try to ensure the value is set.
+        ExtJS combobox — uses safe_select_combo (click + option click).
+        Progressive pre-fills the state from the policyholder’s address,
+        so re-selecting Texas is usually a no-op; we still ensure the value.
         """
-        print(f"    [Progressive] Driver's license state: {state}")
-        combo = self.page.get_by_role("combobox", name="Driver's License State")
+        print(f"    [Progressive] Driver’s license state: {state}")
+        combo = await self.find_combo("Driver’s License State")
         if await combo.count() == 0:
-            print(f"    [Progressive] WARN: License State combobox not present, skipping")
+            print("    [Progressive] WARN: License State combobox not present, skipping")
             return
         try:
-            await combo.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(400)
-            opt = self.page.get_by_role("option", name=state, exact=True).first
-            if await opt.count() > 0:
-                await opt.click(timeout=5_000)
-                await self.page.wait_for_timeout(300)
-            else:
-                # Close the dropdown if our target wasn't in the visible list.
-                await self.page.keyboard.press("Escape")
+            await self.safe_select_combo(combo.first, state)
         except Exception as e:
-            print(f"    [Progressive] WARN: license state '{state}' click failed: {e}")
+            print(f"    [Progressive] WARN: license state ‘{state}’ select failed: {e}")
 
     async def _fill_license_number(self, number: str) -> None:
-        """Fill Driver's License Number with ExtJS-safe click+fill+Tab pattern.
+        """Fill Driver’s License Number.
 
         The input has no placeholder/aria-label; its visible label is in a
-        separate column. Multiple selector strategies (different apostrophe
-        codepoints, XPath traversal from label/row).
+        separate column. We use find_by_label_text as primary strategy, then
+        fall back through XPath candidates. verify=False because license
+        number inputs on Progressive are often masked after entry.
         """
         print(f"    [Progressive] License number: {number[:4]}****")
-        # Apostrophe could be straight (U+0027) or typographic (U+2019).
+        # Primary: label-text XPath traversal via BasePage primitive
+        primary = await self.find_by_label_text("License Number")
+        # Fallback candidates in priority order (kept for resilience)
         candidates = [
-            # XPath: any element containing "License Number" text, then next input
+            primary,
             self.page.locator(
-                "xpath=//*[contains(normalize-space(text()), 'License Number')]"
-                "/ancestor-or-self::*[1]/following::input[@type='text'][1]"
+                "xpath=//*[contains(normalize-space(text()), ‘License Number’)]"
+                "/ancestor-or-self::*[1]/following::input[@type=’text’][1]"
             ),
-            # Match by partial text "License Number" then traverse
             self.page.get_by_text("License Number", exact=False).first
-                .locator("xpath=following::input[@type='text'][1]"),
-            self.page.get_by_role("textbox", name="Driver's License Number", exact=False),
+                .locator("xpath=following::input[@type=’text’][1]"),
             self.page.get_by_role("textbox", name="Driver’s License Number", exact=False),
             self.page.get_by_placeholder("License Number", exact=False),
             self.page.get_by_label("License Number", exact=False),
@@ -151,91 +148,38 @@ class AddDriverPage(BasePage):
             try:
                 await loc.first.wait_for(state="visible", timeout=3_000)
                 await loc.first.scroll_into_view_if_needed(timeout=2_000)
-                await loc.first.click(timeout=3_000)
-                await loc.first.fill(number, timeout=3_000)
-                await self.page.keyboard.press("Tab")
-                await self.page.wait_for_timeout(300)
-                try:
-                    actual = (await loc.first.input_value()).strip()
-                except Exception:
-                    actual = ""
-                if actual == number:
-                    print(f"    [Progressive] License number filled OK (selector #{idx})")
-                    return
-                print(
-                    f"    [Progressive] License number selector #{idx} didn't stick "
-                    f"(got {actual[:4] if actual else ''!r}****)"
-                )
+                # verify=False: license number inputs are often masked after entry
+                await self.safe_fill(loc.first, number, verify=False)
+                print(f"    [Progressive] License number filled OK (selector #{idx})")
+                return
             except Exception:
                 continue
         print("    [Progressive] WARN: License number textbox not found/filled")
 
     async def _set_exclude_driver(self, exclude: bool) -> None:
-        """Set 'Exclude this driver from the policy? (No Coverage)' radio."""
+        """Set ‘Exclude this driver from the policy? (No Coverage)’ radio."""
         answer = "Yes" if exclude else "No"
         print(f"    [Progressive] Exclude driver: {answer}")
-        group = self.page.get_by_role(
-            "radiogroup",
-            name="Exclude this driver from the policy? (No Coverage)",
+        group = await self.find_radiogroup(
+            "Exclude this driver from the policy? (No Coverage)", exact=True
         )
-        await group.get_by_role("radio", name=answer, exact=True).click()
+        await self.safe_radio(group, answer)
 
     async def _set_has_driving_history(self, has_history: bool) -> None:
         """Set driving history Yes/No (accidents/claims/violations)."""
         answer = "Yes" if has_history else "No"
         print(f"    [Progressive] Has accidents/claims/violations: {answer}")
-        # Match by start of the long question text
-        group = self.page.get_by_role(
-            "radiogroup",
-            name="Has this driver had any accidents",
-            exact=False,
-        )
-        await group.get_by_role("radio", name=answer, exact=True).click()
-
-    async def _click_continue(self) -> None:
-        """Click Continue to save driver, verifying the page actually advances.
-
-        Same flake as VehicleSummary Continue: sometimes the click is silently
-        absorbed. Retry up to 2 times with force=True + delay between.
-        """
-        print("    [Progressive] Saving driver...")
-        # Blur any active input so ExtJS commits the field values before submit.
-        try:
-            await self.page.evaluate(
-                "() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }"
-            )
-            await self.page.wait_for_timeout(500)
-        except Exception:
-            pass
-
-        for attempt in range(3):
-            try:
-                btn = self.page.get_by_role("button", name="Continue").first
-                await btn.scroll_into_view_if_needed(timeout=2_000)
-                await btn.click(timeout=10_000, force=True)
-            except Exception as e:
-                print(f"    [Progressive] AddDriver Continue click failed: {e}")
-            await self.page.wait_for_load_state("networkidle", timeout=30_000)
-            await self.page.wait_for_timeout(1_500)
-            if "AddDriver" not in self.page.url:
-                return  # navigated
-            if attempt < 2:
-                print(f"    [Progressive] AddDriver Continue did not advance; retry {attempt + 1}/2")
-                await self.page.wait_for_timeout(2_500)
-
-        await self.screenshot("add_driver_did_not_advance")
-        raise RuntimeError(
-            "AddDriver Continue did not advance — likely missing/invalid "
-            "license number. Verify driver.license_number is correct."
-        )
+        # Partial match on start of the long question text
+        group = await self.find_radiogroup("Has this driver had any accidents", exact=False)
+        await self.safe_radio(group, answer)
 
     async def click_isnt_a_driver(self, first_name: str) -> None:
-        """Click the '{first_name} isn't a driver' link to remove them."""
+        """Click the ‘{first_name} isn’t a driver’ link to remove them."""
         link = self.page.get_by_role(
-            "link", name=f"{first_name} isn't a driver"
+            "link", name=f"{first_name} isn’t a driver"
         )
         if await link.count() == 0:
-            link = self.page.locator(f"a:has-text(\"{first_name} isn't a driver\")")
+            link = self.page.locator(f"a:has-text(\"{first_name} isn’t a driver\")")
         await link.click(timeout=10_000)
         await self.page.wait_for_load_state("networkidle", timeout=15_000)
 
