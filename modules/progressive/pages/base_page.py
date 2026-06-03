@@ -119,6 +119,35 @@ class BasePage:
         """Find an input by its real placeholder attribute (when ExtJS exposes it)."""
         return self.page.get_by_placeholder(placeholder)
 
+    async def find_radiogroup(
+        self, name: str, *, exact: bool = False, timeout_ms: int = 5_000
+    ) -> Locator:
+        """Find a radiogroup by its accessible name (partial match by default)."""
+        return self.page.get_by_role("radiogroup", name=name, exact=exact)
+
+    async def find_combo(
+        self, name: str, *, exact: bool = False, timeout_ms: int = 5_000
+    ) -> Locator:
+        """Find an ExtJS combobox by its accessible name."""
+        return self.page.get_by_role("combobox", name=name, exact=exact)
+
+    async def field_exists(self, locator: Locator, *, wait_ms: int = 2_000) -> bool:
+        """Short-poll: True if locator has count > 0 AND is visible within wait_ms.
+
+        Used for CONDITIONAL fields that may not render for some
+        commodity types (e.g. ELD radio absent for Beverage Distributor).
+        """
+        try:
+            await locator.wait_for(state="visible", timeout=wait_ms)
+            return (await locator.count()) > 0 and await locator.is_visible()
+        except Exception:
+            try:
+                if (await locator.count()) > 0 and await locator.is_visible():
+                    return True
+            except Exception:
+                pass
+            return False
+
     # ============================================================
     # Familia C — Esperas dinámicas
     # ============================================================

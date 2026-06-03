@@ -81,3 +81,50 @@ async def test_find_by_placeholder_uses_get_by_placeholder(mock_page, mock_locat
     result = await bp.find_by_placeholder("Business Name")
     mock_page.get_by_placeholder.assert_called_once_with("Business Name")
     assert result is mock_locator
+
+
+@pytest.mark.asyncio
+async def test_find_radiogroup_uses_get_by_role(mock_page, mock_locator):
+    bp = BasePage(mock_page)
+    result = await bp.find_radiogroup("Is the customer currently insured?")
+    mock_page.get_by_role.assert_called_with(
+        "radiogroup",
+        name="Is the customer currently insured?",
+        exact=False,
+    )
+    assert result is mock_locator
+
+
+@pytest.mark.asyncio
+async def test_find_combo_uses_get_by_role_combobox(mock_page, mock_locator):
+    bp = BasePage(mock_page)
+    result = await bp.find_combo("Year")
+    mock_page.get_by_role.assert_called_with(
+        "combobox",
+        name="Year",
+        exact=False,
+    )
+    assert result is mock_locator
+
+
+@pytest.mark.asyncio
+async def test_field_exists_true_when_visible(mock_page, mock_locator):
+    mock_locator.count = AsyncMock(return_value=1)
+    mock_locator.is_visible = AsyncMock(return_value=True)
+    bp = BasePage(mock_page)
+    assert await bp.field_exists(mock_locator, wait_ms=100) is True
+
+
+@pytest.mark.asyncio
+async def test_field_exists_false_when_count_zero(mock_page, mock_locator):
+    mock_locator.count = AsyncMock(return_value=0)
+    bp = BasePage(mock_page)
+    assert await bp.field_exists(mock_locator, wait_ms=100) is False
+
+
+@pytest.mark.asyncio
+async def test_field_exists_false_when_not_visible(mock_page, mock_locator):
+    mock_locator.count = AsyncMock(return_value=1)
+    mock_locator.is_visible = AsyncMock(return_value=False)
+    bp = BasePage(mock_page)
+    assert await bp.field_exists(mock_locator, wait_ms=100) is False
