@@ -52,15 +52,18 @@ class HomePage(BasePage):
         # panel only exists once that settles, so wait for the home page to
         # finish loading before looking for the dropdown (a short attached-wait
         # raced the redirect and timed out intermittently).
+        # Wait for ExtJS to settle after the federated-login redirect chain.
         try:
-            await self.page.wait_for_load_state("networkidle", timeout=30_000)
+            await self.wait_for_extjs_idle()
         except Exception:
             pass
         # The state dropdown has a stable id #QuoteStateList.
         dropdown = self.page.locator("#QuoteStateList")
         await dropdown.wait_for(state="visible", timeout=30_000)
+        # #QuoteStateList is a native <select>, not an ExtJS combo — select_option() is correct.
         await dropdown.select_option(label=state_name, timeout=10_000)
-        # Dropdown has onchange=BuildProductSelector that renders the Select Product button
+        # Deliberate animation wait: onchange=BuildProductSelector needs time to render
+        # the "Select Product(s)" button in the DOM before we can click it.
         await self.page.wait_for_timeout(500)
 
     async def _select_product_commercial_auto(self) -> None:
@@ -76,40 +79,46 @@ class HomePage(BasePage):
             await select_btn.scroll_into_view_if_needed(timeout=3_000)
         except Exception:
             pass
-        await select_btn.click(timeout=10_000)
+        # Dashboard button — NOT a wizard Continue.
+        await select_btn.click(force=True, timeout=10_000)
+        # Deliberate animation wait: product flyout popup needs time to render.
         await self.page.wait_for_timeout(500)
 
         # Wait for the product flyout popup to appear
         popup = self.page.locator(".pp-popup-box")
         await popup.wait_for(state="visible", timeout=10_000)
 
-        # Click Commercial Auto - data-pp-id="CV" is stable
-        await self.page.locator('[data-pp-id="CV"]').first.click(timeout=10_000)
+        # Click Commercial Auto - data-pp-id="CV" is stable. NOT a wizard Continue.
+        await self.page.locator('[data-pp-id="CV"]').first.click(force=True, timeout=10_000)
+        # Deliberate animation wait: "Check USDOT number?" link needs time to render.
         await self.page.wait_for_timeout(500)
 
         # After selecting Commercial Auto, a "Check USDOT number?" link appears
-        # Click it to open the USDOT widget
+        # Click it to open the USDOT widget. NOT a wizard Continue.
         check_usdot = self.page.locator(
             '.pp-popup-box a:has-text("Check USDOT")'
         )
         if await check_usdot.count() > 0:
-            await check_usdot.first.click(timeout=5_000)
+            await check_usdot.first.click(force=True, timeout=5_000)
+            # Deliberate animation wait: USDOT widget needs time to expand.
             await self.page.wait_for_timeout(800)
 
     async def _search_usdot(self, usdot: str) -> None:
         """Enter USDOT and search. Raises RuntimeError if not found."""
         print(f"    [Progressive] Searching USDOT: {usdot}")
 
-        # Fill USDOT input - id is stable
+        # Fill USDOT input - id is stable.
+        # verify=False: success is confirmed by the results table appearing below,
+        # not by input_value() readback (the field clears itself after search).
         usdot_input = self.page.locator("#USDOTNumber")
         await usdot_input.wait_for(state="visible", timeout=10_000)
-        await usdot_input.fill(usdot, timeout=5_000)
+        await self.safe_fill(usdot_input.first, usdot, verify=False)
 
-        # Click Search button inside the widget (class base-btn without --alt modifier)
+        # Click Search button inside the widget — NOT a wizard Continue.
         search_btn = self.page.locator(
             '.us-dot-cl-widget__btn.base-btn:not(.base-btn--alt)'
         )
-        await search_btn.first.click(timeout=5_000)
+        await search_btn.first.click(force=True, timeout=5_000)
 
         # Wait for results table or error to appear
         await self.page.wait_for_timeout(3_000)
@@ -134,9 +143,9 @@ class HomePage(BasePage):
         """Click 'Add Products to Quote' and return the new tab."""
         print("    [Progressive] Adding products to quote...")
 
-        # Button id is stable: #quoteActionSelectButton
+        # Button id is stable: #quoteActionSelectButton. NOT a wizard Continue.
         async with context.expect_page(timeout=20_000) as new_page_info:
-            await self.page.locator("#quoteActionSelectButton").first.click(timeout=10_000)
+            await self.page.locator("#quoteActionSelectButton").first.click(force=True, timeout=10_000)
 
         new_page = await new_page_info.value
         await new_page.wait_for_load_state("networkidle", timeout=60_000)
