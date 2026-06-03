@@ -353,19 +353,76 @@ class CoveragesRatesPage(BasePage):
         await self.page.wait_for_timeout(400)
         return True
 
-    async def _recalculate_if_needed(self) -> None:
-        """Click Recalculate button if it's visible (after coverage changes)."""
+    async def _recalculate_if_needed(self, *, max_attempts: int = 3) -> None:
+        """Click Recalculate and POLL until the page shows a real premium.
+
+        Live RYD 2026-06-03 run CA117053983 showed: after setting MTC
+        commodity + limit, clicking Recalculate was logged but the page
+        STILL showed '$******' + 'The coverages have changed, please
+        recalculate to see your rate.' even after 30s networkidle +
+        15s extjs_idle. Capture_price then read '$******' (no premium).
+
+        Root cause: 'Done with this coverage' (which collapses MTC) and
+        Recalculate compete on the ExtJS event queue. If Recalculate
+        fires while Done is still propagating state, Progressive
+        re-flags 'coverages changed' AFTER our click, leaving the page
+        stuck.
+
+        Fix: click Recalculate, then poll for either
+          - a '$X,XXX.XX per year' pattern to APPEAR, OR
+          - the 'please recalculate' message to DISAPPEAR.
+        If neither happens within 20s, re-click Recalculate (up to
+        max_attempts total).
+        """
         btn = self.page.get_by_role("button", name="Recalculate")
-        if await btn.count() > 0:
-            print("    [Progressive] Recalculating premium...")
-            await btn.last.click(timeout=10_000)
-            await self.page.wait_for_load_state("networkidle", timeout=30_000)
-            # ExtJS recalculate is an internal Ajax that may not trigger
-            # networkidle reliably. Wait for ExtJS idle + DOM stable.
+        if await btn.count() == 0:
+            return
+
+        for attempt in range(1, max_attempts + 1):
+            print(f"    [Progressive] Recalculating premium (attempt {attempt}/{max_attempts})...")
+            try:
+                # Re-resolve in case DOM changed since previous attempt
+                btn_now = self.page.get_by_role("button", name="Recalculate")
+                if await btn_now.count() == 0:
+                    print("    [Progressive] Recalculate button no longer visible — assuming done")
+                    return
+                await btn_now.last.click(timeout=10_000)
+            except Exception as e:
+                print(f"    [Progressive] WARN: Recalculate click attempt {attempt}: {e}")
+
+            try:
+                await self.page.wait_for_load_state("networkidle", timeout=30_000)
+            except Exception:
+                pass
             try:
                 await self.wait_for_extjs_idle(timeout_ms=15_000)
             except Exception as e:
                 print(f"    [Progressive] WARN: wait_for_extjs_idle after recalc: {e}")
+
+            # Poll for actual premium to APPEAR OR 'please recalculate' to DISAPPEAR
+            try:
+                await self.page.wait_for_function(
+                    """() => {
+                        const text = document.body.innerText || '';
+                        // Real premium found?
+                        const hasPremium = /\\$[\\d,]+\\.\\d{2}\\s*(per year|annual)/i.test(text);
+                        // Still asking to recalculate?
+                        const stillNeedsRecalc = /please\\s*['\\"]?recalculate['\\"]?\\s*to see your rate/i.test(text);
+                        return hasPremium || !stillNeedsRecalc;
+                    }""",
+                    timeout=20_000,
+                )
+                print(f"    [Progressive] Recalculate completed (attempt {attempt})")
+                return
+            except Exception:
+                if attempt < max_attempts:
+                    print(f"    [Progressive] Recalc still pending after attempt {attempt}; retrying")
+                    await self.page.wait_for_timeout(1_500)
+                else:
+                    print(
+                        f"    [Progressive] WARN: premium did not materialize after "
+                        f"{max_attempts} recalc attempts; capture_price will likely fail"
+                    )
 
     # ---- Special coverages ----
 
