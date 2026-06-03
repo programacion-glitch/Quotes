@@ -596,24 +596,18 @@ class CoveragesRatesPage(BasePage):
         # Step B: set the limit combobox (Trucker path had it from the start;
         # Distributor path just had it revealed).
         #
-        # Use option-enumeration instead of safe_select_combo because the
-        # Distributor-revealed limit combo has different option text formatting
-        # than the Trucker one (verified live 2026-06-03: safe_select_combo
-        # returned input_value='' for limit='$100,000'). Enumeration picks the
-        # first li.x-boundlist-item matching any of the preference variants.
+        # Live RYD run 2026-06-03 (CA117053870) showed Progressive's actual
+        # option list uses "k" notation + combined deductible:
+        #   '$5k with a $500 Deductible', '$5k with a $1,000 Deductible',
+        #   '$10k with a $500 Deductible', ...,
+        #   '$100k with a $1,000 Deductible', '$100k with a $2,500 Deductible',
+        #   ..., '$250k with a $2,500 Deductible'
+        # So an input of "$100,000" must be translated to "$100k" and matched
+        # against the deductible variants. Preferences in cascade: exact with
+        # $1,000 deductible (standard), exact with $2,500 deductible, then
+        # partial "$Xk with a", then bare "$Xk", then the original input.
         if await self.field_exists(limit_combo, wait_ms=2_000):
-            limit_preferences = [
-                limit,                              # user-requested literal, e.g. "$100,000"
-                limit.replace("$", "").replace(",", ""),  # "100000"
-                limit.replace(",", ""),             # "$100000"
-                limit.replace("$", ""),             # "100,000"
-            ]
-            # Dedupe while preserving order
-            seen = set()
-            limit_preferences = [
-                p for p in limit_preferences
-                if not (p in seen or seen.add(p))
-            ]
+            limit_preferences = self._build_mtc_limit_preferences(limit)
             chosen_limit = await self._pick_first_combo_option(
                 limit_combo, limit_preferences, label="Motor Truck Cargo limit"
             )
@@ -854,6 +848,36 @@ class CoveragesRatesPage(BasePage):
             return first
         except Exception:
             return None
+
+    @staticmethod
+    def _build_mtc_limit_preferences(limit: str) -> list:
+        """Convert a dollar-amount limit like '$100,000' into the cascading
+        preference list used to match Progressive's MTC limit dropdown.
+
+        Progressive's option format is '$Xk with a $Y Deductible' where Y is
+        either $500, $1,000, or $2,500. We prefer $1,000 (standard) then
+        $2,500, then any partial match. Falls back to the original string
+        as a last resort (covers Trucker path which may use different format).
+        """
+        import re
+        m = re.match(r"\$?([\d,]+)", limit or "")
+        if not m:
+            return [limit]
+        digits = m.group(1).replace(",", "")
+        try:
+            n = int(digits)
+        except ValueError:
+            return [limit]
+        k = n // 1000 if n >= 1000 else n
+        k_form = f"${k}k"
+        return [
+            f"{k_form} with a $1,000 Deductible",
+            f"{k_form} with a $2,500 Deductible",
+            f"{k_form} with a $500 Deductible",
+            f"{k_form} with a",  # partial — first match wins (typically $500 or $1,000)
+            k_form,              # very partial ("$100k")
+            limit,               # original input ("$100,000")
+        ]
 
     async def _locate_commodity_combo_input(
         self, *, label_text: str, placeholder_text: str
