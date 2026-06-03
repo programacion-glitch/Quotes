@@ -166,3 +166,42 @@ async def test_safe_fill_skips_verify_when_verify_false(mock_page, mock_locator)
     bp = BasePage(mock_page)
     await bp.safe_fill(mock_locator, "hello", verify=False)
     mock_locator.input_value.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_safe_radio_clicks_option_and_verifies(mock_page, mock_locator):
+    mock_radio = AsyncMock()
+    mock_radio.click = AsyncMock()
+    mock_radio.check = AsyncMock()
+    mock_radio.is_checked = AsyncMock(return_value=True)
+    mock_locator.get_by_role = MagicMock(return_value=mock_radio)
+    bp = BasePage(mock_page)
+    await bp.safe_radio(mock_locator, "Yes")
+    mock_locator.get_by_role.assert_called_with("radio", name="Yes", exact=True)
+    mock_radio.click.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_safe_radio_retries_with_force_then_check(mock_page, mock_locator):
+    mock_radio = AsyncMock()
+    mock_radio.click = AsyncMock()
+    mock_radio.check = AsyncMock()
+    mock_radio.is_checked = AsyncMock(side_effect=[False, False, True])
+    mock_locator.get_by_role = MagicMock(return_value=mock_radio)
+    bp = BasePage(mock_page)
+    await bp.safe_radio(mock_locator, "Yes", retries=3)
+    assert mock_radio.click.await_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_safe_radio_raises_RadioStuckError_after_retries(mock_page, mock_locator):
+    from modules.progressive.pages._exceptions import RadioStuckError
+    mock_radio = AsyncMock()
+    mock_radio.click = AsyncMock()
+    mock_radio.check = AsyncMock()
+    mock_radio.is_checked = AsyncMock(return_value=False)
+    mock_locator.get_by_role = MagicMock(return_value=mock_radio)
+    bp = BasePage(mock_page)
+    with pytest.raises(RadioStuckError) as exc_info:
+        await bp.safe_radio(mock_locator, "Yes", retries=2)
+    assert exc_info.value.primitive == "safe_radio"

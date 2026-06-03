@@ -211,6 +211,92 @@ class BasePage:
             debug_context=debug,
         )
 
+    async def safe_radio(
+        self,
+        group: Locator,
+        option: str,
+        *,
+        retries: int = 3,
+    ) -> None:
+        """Click radio by visible name within group; verify is_checked. Retry escalating force."""
+        from modules.progressive.pages._exceptions import RadioStuckError
+
+        radio = group.get_by_role("radio", name=option, exact=True)
+        attempts = 0
+        for attempt in range(retries + 1):
+            attempts = attempt + 1
+            try:
+                if attempt == 0:
+                    await radio.click(timeout=5_000)
+                elif attempt == 1:
+                    await radio.click(timeout=5_000, force=True)
+                else:
+                    await radio.check(force=True, timeout=5_000)
+            except Exception:
+                pass
+
+            try:
+                if await radio.is_checked():
+                    return
+            except Exception:
+                pass
+
+            if attempt < retries:
+                await self.page.wait_for_timeout(500 * (attempt + 1))
+
+        debug = await self.dump_debug_context("safe_radio")
+        screenshot = await self.screenshot(f"safe_radio_stuck_{option}_{attempts}")
+        raise RadioStuckError(
+            f"safe_radio could not check '{option}' after {attempts} attempts",
+            primitive="safe_radio",
+            field=option,
+            attempts=attempts,
+            screenshot_path=screenshot,
+            debug_context=debug,
+        )
+
+    async def safe_checkbox(
+        self,
+        locator: Locator,
+        *,
+        check: bool = True,
+        retries: int = 2,
+    ) -> None:
+        """Toggle checkbox only if current state differs from desired; verify."""
+        from modules.progressive.pages._exceptions import RadioStuckError
+
+        attempts = 0
+        for attempt in range(retries + 1):
+            attempts = attempt + 1
+            try:
+                current = await locator.is_checked()
+            except Exception:
+                current = not check
+            if current == check:
+                return
+            try:
+                await locator.click(timeout=5_000, force=(attempt > 0))
+            except Exception:
+                pass
+            try:
+                if await locator.is_checked() == check:
+                    return
+            except Exception:
+                pass
+            if attempt < retries:
+                await self.page.wait_for_timeout(500 * (attempt + 1))
+
+        debug = await self.dump_debug_context("safe_checkbox")
+        screenshot = await self.screenshot(f"safe_checkbox_stuck_{attempts}")
+        raise RadioStuckError(
+            f"safe_checkbox could not set state={check} after {attempts} attempts",
+            primitive="safe_checkbox",
+            field=None,
+            attempts=attempts,
+            screenshot_path=screenshot,
+            debug_context=debug,
+        )
+
     # ============================================================
     # Familia C — Esperas dinámicas
     # ============================================================
