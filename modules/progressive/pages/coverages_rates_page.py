@@ -166,23 +166,15 @@ class CoveragesRatesPage(BasePage):
         expected_default: Optional[str] = None,
     ) -> None:
         """Set EVERY occurrence of a combobox with the given label (one per vehicle)."""
-        combos = self.page.get_by_role("combobox", name=label, exact=False)
-        count = await combos.count()
+        combo_loc = await self.find_combo(label, exact=False)
+        count = await combo_loc.count()
         if count == 0:
             print(f"    [Progressive] WARN: no combobox '{label}' found")
             return
         print(f"    [Progressive] Setting {count}x '{label}' = '{option_text}'")
         for i in range(count):
             try:
-                await combos.nth(i).click(timeout=5_000)
-                await self.page.wait_for_timeout(400)
-                opt = self.page.get_by_role("option", name=option_text, exact=False).first
-                if await opt.count() > 0:
-                    await opt.click(timeout=5_000)
-                    await self.page.wait_for_timeout(400)
-                else:
-                    # close the dropdown
-                    await self.page.keyboard.press("Escape")
+                await self.safe_select_combo(combo_loc.nth(i), option_text)
             except Exception as e:
                 print(f"    [Progressive] WARN: '{label}'[{i}] = '{option_text}' failed: {e}")
 
@@ -249,32 +241,30 @@ class CoveragesRatesPage(BasePage):
         """Click 'Finish & Buy' to advance to AdditionalDetails (NOT payment)."""
         print("    [Progressive] Advancing to FINAL DETAILS...")
         await self._recalculate_if_needed()
-        btn = self.page.get_by_role("button", name="Finish & Buy").last
-        await btn.click(timeout=10_000)
-        await self.page.wait_for_load_state("networkidle", timeout=60_000)
+        await self.safe_click_continue(expect_url_changes_from="CoveragesRates")
 
     # ---- Helpers ----
 
     async def _set_combobox(self, label: str, option_text: str) -> None:
         """Open a Sencha combobox by label and pick an option by visible text."""
-        combo = self.page.get_by_role("combobox", name=label, exact=False)
+        combo = await self.find_combo(label, exact=False)
         if await combo.count() == 0:
             print(f"    [Progressive] WARN: combobox '{label}' not found")
             return
-        await combo.first.click()
-        await self.page.wait_for_timeout(500)
-        opt = self.page.get_by_role("option", name=option_text, exact=False).first
-        if await opt.count() > 0:
-            await opt.click(timeout=5_000)
-            await self.page.wait_for_timeout(500)
+        try:
+            await self.safe_select_combo(combo.first, option_text)
+        except Exception as e:
+            print(f"    [Progressive] WARN: combobox '{label}' = '{option_text}' failed: {e}")
 
     async def _set_radio(self, group_label: str, value: str) -> None:
         """Click a radio inside a named radiogroup."""
-        group = self.page.get_by_role("radiogroup", name=group_label, exact=False)
+        group = await self.find_radiogroup(group_label, exact=False)
         if await group.count() == 0:
             return
-        await group.get_by_role("radio", name=value, exact=True).click()
-        await self.page.wait_for_timeout(300)
+        try:
+            await self.safe_radio(group, value)
+        except Exception as e:
+            print(f"    [Progressive] WARN: radio '{group_label}' = '{value}' failed: {e}")
 
     async def _expand_coverage(self, name: str) -> bool:
         """Expand a '+' button next to a special coverage section if collapsed.
@@ -288,7 +278,8 @@ class CoveragesRatesPage(BasePage):
         # Already expanded if attribute 'expanded' is true; safest is just to click
         try:
             await btn.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(800)
+            # Wait for ExtJS to finish rendering the expanded subform
+            await self.wait_for_extjs_idle()
         except Exception:
             pass
         return True
@@ -361,7 +352,8 @@ class CoveragesRatesPage(BasePage):
         done = self.page.get_by_role("button", name="Done with this coverage")
         if await done.count() > 0:
             await done.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(800)
+            # Wait for ExtJS to collapse the subform after Done
+            await self.wait_for_extjs_idle()
 
     async def _configure_non_owned_auto(self, coverages) -> None:
         """Fill Employer Non-Owned Auto Liability subform."""
@@ -394,7 +386,8 @@ class CoveragesRatesPage(BasePage):
         done = self.page.get_by_role("button", name="Done with this coverage")
         if await done.count() > 0:
             await done.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(800)
+            # Wait for ExtJS to collapse the subform after Done
+            await self.wait_for_extjs_idle()
 
     async def _configure_motor_truck_cargo(self, limit: str = "$100,000") -> None:
         """Expand Motor Truck Cargo and set limit. Skip with WARN if subform shape changed.
@@ -471,7 +464,8 @@ class CoveragesRatesPage(BasePage):
         done = self.page.get_by_role("button", name="Done with this coverage")
         if await done.count() > 0:
             await done.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(800)
+            # Wait for ExtJS to collapse the subform after Done
+            await self.wait_for_extjs_idle()
 
     async def _configure_non_owned_trailer_phys_damage(self, limit: str) -> None:
         """Fill Non-Owned Trailer Physical Damage subform."""
@@ -484,4 +478,5 @@ class CoveragesRatesPage(BasePage):
         done = self.page.get_by_role("button", name="Done with this coverage")
         if await done.count() > 0:
             await done.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(800)
+            # Wait for ExtJS to collapse the subform after Done
+            await self.wait_for_extjs_idle()
