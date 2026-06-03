@@ -125,9 +125,21 @@ class AddDriverPage(BasePage):
         license_number: str = "",
         exclude_from_policy: bool = False,
         has_driving_history: bool = False,
+        name: Optional[str] = None,
+        date_of_birth: Optional[str] = None,
     ) -> None:
-        """Fill the AddDriver form and click Continue."""
+        """Fill the AddDriver form and click Continue.
+
+        Progressive AUTO-POPULATES First/Last/DOB for the policyholder from
+        BusinessOwnerInfo, but ADDITIONAL drivers arrive with empty fields.
+        We fill name + DOB only if the fields are currently empty (idempotent).
+        """
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
+
+        if name:
+            await self._fill_name_if_empty(name)
+        if date_of_birth:
+            await self._fill_dob_if_empty(date_of_birth)
 
         if license_state:
             await self._select_license_state(license_state)
@@ -139,6 +151,67 @@ class AddDriverPage(BasePage):
 
         print("    [Progressive] Saving driver...")
         await self.safe_click_continue(expect_url_changes_from="AddDriver")
+
+    async def _fill_name_if_empty(self, full_name: str) -> None:
+        """Fill First / Last name textboxes if empty (additional drivers).
+
+        Progressive's First Name has placeholder 'Driver's First Name';
+        Last Name has placeholder 'Last Name'. We split the full_name on
+        the first whitespace — same logic the bot uses for the business
+        owner in business_info_page._fill_owner_info.
+        """
+        parts = full_name.strip().split()
+        if not parts:
+            return
+        first = parts[0]
+        last = " ".join(parts[1:]) if len(parts) > 1 else ""
+
+        # First name
+        first_input = self.page.get_by_placeholder("Driver's First Name").first
+        if not await self.field_exists(first_input, wait_ms=1_500):
+            # Apostrophe variant: Driver's vs Driver's
+            first_input = self.page.get_by_placeholder("Driver’s First Name").first
+        if await self.field_exists(first_input, wait_ms=800):
+            current = ""
+            try:
+                current = (await first_input.input_value()).strip()
+            except Exception:
+                pass
+            if not current:
+                print(f"    [Progressive] First Name = {first!r}")
+                await self.safe_fill(first_input, first, verify=False)
+
+        # Last name
+        if last:
+            last_input = self.page.get_by_placeholder("Last Name").first
+            if await self.field_exists(last_input, wait_ms=800):
+                current = ""
+                try:
+                    current = (await last_input.input_value()).strip()
+                except Exception:
+                    pass
+                if not current:
+                    print(f"    [Progressive] Last Name = {last!r}")
+                    await self.safe_fill(last_input, last, verify=False)
+
+    async def _fill_dob_if_empty(self, dob: str) -> None:
+        """Fill Date of Birth textbox if empty.
+
+        Placeholder is 'MM/DD/YYYY'. Accepts strings like '02/07/1955'.
+        Skips if the field already has a value (policyholder auto-populated).
+        """
+        dob_input = self.page.get_by_placeholder("MM/DD/YYYY").first
+        if not await self.field_exists(dob_input, wait_ms=1_500):
+            return
+        current = ""
+        try:
+            current = (await dob_input.input_value()).strip()
+        except Exception:
+            pass
+        if current and current != "MM/DD/YYYY":
+            return  # already filled (likely policyholder auto-populated)
+        print(f"    [Progressive] DOB = {dob}")
+        await self.safe_fill(dob_input, dob, verify=False)
 
     async def _select_license_state(self, state: str) -> None:
         """Select Driver’s License State (default Texas).

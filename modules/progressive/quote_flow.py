@@ -285,6 +285,8 @@ class QuoteFlow:
                 license_number=policyholder.license_number or "",
                 exclude_from_policy=initial_exclude,
                 has_driving_history=policyholder.has_driving_history,
+                name=policyholder.name,
+                date_of_birth=policyholder.date_of_birth,
             )
         else:
             # No driver info from blue quote — submit empty (will likely halt at NoHit)
@@ -307,6 +309,8 @@ class QuoteFlow:
                 license_number=driver.license_number or "",
                 exclude_from_policy=driver.exclude_from_policy,
                 has_driving_history=driver.has_driving_history,
+                name=driver.name,
+                date_of_birth=driver.date_of_birth,
             )
 
         # If we deferred policyholder exclusion, apply it now via Edit on the
@@ -323,6 +327,8 @@ class QuoteFlow:
                 license_number=policyholder.license_number or "",
                 exclude_from_policy=True,
                 has_driving_history=policyholder.has_driving_history,
+                name=policyholder.name,
+                date_of_birth=policyholder.date_of_birth,
             )
 
         # Click Continue from DriverSummary
