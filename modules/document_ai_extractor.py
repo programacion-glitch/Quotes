@@ -6,6 +6,7 @@ using GPT-5.4 via local proxy. Blue Quote uses existing BlueQuotePDFExtractor.
 """
 
 import json
+import re
 import base64
 import time
 import tempfile
@@ -42,6 +43,14 @@ _STREET_SUFFIXES = {
     "LOOP", "ALY", "ALLEY", "ROW", "RUN", "XING", "CROSSING",
     "SQ", "SQUARE", "PT", "POINT", "FWY", "FREEWAY", "RT", "ROUTE",
 }
+
+
+def _first_int(value) -> Optional[int]:
+    """Return the first integer found in *value*, or None."""
+    if value is None:
+        return None
+    m = re.search(r"\d+", str(value))
+    return int(m.group(0)) if m else None
 
 
 def _parse_us_address(addr: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
@@ -447,13 +456,6 @@ class DocumentAIExtractor:
         # Applicant
         # The Blue Quote often stores years as "3 YEARS" / "3 anos" / "3" — pull
         # the first integer from the string instead of strict int parsing.
-        import re as _re
-        def _first_int(value) -> Optional[int]:
-            if value is None:
-                return None
-            m = _re.search(r"\d+", str(value))
-            return int(m.group(0)) if m else None
-
         business_years = _first_int(app_info.get("years_in_business"))
 
         # Current carrier: if filled with a REAL carrier name, the client is
@@ -635,14 +637,6 @@ class DocumentAIExtractor:
         Also used directly by unit tests (test seam) to exercise vehicle
         record construction without requiring the full extraction pipeline.
         """
-        import re as _re
-
-        def _first_int(value) -> Optional[int]:
-            if value is None:
-                return None
-            m = _re.search(r"\d+", str(value))
-            return int(m.group(0)) if m else None
-
         vehicles = extracted.get("vehicles", {})
         trucks = vehicles.get("tractors_trucks_pickup", [])
         trailers = vehicles.get("trailers", [])

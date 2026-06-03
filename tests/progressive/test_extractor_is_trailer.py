@@ -22,6 +22,13 @@ def test_is_trailer_flag_propagates_from_structured_dict():
     assert records[0].is_trailer is False
     assert records[1].is_trailer is True
 
+    # Spot-check that field mapping preserved data (not just the trailer flag).
+    assert records[0].year == 2020
+    assert records[0].make == "FREIGHTLINER"
+    assert records[0].trailer_type == "TRACTOR"
+    assert records[1].make == "UTILITY"
+    assert records[1].trailer_type == "DRY VAN"
+
 
 def test_is_trailer_defaults_false_when_field_absent():
     """Profiles built without the extractor (older fixtures) default is_trailer=False."""
