@@ -44,3 +44,28 @@ def normalize_identifier(
             return f"{year}|{make_norm}|{model_norm}"
 
     return None
+
+
+# Fields compared when diffing a unit already on Progressive against the
+# PDF-derived MappedVehicle. Skipped when an attribute is missing on either side.
+_DIFF_FIELDS = ("year", "make", "model", "gvw", "value", "has_loan", "radius_miles")
+
+
+def diff_unit_vs_pdf(progressive_unit, pdf_unit) -> dict:
+    """Compare a unit Progressive already has on the quote against the PDF.
+
+    Returns {field: (pdf_value, progressive_value)} for fields that differ.
+    Empty dict means perfect match. Logged in WARN when SKIPping the add to
+    give the operator visibility into what the existing state looks like.
+
+    Structural duck-typing: both arguments only need to expose attributes
+    listed in _DIFF_FIELDS — works for ExistingUnit, MappedVehicle, or a test
+    double.
+    """
+    diffs: dict = {}
+    for field_name in _DIFF_FIELDS:
+        prog_val = getattr(progressive_unit, field_name, None)
+        pdf_val = getattr(pdf_unit, field_name, None)
+        if prog_val != pdf_val:
+            diffs[field_name] = (prog_val, pdf_val)
+    return diffs

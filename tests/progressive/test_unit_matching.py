@@ -47,3 +47,65 @@ def test_whitespace_only_make_returns_none():
 def test_none_vin_with_valid_ymm_uses_ymm():
     """Most common no-VIN path: vin=None + complete YMM → composite identifier."""
     assert normalize_identifier(None, 2021, "UTILITY", "FLATBED") == "2021|UTILITY|FLATBED"
+
+
+# ---------------------------------------------------------------------------
+# diff_unit_vs_pdf tests
+# ---------------------------------------------------------------------------
+from dataclasses import dataclass
+from typing import Optional as _Opt
+
+from modules.progressive.unit_matching import diff_unit_vs_pdf
+
+
+# Lightweight stand-ins for ExistingUnit/MappedVehicle, since diff_unit_vs_pdf
+# is structural (reads attrs, not type-bound).
+@dataclass
+class _U:
+    year: _Opt[int] = None
+    make: _Opt[str] = None
+    model: _Opt[str] = None
+    gvw: _Opt[str] = None
+    value: _Opt[str] = None
+    has_loan: str = "No"
+    radius_miles: _Opt[str] = None
+
+
+def test_diff_identical_units_returns_empty():
+    a = _U(year=2021, make="UTIL", model="DRY VAN", gvw="26,001 lbs or greater",
+           value="50000", has_loan="No", radius_miles="Over 500 miles")
+    b = _U(year=2021, make="UTIL", model="DRY VAN", gvw="26,001 lbs or greater",
+           value="50000", has_loan="No", radius_miles="Over 500 miles")
+    assert diff_unit_vs_pdf(a, b) == {}
+
+
+def test_diff_single_field_diff():
+    a = _U(year=2021, gvw="26,001 lbs or greater")
+    b = _U(year=2021, gvw="10,001 - 16,000 lbs")
+    assert diff_unit_vs_pdf(a, b) == {"gvw": ("26,001 lbs or greater", "10,001 - 16,000 lbs")}
+
+
+def test_diff_multiple_fields():
+    a = _U(year=2021, value="50000", has_loan="No")
+    b = _U(year=2020, value="40000", has_loan="Loan")
+    assert diff_unit_vs_pdf(a, b) == {
+        "year": (2021, 2020),
+        "value": ("50000", "40000"),
+        "has_loan": ("No", "Loan"),
+    }
+
+
+def test_diff_none_vs_value_counts_as_diff():
+    a = _U(value=None)
+    b = _U(value="40000")
+    assert diff_unit_vs_pdf(a, b) == {"value": (None, "40000")}
+
+
+def test_diff_skips_unknown_attrs():
+    """diff_unit_vs_pdf reads a fixed field list; foreign attrs don't break it."""
+    a = _U(year=2021)
+    b = _U(year=2021)
+    # ad hoc attr that diff_unit_vs_pdf should ignore
+    a.foo = "x"
+    b.foo = "y"
+    assert diff_unit_vs_pdf(a, b) == {}
