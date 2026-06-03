@@ -132,17 +132,23 @@ class BasePage:
         return self.page.get_by_role("combobox", name=name, exact=exact)
 
     async def field_exists(self, locator: Locator, *, wait_ms: int = 2_000) -> bool:
-        """Short-poll: True if locator has count > 0 AND is visible within wait_ms.
+        """Short-poll: True if locator has at least one visible match within wait_ms.
 
         Used for CONDITIONAL fields that may not render for some
         commodity types (e.g. ELD radio absent for Beverage Distributor).
+
+        Tolerates multi-element locators by checking `.first` instead of the
+        ambiguous root locator (Playwright's strict mode rejects `wait_for` /
+        `is_visible` on multi-match locators, which would falsely return False
+        when the field IS rendered N times across vehicle subforms etc.).
         """
+        first = locator.first
         try:
-            await locator.wait_for(state="visible", timeout=wait_ms)
-            return (await locator.count()) > 0 and await locator.is_visible()
+            await first.wait_for(state="visible", timeout=wait_ms)
+            return (await locator.count()) > 0 and await first.is_visible()
         except Exception:
             try:
-                if (await locator.count()) > 0 and await locator.is_visible():
+                if (await locator.count()) > 0 and await first.is_visible():
                     return True
             except Exception:
                 pass

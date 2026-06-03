@@ -472,6 +472,16 @@ class AddVehiclePage(BasePage):
         applies currency formatting ($) post-fill, changing the raw input_value.
         wait_for_currency_formatted ensures ExtJS finished before Continue.
         """
+        # Ensure ExtJS finished rendering the equipment subform — the Vehicle
+        # Value field is revealed by the "Vehicle has no equipment" checkbox
+        # (or by entering an explicit equipment value). Without this wait,
+        # all candidate selectors return count=0 because the input hasn't been
+        # mounted yet.
+        try:
+            await self.wait_for_extjs_idle(timeout_ms=5_000)
+        except Exception:
+            pass
+        await self.page.wait_for_timeout(600)
         candidates = [
             self.page.locator('input[placeholder="Vehicle Value"]'),
             self.page.get_by_role("textbox", name="Vehicle Value", exact=True),
