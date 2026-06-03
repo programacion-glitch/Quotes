@@ -33,14 +33,23 @@ class LoginPage(BasePage):
 
         # Enter credentials (validated label-based selectors)
         print("    [Progressive] Entering credentials...")
-        await self.page.get_by_role("textbox", name="User ID").fill(username)
-        await self.page.get_by_role("textbox", name="User Password").fill(password)
+        await self.safe_fill(
+            self.page.get_by_role("textbox", name="User ID"),
+            username,
+            verify=False,  # password managers may prevent input_value() read
+        )
+        await self.safe_fill(
+            self.page.get_by_role("textbox", name="User Password"),
+            password,
+            verify=False,  # password field: input_value() always returns ""
+        )
 
         # Record time BEFORE clicking login (for OTP timestamp filter)
         login_time = datetime.now(timezone.utc)
 
-        # Submit login form
-        await self.page.get_by_role("button", name="Log In").click()
+        # Submit login form — "Log In" is NOT a wizard Continue; keep as direct click.
+        await self.page.get_by_role("button", name="Log In").click(force=True, timeout=10_000)
+        # Post-login redirect chain settles via networkidle (not ExtJS).
         await self.page.wait_for_load_state("networkidle", timeout=15_000)
 
         # Check if OTP page appeared
@@ -63,6 +72,7 @@ class LoginPage(BasePage):
 
         # Enter OTP
         await self._enter_otp(otp)
+        # Post-OTP redirect settles via networkidle (not ExtJS).
         await self.page.wait_for_load_state("networkidle", timeout=15_000)
 
         # Verify we reached the dashboard
@@ -98,7 +108,8 @@ class LoginPage(BasePage):
         primary = self.page.get_by_role("textbox", name="One-time passcode")
         if await primary.count() > 0:
             try:
-                await primary.first.fill(otp, timeout=10_000)
+                # verify=False: OTP inputs often block input_value() for security.
+                await self.safe_fill(primary.first, otp, verify=False)
             except Exception:
                 primary = None  # fall through to legacy selectors
         else:
@@ -122,7 +133,8 @@ class LoginPage(BasePage):
                     el = loc.nth(i)
                     try:
                         if await el.is_visible():
-                            await el.fill(otp, timeout=10_000)
+                            # verify=False: OTP inputs often block input_value() for security.
+                            await self.safe_fill(el, otp, verify=False)
                             filled = True
                             break
                     except Exception:
@@ -136,12 +148,12 @@ class LoginPage(BasePage):
                     "(neither 'One-time passcode' textbox nor legacy MfaOtpEntry inputs)"
                 )
 
-        # Submit OTP
+        # Submit OTP — these are MFA form buttons, NOT wizard Continue buttons.
         await self.remove_overlays()
         for btn_text in ["Continue", "Submit", "Verify", "Log In"]:
             btn = self.page.get_by_role("button", name=btn_text)
             if await btn.count() > 0:
-                await btn.first.click()
+                await btn.first.click(force=True, timeout=10_000)
                 return
         # Fallback: press Enter
         await self.page.keyboard.press("Enter")
