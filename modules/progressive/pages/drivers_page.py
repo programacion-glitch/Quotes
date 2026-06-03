@@ -426,6 +426,58 @@ class NoHitPage(BasePage):
             "Operator intervention required."
         )
 
+    async def try_continue_without_ssn(self) -> bool:
+        """Try clicking the page's Continue button WITHOUT filling SSN.
+
+        Verified live 2026-06-03 (Prueba1 NOBLE LOGISTICS): when SAFER can't
+        match the USDOT and MVR/CLUE returns no credit history, Progressive
+        shows a 'Please verify the following information' page with the
+        SSN field marked 'Recommended for most accurate quote' — not
+        required. There are NO red 'field is required' errors on this page.
+        Clicking Continue should proceed (Progressive prices with reduced
+        underwriting accuracy).
+
+        POLICY preserved: never AUTO-FILL the SSN. We just click Continue
+        with the field empty.
+
+        Returns True if the URL advances past NoHit / Order Results,
+        False if Progressive blocks (e.g. SSN was actually required in
+        a different page variant).
+        """
+        initial_url = self.page.url
+        print(
+            "    [Progressive] NoHit-style 'verify info' page; "
+            "trying Continue without SSN (field is optional here)"
+        )
+        await self.screenshot("nohit_before_continue_attempt")
+        try:
+            await self.blur_active_element()
+            await self.page.wait_for_timeout(300)
+            btn = self.page.get_by_text("Continue", exact=True).last
+            await btn.scroll_into_view_if_needed(timeout=2_000)
+            await btn.click(timeout=10_000, force=True)
+            await self.page.wait_for_load_state("networkidle", timeout=30_000)
+            try:
+                await self.wait_for_extjs_idle(timeout_ms=10_000)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"    [Progressive] WARN: NoHit Continue click failed: {e}")
+            return False
+
+        advanced = (
+            "NoHit" not in self.page.url
+            and "Order Results" not in (await self.page.title())
+        )
+        if advanced:
+            print("    [Progressive] NoHit page advanced without SSN")
+        else:
+            print(
+                "    [Progressive] NoHit page DID NOT advance after Continue — "
+                "SSN may actually be required in this variant"
+            )
+        return advanced
+
     async def back(self) -> None:
         """Click Back to return to DriverSummary (non-wizard navigation button)."""
         # Not a wizard Continue; direct click with force=True for ExtJS reliability.

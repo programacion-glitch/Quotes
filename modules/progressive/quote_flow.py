@@ -334,19 +334,29 @@ class QuoteFlow:
         # Click Continue from DriverSummary
         await summary.click_continue()
 
-        # Check for NoHit (MVR lookup failed for any driver)
+        # Check for NoHit / 'verify info' page (MVR/CLUE lookup didn't return
+        # full credit history). SSN is typically marked 'Recommended' here
+        # rather than required, so try Continue without filling it. If
+        # Progressive truly blocks (SSN required variant), halt with screenshot.
         if "NoHit" in wizard_page.url or "Order Results" in (await wizard_page.title()):
             no_hit = NoHitPage(wizard_page)
-            result.warnings.append(
-                "NoHit page encountered (MVR lookup failed). "
-                "SSN required to continue — flow HALTED for safety."
-            )
-            result.error = (
-                "Driver MVR/CLUE lookup failed. Progressive requires the driver's "
-                "Social Security Number to proceed — which is not collected from the "
-                "blue quote. Verify driver license_number is correct or supply SSN."
-            )
-            result.screenshot_path = await no_hit.screenshot("nohit_halt")
+            advanced = await no_hit.try_continue_without_ssn()
+            if advanced:
+                result.warnings.append(
+                    "MVR/CLUE returned no credit history; quote proceeds "
+                    "with reduced underwriting accuracy (SSN not provided)."
+                )
+            else:
+                result.warnings.append(
+                    "NoHit page encountered (MVR lookup failed). "
+                    "SSN required to continue — flow HALTED for safety."
+                )
+                result.error = (
+                    "Driver MVR/CLUE lookup failed. Progressive requires the driver's "
+                    "Social Security Number to proceed — which is not collected from the "
+                    "blue quote. Verify driver license_number is correct or supply SSN."
+                )
+                result.screenshot_path = await no_hit.screenshot("nohit_halt")
 
     async def _take_error_screenshot(self, step: str) -> Optional[str]:
         try:
