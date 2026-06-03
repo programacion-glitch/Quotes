@@ -37,7 +37,7 @@ class FinalDetailsPage(BasePage):
 
         Does NOT click Continue. The caller should then capture price/screenshot.
         """
-        await self.page.wait_for_load_state("networkidle", timeout=30_000)
+        await self.wait_for_extjs_idle()
         await self.remove_overlays()
 
         if ein:
@@ -57,7 +57,7 @@ class FinalDetailsPage(BasePage):
             exact=False,
         )
         if await box.count() > 0:
-            await box.first.fill(ein)
+            await self.safe_fill(box.first, ein)
 
     async def _set_mvr_order(self, order: bool) -> None:
         label = "Yes, order reports" if order else "No, do not order"
@@ -67,5 +67,4 @@ class FinalDetailsPage(BasePage):
             name="Do you want to order MVR/CLUE reports for all drivers?",
         )
         if await group.count() > 0:
-            await group.get_by_role("radio", name=label).click()
-            await self.page.wait_for_timeout(300)
+            await self.safe_radio(group, label)
