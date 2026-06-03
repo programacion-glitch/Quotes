@@ -275,7 +275,14 @@ class AddVehiclePage(BasePage):
             "No": "No",
         }.get(vehicle.has_loan, "No")
         await self._set_radio("Is there a loan/lease on this vehicle?", loan_label)
-        await self.page.wait_for_timeout(800)
+        # Wait for ExtJS to render the conditional Comp/Coll question
+        # that's revealed by loan=No (an 800ms flat wait was too short for
+        # Beverage Distributor commodities — replaced with dynamic wait).
+        try:
+            await self.wait_for_extjs_idle(timeout_ms=5_000)
+        except Exception:
+            pass
+        await self.page.wait_for_timeout(600)
 
         # Comp/Coll question appears when loan=No
         if vehicle.has_loan == "No":
@@ -283,6 +290,12 @@ class AddVehiclePage(BasePage):
                 "Does the customer need Comprehensive or Collision coverage",
                 "Yes",  # default Yes for accurate quote
             )
+            # Wait for ExtJS to render the equipment + value fields that
+            # are revealed by Comp/Coll=Yes.
+            try:
+                await self.wait_for_extjs_idle(timeout_ms=5_000)
+            except Exception:
+                pass
             await self.page.wait_for_timeout(800)
             # Equipment value: Progressive's 2026-06 UI replaced the old radio
             # ("$0 to $2,000" / etc.) with a free-text "Value" textbox plus a
@@ -441,11 +454,20 @@ class AddVehiclePage(BasePage):
             print(f"    [Progressive] WARN: combobox '{label}' = '{option_text}' failed: {e}")
 
     async def _set_radio(self, group_label: str, value: str) -> None:
+        """Find a radiogroup by partial accessible-name match and pick `value`.
+
+        Uses field_exists (which polls until visible) instead of bare count()
+        — the question may be revealed by a sibling radio (e.g. Comp/Coll
+        appears AFTER loan=No), and ExtJS render is asynchronous.
+        Logs both success and "not found" so silent skips can be diagnosed.
+        """
         group = await self.find_radiogroup(group_label)
-        if await group.count() == 0:
+        if not await self.field_exists(group, wait_ms=2_500):
+            print(f"    [Progressive] _set_radio: '{group_label}' not visible (skipped)")
             return
         try:
             await self.safe_radio(group, value)
+            print(f"    [Progressive] _set_radio: '{group_label}' = '{value}'")
         except Exception as e:
             print(f"    [Progressive] WARN: radio '{group_label}' = '{value}' failed: {e}")
 
