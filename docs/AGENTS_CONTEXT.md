@@ -169,6 +169,30 @@ await page.get_by_role("option", name=value).first.click()       # selecciona op
 
 **NUNCA** uses `select_option()` ni `fill()` con comboboxes — falla silenciosamente.
 
+## 2026-06-03 — BasePage hardening FULL CLOSE
+
+Refactor completado. Todas las 8 pages migradas. RYD cotiza end-to-end
+($44,621 con MTC). 44 commits sobre baseline.
+
+Discoveries críticos durante implementación (todos resueltos):
+- USDOT 'belongs to customer' radio es CONDITIONAL (auto-confirmado para
+  DOT recientemente cotizado en la sesión)
+- AddVehicle 'Comp/Coll' radio se REVELA después de loan=No (timing fix)
+- MTC subform para Distributor tiene 3 Yes/No (mobile homes, business
+  docs, refrigeration breakdown) + commodity picker inline + limit
+  combobox REVELADO después del commodity
+- MTC limit format Progressive: '$Xk with a $Y Deductible'
+  (k-notation + combined deductible), no $XXX,XXX
+- _expand_coverage debe verificar marker post-click (Progressive cachea
+  expanded state entre quotes del mismo USDOT)
+- safe_select_combo necesita matching tolerante (exact + partial)
+- Recalculate compite con 'Done with this coverage' → poll + retry
+
+Referencias finales:
+- Spec: docs/superpowers/specs/2026-06-02-progressive-basepage-hardening-design.md
+- Plan: docs/superpowers/plans/2026-06-02-progressive-basepage-hardening.md
+- Métricas: docs/superpowers/baselines/2026-06-03-progressive-post-refactor.md
+
 ## Pendiente (próxima sesión live)
 
 Coberturas con selectores parciales que necesitan validación end-to-end:

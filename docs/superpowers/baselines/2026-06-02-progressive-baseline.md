@@ -37,3 +37,23 @@ Ver `2026-06-02-progressive-post-refactor.md` para los conteos post-refactor.
 **Status:** PARTIAL refactor. Solo `more_business_page` migrado a primitivas en este PR. `coverages_rates_page` recibio fix narrow (race condition) sin migracion completa. `drivers_page`, `vehicles_page`, `coverages_rates_page` (full), `business_info_page` quedan para un PR siguiente. Las primitivas estan listas y validadas LIVE con dos commodities diferentes (Trucker M&D y Beverage Distributor RYD).
 
 **Nota wait_for_timeout:** El incremento de 73→76 se debe a que `base_page.py` contiene waits internos en primitivas (p. ej. polling de `Ext.Ajax.isLoading()`) que el script cuenta como "unjustified" pero son esperas dinamicas correctas. Los waits en `more_business_page` bajaron de 8 a 0.
+
+## Comparativa FINAL pre/post refactor (2026-06-03 full close)
+
+Ver `2026-06-03-progressive-post-refactor.md` para conteos detallados post-refactor.
+
+| Métrica | Pre (94cd256) | Post (8f033a6) | Δ |
+|---|---|---|---|
+| Total wait_for_timeout (unjustified) | 73 | 48 | -34% |
+| Total _click_continue locales | 3 | 1 | -67% |
+| Total líneas pages/*.py | 2806 | 3795 | +989 (base_page 117→574: hub de 14 primitivas; 8 pages migradas) |
+
+**Status: FULL refactor close.** Las 8 pages migradas a primitivas:
+- base_page.py (hub de 14 primitivas en 5 familias)
+- business_info_page.py, coverages_rates_page.py, drivers_page.py,
+  final_details_page.py, home_page.py, login_page.py,
+  more_business_page.py, vehicles_page.py
+
+Live validation final:
+- M&D CUSTOM FREIGHT LLC (Trucker): $53,064/year (sin regresión)
+- RYD LLC (Beverage Distributor): **$44,621/year, Quote #CA117054124** — incluye MTC completo

@@ -52,30 +52,47 @@ python -m pytest tests/test_rule_engine.py
 ## Reglas para Progressive (web automation)
 
 - **BasePage primitivas** (`modules/progressive/pages/base_page.py`): `safe_fill`, `safe_radio`, `safe_checkbox`, `safe_select_combo`, `safe_click_continue`, `find_by_label_text`, `find_by_placeholder`, `find_radiogroup`, `find_combo`, `field_exists`, `wait_for_extjs_idle`, `wait_for_page`, `wait_for_field_revealed_by`, `wait_for_currency_formatted`, `remove_overlays`, `blur_active_element`, `current_page_token`, `screenshot`, `dump_debug_context`. Ver spec `docs/superpowers/specs/2026-06-02-progressive-basepage-hardening-design.md`.
-- **Migración por page:** `more_business_page` ya usa primitivas + `REQUIRED/CONDITIONAL/OPTIONAL` fields. Otras pages (`drivers_page`, `vehicles_page`, `coverages_rates_page`, `business_info_page`, `home_page`, `login_page`, `final_details_page`) aún usan código pre-refactor — funcionan pero no usan primitivas. Migración pendiente en PR siguiente.
-- **Campos condicionales por commodity:** declarar en `CONDITIONAL_FIELDS` + usar `field_exists` para soft-skip. Ejemplos validados live: ELD ausente para Beverage Distributor, Snapshot ProView ausente para Trucker pero presente para Distributor.
+- **Todas las 8 pages migradas.** NUNCA llamar `page.fill/click/select_option` directamente en código nuevo — usar primitivas.
+- **CONDITIONAL fields** — siempre verificar con `field_exists(wait_ms=1500)` antes de `safe_radio`. NUNCA llamar safe_radio sobre un locator que puede no existir (produce RadioStuckError después de 4 retries sin contexto). Campos CONDITIONAL validados live:
+  - ELD (presente Trucker, ausente Distributor)
+  - Snapshot ProView (ausente Trucker, presente Distributor)
+  - owns_goods (presente Distributor)
+  - USDOT 'belongs to customer' radio (auto-confirmado para DOT recientemente cotizado — puede no aparecer)
+  - AddVehicle Comp/Coll Yes/No (se REVELA tras loan=No — timing fix con `wait_for_field_revealed_by`)
+  - MTC subform 3 Yes/No (mobile homes, business docs, refrigeration breakdown)
+  - MTC commodity picker inline (Type + Commodity cascading)
+  - MTC limit combobox (REVELADO después del commodity)
+- **MTC — dos paths por tipo de negocio:**
+  - Trucker: limit combobox directo (sin subform)
+  - Distributor: 3 Yes/No + commodity picker inline (Type → Commodity en cascada) + limit combobox revelado POST-commodity
+  - Formato límite Progressive: `'$Xk with a $Y Deductible'` (k-notation + deductible combinado), NO `$XXX,XXX`
+- **safe_select_combo — matching tolerante:** exact match → partial match. Verificar bidireccional (option_text ↔ input_value).
+- **_expand_coverage — smart toggle:** detectar si la sección ya está expandida (marker present) antes de hacer click. Progressive cachea expanded state entre quotes del mismo USDOT.
+- **Recalculate retry loop:** `_recalculate_if_needed` usa retry loop hasta 3x + poll de premium materialization. Race condition con 'Done with this coverage'.
+- **Viewport / force=True:** para botones al final de forms largos (Ok-start-quote, "Enter a different Business Name"), NO usar `force=True` en primer click — Playwright auto-scrolls con click natural. `force=True` solo en retries.
+- **Selectores ExtJS comboboxes:** combo.click() → `get_by_role("option", name=value).click()`. NUNCA `select_option()` con ExtJS.
 - **STOP en FINAL DETAILS:** el flujo termina en `pageName=AdditionalDetails`. NUNCA click el "Continue" final — avanza a PAYMENT y bind real de la póliza.
 - **NoHit es HALT:** si MVR/CLUE falla y Progressive pide SSN → reportar al usuario, no auto-rellenar SSN (data sensible).
 - **Effective date:** viene del subject del email con regex `[Ee]ffective\s+date[:\s]+(\d{1,2}/\d{1,2}/\d{4})`.
 - **Esperas dinámicas, no `wait_for_timeout` mágicos:** usar `wait_for_extjs_idle`, `wait_for_field_revealed_by`, etc. Si necesitas un `wait_for_timeout(N)` literal, dejá comentario justificando.
-- **MTC subform pending:** para Beverage Distributor, Motor Truck Cargo pide preguntas extra antes del limit combobox. Actualmente se skipea con WARN — cotización completa SIN MTC. Investigación pendiente.
 
-## Estado actual (2026-06-02 — partial refactor closed)
+## Estado actual (2026-06-03 — FULL refactor closed)
 
-✅ BasePage hub de primitivas ExtJS-safe listo (5 familias, 40 tests unitarios).
-✅ `more_business_page` migrado a primitivas — arregla bug RYD ELD + nuevo Snapshot ProView CONDITIONAL.
-✅ `coverages_rates_page` con fix narrow: `wait_for_extjs_idle` en `_recalculate_if_needed` + `capture_price` — arregla race condition de price capture.
+✅ BasePage hub de primitivas ExtJS-safe (5 familias, 14 primitivas, 40 tests unitarios).
+✅ 8 de 8 pages migradas a primitivas (M&D y RYD validados live):
+   - base_page.py · business_info_page.py · coverages_rates_page.py
+   - drivers_page.py · final_details_page.py · home_page.py
+   - login_page.py · more_business_page.py · vehicles_page.py
 ✅ End-to-end LIVE validado:
-   - M&D CUSTOM FREIGHT LLC (Trucker): $53,064/year
-   - RYD LLC (Beverage Distributor): **$42,387/year, Quote #CA117049229** (primera vez)
-⚠️  Migración pendiente: `drivers_page`, `vehicles_page`, `coverages_rates_page` (full), `business_info_page`, `home_page`, `login_page`, `final_details_page`. Funcionan, no usan primitivas todavía.
-⚠️  MTC subform discovery pendiente para Beverage Distributor.
-⚠️  Add Trailer flow real pendiente.
+   - M&D CUSTOM FREIGHT LLC (Trucker): $53,064/year (baseline preservado)
+   - RYD LLC (Beverage Distributor): **$44,621/year, Quote #CA117054124**
+     — incluye MTC ($100k with $1,000 deductible)
+✅ MTC commodity picker para Distributor: Food & Beverage / Other Food & Beverages
+✅ Race condition de Recalculate resuelto con retry loop + poll
 
 Próximos PRs candidatos:
-- Migrar pages restantes a primitivas (cierra los criterios #3 y #4 del spec).
-- Descubrir MTC subform para distributors.
-- Add Trailer flow real.
+- Add Trailer flow real (sigue skipeado con WARN)
+- Refinement de commodity matching para otros perfiles (ej. PACKED CHARCOAL no fue elegido — el bot seleccionó "Other Food & Beverages" como cobertura general)
 
 ## Env vars requeridas
 
