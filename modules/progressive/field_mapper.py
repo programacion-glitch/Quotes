@@ -126,11 +126,14 @@ def _is_non_owned(
     """True when the unit is a 'non-owned' trailer marker — must be routed
     to Non-Owned Trailer Phys Damage coverage instead of Add Trailer.
 
-    Detection by vin first, then make/model fallback (some PDFs surface the
-    marker on a different column).
+    Detection by vin first (only when the VIN field is non-empty and matches
+    a known marker like 'NON OWNED' / 'NONOWNED' / 'N/A'), then make/model
+    fallback (some PDFs surface the marker on a different column). A unit
+    with NO vin AND no NON OWNED text in make/model is NOT classified as
+    non-owned — that's just an extraction gap, not a non-ownership signal.
     """
     vin_clean = (vin or "").strip().upper()
-    if vin_clean in NON_OWNED_MARKERS:
+    if vin_clean and vin_clean in NON_OWNED_MARKERS:
         return True
     for s in (make, model):
         if s and "NON OWNED" in s.upper():
@@ -249,7 +252,7 @@ def map_profile_to_fields(
         coverages_out.non_owned_trailer_phys_damage_limit = "$25,000"
         print(
             f"    [Progressive] field_mapper: {non_owned_count} NON OWNED "
-            f"trailer(s) → Non-Owned Trailer Phys Damage = $25,000 (default)"
+            f"trailer(s) -> Non-Owned Trailer Phys Damage = $25,000 (default)"
         )
 
     # Drivers
