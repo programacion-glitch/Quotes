@@ -235,12 +235,32 @@ class AddDriverPage(BasePage):
             print("    [Progressive] WARN: First Name input not located")
             await self._dump_addriver_inputs()
 
-        # Last name
+        # Last name. The "Name" label is SHARED by First Name + MI + Last Name
+        # (single label, 3 inputs). XPath from "Name" with [1] gives First
+        # Name; Last Name is the 3rd input. Try placeholder strategy first,
+        # then positional fallback.
         if last:
-            last_input = await self._locate_input_by_placeholder_or_label(
-                placeholder_keywords=["Last Name", "Last"],
-                label_text="Name",
-            )
+            last_input = None
+            # Strategy 1: case-insensitive partial placeholder
+            cand = self.page.locator('input[placeholder*="Last Name" i]').first
+            if await self.field_exists(cand, wait_ms=600):
+                last_input = cand
+            # Strategy 2: ARIA label
+            if last_input is None:
+                cand = self.page.locator('input[aria-label*="Last" i]').first
+                if await self.field_exists(cand, wait_ms=600):
+                    last_input = cand
+            # Strategy 3: positional — 3rd text input after the "Name" label
+            #   layout: <label>Name</label> → [First Name] [MI] [Last Name]
+            if last_input is None:
+                name_label = self.page.get_by_text("Name", exact=True).first
+                if await self.field_exists(name_label, wait_ms=600):
+                    cand = name_label.locator(
+                        "xpath=following::input[@type='text'][3]"
+                    ).first
+                    if await self.field_exists(cand, wait_ms=600):
+                        last_input = cand
+
             if last_input is not None:
                 current = ""
                 try:
@@ -250,6 +270,9 @@ class AddDriverPage(BasePage):
                 if not current:
                     print(f"    [Progressive] Last Name = {last!r}")
                     await self.safe_fill(last_input, last, verify=False)
+            else:
+                print("    [Progressive] WARN: Last Name input not located")
+                await self._dump_addriver_inputs()
 
     async def _fill_dob_if_empty(self, dob: str) -> None:
         """Fill Date of Birth textbox if empty."""
