@@ -80,10 +80,12 @@ def main() -> int:
     print(f"  coverages          : {profile.coverages}")
     print(f"  vehicles ({len(profile.units.vehicles)}):")
     for i, v in enumerate(profile.units.vehicles):
+        # value drives APD intent: presence → Comp/Coll = Yes; absence → No
+        apd_hint = f"value={v.value!r} → APD=Yes" if v.value else "value=None → APD=No"
         print(
             f"    [{i}] vin={v.vin!r} y/m/m={v.year}/{v.make}/{v.model} "
             f"type={v.trailer_type!r} gvw={v.gvw!r} radius={v.radius_miles!r} "
-            f"loan={v.has_loan!r}"
+            f"loan={v.has_loan!r} {apd_hint}"
         )
     print(f"  drivers ({len(profile.drivers)}):")
     for i, d in enumerate(profile.drivers):
