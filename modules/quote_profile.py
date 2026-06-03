@@ -91,6 +91,10 @@ class VehicleProfile:
                                           # "Value" column. Presence implies the customer
                                           # wants APD (Comprehensive + Collision); absence
                                           # means liability-only.
+    # Explicit trailer flag set by the extractor when this VehicleProfile
+    # came from the trailer table (vs. the trucks/tractors/pickups table).
+    # Eliminates the previous _looks_like_trailer substring heuristic.
+    is_trailer: bool = False
 
 
 @dataclass

@@ -564,26 +564,11 @@ class DocumentAIExtractor:
 
         # Build per-vehicle records (VehicleProfile list). These carry VIN,
         # year, make, etc. that the MGA flows (GEICO VIN decode, Progressive
-        # AddVehicle) need. Trucks + trailers are treated uniformly here;
-        # downstream mappers split them by trailer_type as needed.
-        veh_records: List[VehicleProfile] = []
-        for src in (trucks, trailers):
-            for t in src:
-                year_int = _first_int(t.get("year"))
-                # Value column from Blue Quote; presence implies the customer
-                # requested APD (Phys Damage). The pdf_extractor surfaces it
-                # in t["value"] (see modules/pdf_extractor.py:269,307).
-                value_raw = (t.get("value") or "").strip() or None
-                veh_records.append(VehicleProfile(
-                    vin=(t.get("vin") or "").strip() or None,
-                    year=year_int,
-                    make=(t.get("make") or "").strip() or None,
-                    model=(t.get("model") or "").strip() or None,
-                    trailer_type=(t.get("type") or "").strip().upper() or None,
-                    gvw=(t.get("gvw") or "").strip() or None,
-                    radius_miles=radius_str,
-                    value=value_raw,
-                ))
+        # AddVehicle) need. The staticmethod preserves the trucks-vs-trailers
+        # distinction via is_trailer so downstream code doesn't need heuristics.
+        veh_records = DocumentAIExtractor._build_vehicle_records_from_dict(
+            extracted, radius_str=radius_str
+        )
 
         units = UnitsProfile(
             count=len(trucks) + len(trailers),
@@ -632,6 +617,55 @@ class DocumentAIExtractor:
             ))
 
         return applicant, commodity, coverages, units, drivers, coverages_detail
+
+    # ---- Test-seam / shared helpers ----
+
+    @staticmethod
+    def _build_vehicle_records_from_dict(
+        extracted: dict,
+        radius_str: Optional[str] = None,
+    ) -> List[VehicleProfile]:
+        """Build a list of VehicleProfile objects from the ``extracted`` dict.
+
+        Trucks/tractors/pickups get ``is_trailer=False``; trailers get
+        ``is_trailer=True``. This preserves the source-table distinction so
+        downstream code (e.g. Progressive AddVehicle) doesn't need to rely on
+        the ``_looks_like_trailer`` substring heuristic.
+
+        Also used directly by unit tests (test seam) to exercise vehicle
+        record construction without requiring the full extraction pipeline.
+        """
+        import re as _re
+
+        def _first_int(value) -> Optional[int]:
+            if value is None:
+                return None
+            m = _re.search(r"\d+", str(value))
+            return int(m.group(0)) if m else None
+
+        vehicles = extracted.get("vehicles", {})
+        trucks = vehicles.get("tractors_trucks_pickup", [])
+        trailers = vehicles.get("trailers", [])
+        veh_records: List[VehicleProfile] = []
+        for src, is_trailer_flag in ((trucks, False), (trailers, True)):
+            for t in src:
+                year_int = _first_int(t.get("year"))
+                # Value column from Blue Quote; presence implies the customer
+                # requested APD (Phys Damage). The pdf_extractor surfaces it
+                # in t["value"] (see modules/pdf_extractor.py:269,307).
+                value_raw = (t.get("value") or "").strip() or None
+                veh_records.append(VehicleProfile(
+                    vin=(t.get("vin") or "").strip() or None,
+                    year=year_int,
+                    make=(t.get("make") or "").strip() or None,
+                    model=(t.get("model") or "").strip() or None,
+                    trailer_type=(t.get("type") or "").strip().upper() or None,
+                    gvw=(t.get("gvw") or "").strip() or None,
+                    radius_miles=radius_str,
+                    value=value_raw,
+                    is_trailer=is_trailer_flag,
+                ))
+        return veh_records
 
     # ---- Blue Quote helpers ----
 
