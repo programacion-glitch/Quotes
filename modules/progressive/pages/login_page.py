@@ -87,41 +87,54 @@ class LoginPage(BasePage):
     async def _enter_otp(self, otp: str) -> None:
         """Enter the 6-digit OTP and submit.
 
-        Progressive renders one OTP input PER MFA delivery method (authapp /
-        email / sms), all sharing name="MfaOtpEntry". Only the input for the
-        chosen method is visible; the others are hidden. We must fill the
-        VISIBLE one — `.first` grabs the hidden authapp input and the fill
-        times out ("element is not visible").
+        Progressive's OTP page renders the input with an accessible label
+        "One-time passcode" (validated live 2026-06-01). Older flows used
+        name="MfaOtpEntry" with one input per MFA delivery method, only the
+        chosen one visible. We try the role/label selector first (most
+        robust to internal name changes) and fall back to the name-based
+        selectors for the multi-input variant.
         """
-        selectors = [
-            'input[name*="passcode" i]',
-            'input[name*="otp" i]',
-            'input[name*="code" i]',
-            'input[name*="token" i]',
-            'input[type="tel"]',
-            'input[type="number"]',
-        ]
-        filled = False
-        for sel in selectors:
-            loc = self.page.locator(sel)
-            n = await loc.count()
-            for i in range(n):
-                el = loc.nth(i)
-                try:
-                    if await el.is_visible():
-                        await el.fill(otp, timeout=10_000)
-                        filled = True
-                        break
-                except Exception:
-                    continue
-            if filled:
-                break
-        if not filled:
-            await self.screenshot("otp_no_visible_input")
-            raise RuntimeError(
-                "Could not find a visible OTP input to fill "
-                "(all MfaOtpEntry inputs were hidden)"
-            )
+        # Primary: accessible role + label (matches current page).
+        primary = self.page.get_by_role("textbox", name="One-time passcode")
+        if await primary.count() > 0:
+            try:
+                await primary.first.fill(otp, timeout=10_000)
+            except Exception:
+                primary = None  # fall through to legacy selectors
+        else:
+            primary = None
+
+        if primary is None:
+            # Legacy multi-MfaOtpEntry path: find the visible one.
+            selectors = [
+                'input[name*="passcode" i]',
+                'input[name*="otp" i]',
+                'input[name*="code" i]',
+                'input[name*="token" i]',
+                'input[type="tel"]',
+                'input[type="number"]',
+            ]
+            filled = False
+            for sel in selectors:
+                loc = self.page.locator(sel)
+                n = await loc.count()
+                for i in range(n):
+                    el = loc.nth(i)
+                    try:
+                        if await el.is_visible():
+                            await el.fill(otp, timeout=10_000)
+                            filled = True
+                            break
+                    except Exception:
+                        continue
+                if filled:
+                    break
+            if not filled:
+                await self.screenshot("otp_no_visible_input")
+                raise RuntimeError(
+                    "Could not find a visible OTP input to fill "
+                    "(neither 'One-time passcode' textbox nor legacy MfaOtpEntry inputs)"
+                )
 
         # Submit OTP
         await self.remove_overlays()

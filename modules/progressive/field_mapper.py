@@ -60,6 +60,8 @@ class MappedFields:
     owner_street: Optional[str] = None
     owner_city: Optional[str] = None
     owner_zip: Optional[str] = None
+    owner_phone: Optional[str] = None      # e.g. "(210) 668-1522" — REQUIRED on START page (2026-06)
+    owner_email: Optional[str] = None
     commodity: Optional[str] = None
     dba_name: Optional[str] = None
 
@@ -216,6 +218,8 @@ def map_profile_to_fields(
         owner_street=profile.applicant.street_address,
         owner_city=profile.applicant.city,
         owner_zip=profile.applicant.zip_code,
+        owner_phone=profile.applicant.phone,
+        owner_email=profile.applicant.email,
         commodity=profile.commodity or None,
         dba_name=dba,
         vehicles=mapped_vehicles,

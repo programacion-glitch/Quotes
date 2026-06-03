@@ -12,14 +12,29 @@ from modules.quote_profile import QuoteProfile
 from modules.rule_engine import MGAEvaluation, FailedRule
 
 
+# MGAs that quote via web automation (Progressive, GEICO) — they don't need
+# documents forwarded by email because the bot enters data directly into their
+# portal from the Blue Quote. Baseline doc requirements (CDL/MVR/Loss Run)
+# don't apply to them and shouldn't downgrade them to ineligible.
+WEB_AUTOMATION_MGAS = {"PROGRESSIVE", "GEICO"}
+
+
+def _is_web_automation_mga(mga_name: str) -> bool:
+    name = (mga_name or "").strip().upper()
+    return any(wa in name for wa in WEB_AUTOMATION_MGAS)
+
+
 def _baseline_missing_docs(profile: QuoteProfile) -> List[FailedRule]:
     """
     Return the list of baseline document failures for the profile.
 
-    Required docs for ANY MGA to receive an email submission:
+    Required docs for ANY EMAIL-based MGA to receive a submission:
       - CDL: always required (even for NV - the owner-driver still needs it)
       - MVR: required only for established businesses (NV has no driving history)
       - Loss Run: required only for established businesses (NV has no losses)
+
+    NOT applied to web-automation MGAs (Progressive, GEICO) — see
+    WEB_AUTOMATION_MGAS / _is_web_automation_mga.
 
     Returns empty list if all baseline docs are present.
     """
@@ -39,8 +54,12 @@ def _baseline_missing_docs(profile: QuoteProfile) -> List[FailedRule]:
 def _baseline_eval_for_no_rules(mga_name: str, profile: QuoteProfile) -> MGAEvaluation:
     """
     Build an MGAEvaluation for an MGA that has NO specific REGLAS rows,
-    applying only baseline document requirements.
+    applying only baseline document requirements (or none for web-automation MGAs).
     """
+    # Web-automation carriers skip baseline doc checks — they quote directly
+    # from the Blue Quote data without requiring forwarded attachments.
+    if _is_web_automation_mga(mga_name):
+        return MGAEvaluation(mga_name=mga_name, eligible=True)
     failures = _baseline_missing_docs(profile)
     return MGAEvaluation(
         mga_name=mga_name,
@@ -54,8 +73,13 @@ def _apply_baseline_to_eligible(ev: MGAEvaluation, profile: QuoteProfile) -> MGA
     If an MGA passed rule engine but baseline docs are missing, downgrade it
     to ineligible with the corresponding FailedRules appended. This ensures
     'Eligible' in the analysis email always means 'can actually receive an email'.
+
+    Web-automation MGAs (Progressive, GEICO) are exempt — they don't need
+    documents because the bot quotes directly through their portal.
     """
     if not ev.eligible:
+        return ev
+    if _is_web_automation_mga(ev.mga_name):
         return ev
     missing = _baseline_missing_docs(profile)
     if not missing:

@@ -96,8 +96,15 @@ class BusinessInfoPage(BasePage):
             city=fields.owner_city,
             dob=fields.owner_dob,
         )
+        # Phone: marked "Optional" on the form but improves rating accuracy.
+        # owner_phone may not be on MappedFields yet — use getattr fallback.
+        await self._fill_primary_phone(getattr(fields, "owner_phone", None))
         # Conditional required question for trucking/dirt-sand-gravel classes.
         await self._answer_oil_gas_fields(False)
+        # "Does the customer own the goods he or she is transporting?" —
+        # appears for distributor-type commodities (Beverage, Food, etc.).
+        # Default Yes (most owner-operated trucking owns its cargo).
+        await self._answer_owns_goods(True)
         await self._click_start_quote()
 
     async def _set_effective_date(self, date_str: str) -> None:
@@ -216,30 +223,117 @@ class BusinessInfoPage(BasePage):
         Progressive renders Business Name as a RADIO with two options:
           1. The SAFER-resolved name (from USDOT lookup) — preferred when present
           2. "Enter a different Business Name" → reveals a textbox
+
+        Robustness (live 2026-06-01 with RYD LLC):
+          - exact match first; fall through to non-exact only if not found
+          - verify the radio actually became checked; if not, force the
+            "Enter a different Business Name" path so the textbox gets filled
+          - always check the textbox at the end: even after a successful
+            SAFER radio click, if the page also still expects the textbox
+            (some flows do), fill it as a belt-and-suspenders
         """
         if not name:
             return
         print(f"    [Progressive] Setting business name: {name}")
         await self.page.wait_for_timeout(500)
 
-        # Try the SAFER pre-poblated radio first (matches name exactly)
-        safer_radio = self.page.get_by_role("radio", name=name, exact=False)
-        if await safer_radio.count() > 0:
-            try:
-                await safer_radio.first.click(timeout=3_000)
-                print(f"    [Progressive] Used SAFER-resolved business name radio")
-                await self.page.wait_for_timeout(500)
-            except Exception:
-                pass
+        # SAFER's pre-suggested radio is unreliable: even when its accessible
+        # name matches the blue-quote name exactly, the click sometimes does
+        # not stick, and partial-match attempts can pick the wrong radio.
+        # Always use the "Enter a different Business Name" path — we have the
+        # name from the blue quote, so it's deterministic and bypasses SAFER's
+        # variability entirely.
+        # Strategy: try SAFER's pre-suggested radio first. Its accessible name
+        # is usually the business name (e.g. "RYD LLC"), but Progressive's
+        # ExtJS sometimes prepends extra characters or wraps it in a way that
+        # breaks exact match — so try exact, then non-exact filtered to
+        # exclude the "Enter a different" radio.
+        safer_radio = None
+        exact = self.page.get_by_role("radio", name=name, exact=True)
+        if await exact.count() > 0:
+            safer_radio = exact.first
         else:
-            # Fall back to "Enter a different Business Name" + textbox
-            diff_radio = self.page.get_by_role("radio", name="Enter a different Business Name")
-            if await diff_radio.count() > 0:
-                await diff_radio.first.click(timeout=3_000)
-                await self.page.wait_for_timeout(500)
-            box = self.page.get_by_role("textbox", name="Business Name")
-            if await box.count() > 0:
-                await box.first.fill(name)
+            non_exact = self.page.get_by_role("radio", name=name, exact=False)
+            total = await non_exact.count()
+            for i in range(total):
+                cand = non_exact.nth(i)
+                try:
+                    accessible = await cand.get_attribute("aria-label") or ""
+                except Exception:
+                    accessible = ""
+                if "different" in accessible.lower():
+                    continue
+                safer_radio = cand
+                break
+
+        if safer_radio is not None:
+            click_strategies = [
+                ("normal click", lambda r=safer_radio: r.click(timeout=3_000)),
+                ("force click",  lambda r=safer_radio: r.click(force=True, timeout=3_000)),
+                ("check()",      lambda r=safer_radio: r.check(timeout=3_000, force=True)),
+            ]
+            for label, do_click in click_strategies:
+                try:
+                    await do_click()
+                    await self.page.wait_for_timeout(800)
+                    if await safer_radio.is_checked():
+                        print(f"    [Progressive] Selected SAFER radio ({label}): {name!r}")
+                        if dba:
+                            await self._fill_placeholder("DBA Name", dba)
+                        return
+                    print(f"    [Progressive] SAFER {label} did not stick, trying next")
+                except Exception as e:
+                    print(f"    [Progressive] SAFER {label} failed: {e}")
+                    continue
+        else:
+            print(f"    [Progressive] No SAFER radio matched name={name!r}")
+
+        # Fallback: 'Enter a different Business Name' radio reveals a textbox.
+        print(f"    [Progressive] SAFER radio not usable; using 'Enter a different Business Name'")
+        diff_radio = self.page.get_by_role(
+            "radio", name="Enter a different Business Name"
+        )
+        try:
+            await diff_radio.first.click(timeout=3_000)
+        except Exception as e:
+            print(f"    [Progressive] WARN: 'Enter a different' radio click failed: {e}")
+        await self.page.wait_for_timeout(1500)
+
+        # The textbox is the next <input type="text"> in DOM order AFTER the
+        # 'Enter a different Business Name' radio. XPath traversal from the
+        # radio locator is the most robust — independent of placeholder
+        # rendering or aria attributes. Fall back to role/label/placeholder.
+        candidates = [
+            diff_radio.locator("xpath=following::input[@type='text'][1]"),
+            self.page.locator(
+                'input[aria-required="true"][placeholder="Business Name"]'
+            ),
+            self.page.get_by_role("textbox", name="Business Name", exact=True),
+            self.page.get_by_label("Business Name", exact=True),
+            self.page.get_by_placeholder("Business Name", exact=True),
+        ]
+        filled = False
+        for loc in candidates:
+            try:
+                await loc.first.wait_for(state="visible", timeout=3_000)
+                await loc.first.click(timeout=2_000)
+                await loc.first.fill(name, timeout=2_000)
+                await self.page.keyboard.press("Tab")  # blur to commit
+                await self.page.wait_for_timeout(300)
+                actual = ""
+                try:
+                    actual = (await loc.first.input_value()).strip()
+                except Exception:
+                    pass
+                if actual.upper() == name.strip().upper():
+                    print(f"    [Progressive] Business Name = {actual!r}")
+                    filled = True
+                    break
+            except Exception:
+                continue
+
+        if not filled:
+            print("    [Progressive] WARN: Business Name textbox not filled — no selector matched")
 
         if dba:
             dba_box = self.page.get_by_role(
@@ -303,34 +397,57 @@ class BusinessInfoPage(BasePage):
         """Map a BlueQuote commodity to (search_term, preferred_option_text)
         for the Business type list combobox. `preferred` is an exact-ish option
         label when known; `search_term` filters the list as a fallback for
-        anything not explicitly mapped (keeps this dynamic for any BlueQuote)."""
+        anything not explicitly mapped (keeps this dynamic for any BlueQuote).
+
+        Uses word-boundary matching (not substring) so that e.g. "PACKED
+        CHARCOAL" does NOT trigger the "COAL" rule. Multi-word keys are
+        matched as ordered substring tokens (e.g. "AUTO HAUL" matches
+        "auto haul" or "auto-haul" but not "AUTOMATIC HAUL").
+        """
+        import re
         c = (commodity or "").upper()
+        # Tokenize: split on any non-alpha-numeric so "PACKED CHARCOAL: 20%"
+        # becomes ["PACKED", "CHARCOAL", "20"] and "COAL" won't be a token.
+        tokens = set(re.findall(r"\b[A-Z][A-Z0-9]+\b", c))
+
+        def matches(key: str) -> bool:
+            """key matches if every whitespace-separated part is a token, OR
+            the key as a phrase appears with word boundaries in the commodity."""
+            parts = key.split()
+            if len(parts) == 1:
+                return parts[0] in tokens
+            # multi-word: require the phrase with word boundaries
+            pattern = r"\b" + r"\W+".join(re.escape(p) for p in parts) + r"\b"
+            return re.search(pattern, c) is not None
+
         table = [
             (("DIRT", "SAND", "GRAVEL"), "Dirt Sand", "Dirt Sand & Gravel (For A Fee)"),
-            (("FRACK",), "Fracking", "Fracking Sand Hauling"),
+            (("FRACK", "FRACKING"), "Fracking", "Fracking Sand Hauling"),
             (("COAL",), "Coal", "Coal Hauling"),
-            (("AUTO HAUL", "CAR HAUL"), "Auto Hauler", "Auto Hauler (For Hire Trucking)"),
+            (("AUTO HAUL", "CAR HAUL", "AUTO HAULER", "CAR HAULER"),
+             "Auto Hauler", "Auto Hauler (For Hire Trucking)"),
             (("LIVESTOCK",), "Livestock", "Livestock Hauling (For A Fee)"),
-            (("LOG", "WOOD CHIP"), "Logging", "Logging Trucker"),
+            (("LOG", "LOGGING", "WOOD CHIP", "WOOD CHIPS"), "Logging", "Logging Trucker"),
             (("GARBAGE", "TRASH"), "Garbage", "Garbage & Trash Hauling/Removal"),
-            (("HAZARD", "HAZMAT"), "Hazardous", "Hazardous Materials Hauling"),
-            (("CONTAINER",), "Container", "Container Hauling"),
-            (("AGRICULTUR", "FARM PRODUCE"), "Agricultural", "Agricultural Hauling (For A Fee)"),
+            (("HAZARD", "HAZMAT", "HAZARDOUS"), "Hazardous", "Hazardous Materials Hauling"),
+            (("CONTAINER", "CONTAINERS"), "Container", "Container Hauling"),
+            (("AGRICULTUR", "AGRICULTURAL", "AGRICULTURE", "FARM PRODUCE"),
+             "Agricultural", "Agricultural Hauling (For A Fee)"),
             (("DAIRY",), "Dairy", "Dairy Products Hauling (For A Fee)"),
-            (("REFRIG", "REEFER", "FROZEN"), "Frozen Foods", "Frozen Foods Hauling"),
+            (("REFRIG", "REFRIGERATED", "REEFER", "FROZEN"), "Frozen Foods", "Frozen Foods Hauling"),
+            (("BEVERAGE", "BEER", "WATER", "LIQUIDS", "BOTTLED"),
+             "Beverage", "Beverage Distributor"),
         ]
         for keys, term, opt in table:
-            if any(k in c for k in keys):
+            if any(matches(k) for k in keys):
                 return (term, opt)
-        # General freight family.
-        if any(
-            k in c
-            for k in ("FLATBED", "DRY VAN", "BOX TRUCK", "STRAIGHT",
-                      "CARGO VAN", "FREIGHT", "GENERAL")
-        ):
+        # General freight family (multi-word phrases need substring still).
+        general_keys = ("FLATBED", "DRY VAN", "BOX TRUCK", "STRAIGHT",
+                        "CARGO VAN", "FREIGHT", "GENERAL")
+        if any(matches(k) for k in general_keys):
             return ("General Freight", "General Freight Hauler")
-        # Last resort: filter by the first meaningful word of the commodity.
-        skip = {"THE", "FOR", "AND", "100%", "OF"}
+        # Last resort: filter by the first meaningful word.
+        skip = {"THE", "FOR", "AND", "100", "OF"}
         word = next(
             (w for w in c.replace(",", " ").replace("%", " ").split()
              if len(w) > 2 and w not in skip),
@@ -373,13 +490,8 @@ class BusinessInfoPage(BasePage):
         first_name = parts[0] if parts else ""
         last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
 
-        first_box = self.page.get_by_role("textbox", name="First Name")
-        if await first_box.count() > 0:
-            await first_box.first.fill(first_name)
-
-        last_box = self.page.get_by_role("textbox", name="Last Name")
-        if await last_box.count() > 0:
-            await last_box.first.fill(last_name)
+        await self._fill_role_textbox("First Name", first_name)
+        await self._fill_role_textbox("Last Name", last_name)
 
         # Home Address: Progressive renders this as a RADIO when SAFER returned
         # an address (e.g. for USDOT-verified businesses).
@@ -448,6 +560,76 @@ class BusinessInfoPage(BasePage):
                 await box.first.fill(dob)
                 await self.page.keyboard.press("Tab")
 
+    async def _fill_role_textbox(self, accessible_name: str, value: str) -> None:
+        """Fill a textbox by its accessible name (role-based), with verify.
+
+        For ExtJS forms whose inputs have a proper aria-label / linked label
+        (e.g. First Name, Last Name, DOB) the role+name strategy is reliable.
+        Verifies the value stuck after Tab; logs WARN if not.
+        """
+        if not value:
+            return
+        box = self.page.get_by_role("textbox", name=accessible_name)
+        try:
+            await box.first.wait_for(state="visible", timeout=5_000)
+        except Exception:
+            print(f"    [Progressive] WARN: textbox {accessible_name!r} not visible")
+            return
+        try:
+            await box.first.click(timeout=3_000)
+            await box.first.fill(value, timeout=3_000)
+            await self.page.keyboard.press("Tab")
+            await self.page.wait_for_timeout(300)
+            try:
+                actual = (await box.first.input_value()).strip()
+            except Exception:
+                actual = ""
+            if actual == value.strip():
+                print(f"    [Progressive] {accessible_name} = {actual!r}")
+            else:
+                print(
+                    f"    [Progressive] WARN: {accessible_name} fill mismatch "
+                    f"(got {actual!r}, expected {value!r})"
+                )
+        except Exception as e:
+            print(f"    [Progressive] WARN: {accessible_name} fill failed: {e}")
+
+    async def _fill_placeholder(self, placeholder: str, value: str) -> None:
+        """Fill a text input by its HTML5 placeholder, with click+fill+Tab+verify.
+
+        ExtJS textfields render the placeholder as a real `placeholder` attribute
+        on the underlying `<input>`, so `get_by_placeholder` is the correct
+        Playwright API. Click first so ExtJS marks the field touched, fill,
+        then Tab to blur so the validator commits the value.
+        """
+        if not value:
+            return
+        box = self.page.get_by_placeholder(placeholder, exact=True)
+        try:
+            await box.first.wait_for(state="visible", timeout=5_000)
+        except Exception:
+            print(f"    [Progressive] WARN: placeholder {placeholder!r} not visible")
+            return
+        try:
+            await box.first.scroll_into_view_if_needed(timeout=2_000)
+            await box.first.click(timeout=3_000)
+            await box.first.fill(value, timeout=3_000)
+            await self.page.keyboard.press("Tab")
+            await self.page.wait_for_timeout(300)
+            try:
+                actual = (await box.first.input_value()).strip()
+            except Exception:
+                actual = ""
+            if actual == value.strip():
+                print(f"    [Progressive] {placeholder} = {actual!r}")
+            else:
+                print(
+                    f"    [Progressive] WARN: {placeholder} fill mismatch "
+                    f"(got {actual!r}, expected {value!r})"
+                )
+        except Exception as e:
+            print(f"    [Progressive] WARN: {placeholder} fill failed: {e}")
+
     async def _answer_oil_gas_fields(self, hauls_oil_gas: bool) -> None:
         """Conditional required question shown for trucking / dirt-sand-gravel
         classes: 'Are any vehicles used to haul to or from oil & gas fields?'
@@ -468,6 +650,77 @@ class BusinessInfoPage(BasePage):
         await group.get_by_role("radio", name=answer, exact=True).click()
         await self.page.wait_for_timeout(300)
 
+    async def _fill_primary_phone(self, phone: Optional[str]) -> None:
+        """Fill the Primary Phone Number (3 inputs: area-code/prefix/suffix).
+
+        Progressive marks this 'Optional' but actually requires it for
+        non-trucking commodities (e.g. Beverage Distributor, Wholesale Trade).
+        Phone format from blue quote: '(210) 668-1522' or '210-668-1522'.
+        """
+        if not phone:
+            return
+        import re
+        digits = re.sub(r"\D", "", phone)
+        if len(digits) < 10:
+            print(f"    [Progressive] Phone too short to parse: {phone!r}")
+            return
+        # Take the LAST 10 digits in case there's a leading '1' country code
+        digits = digits[-10:]
+        area, prefix, suffix = digits[:3], digits[3:6], digits[6:10]
+        print(f"    [Progressive] Phone: {area}-{prefix}-{suffix}")
+
+        # Field names per the live snapshot. ExtJS numberfields ignore plain
+        # .fill() if no focus/blur cycle runs — click + fill + Tab + verify.
+        boxes = [
+            ("Three digit area code of phone", area),
+            ("Three digit prefix of phone", prefix),
+            ("Four digit suffix of phone", suffix),
+        ]
+        for label, val in boxes:
+            box = self.page.get_by_role("textbox", name=label)
+            if await box.count() == 0:
+                print(f"    [Progressive] WARN phone[{label}]: textbox not found")
+                continue
+            target = box.first
+            try:
+                await target.scroll_into_view_if_needed(timeout=2_000)
+                await target.click(timeout=3_000)
+                await target.fill(val, timeout=3_000)
+                await self.page.keyboard.press("Tab")
+                await self.page.wait_for_timeout(200)
+                try:
+                    actual = (await target.input_value()).strip()
+                except Exception:
+                    actual = ""
+                if actual != val:
+                    print(
+                        f"    [Progressive] WARN phone[{label}]: "
+                        f"got {actual!r}, expected {val!r}"
+                    )
+            except Exception as e:
+                print(f"    [Progressive] WARN phone[{label}]: {e}")
+
+    async def _answer_owns_goods(self, owns: bool) -> None:
+        """Answer 'Does the customer own the goods he or she is transporting?'
+
+        Appears for distributor-type commodities (Beverage Distributor, Food
+        Distributor, etc.). NOT shown for general Trucker / For-Hire types.
+        Safe to call always — no-op if the question isn't present.
+        """
+        group = self.page.get_by_role(
+            "radiogroup",
+            name="Does the customer own the goods he or she is transporting?",
+        )
+        if await group.count() == 0:
+            return  # question didn't appear for this commodity
+        answer = "Yes" if owns else "No"
+        print(f"    [Progressive] Owns the goods being transported: {answer}")
+        try:
+            await group.get_by_role("radio", name=answer, exact=True).click(timeout=3_000)
+            await self.page.wait_for_timeout(300)
+        except Exception as e:
+            print(f"    [Progressive] WARN owns_goods: {e}")
+
     async def _click_start_quote(self) -> None:
         """Click 'Ok, start quote.' and CONFIRM the page actually advances.
 
@@ -481,22 +734,47 @@ class BusinessInfoPage(BasePage):
         """
         print("    [Progressive] Clicking 'Ok, start quote.'...")
         await self.remove_overlays()
-        btn = self.page.get_by_role("button", name="Ok, start quote.")
-        await btn.first.click(timeout=10_000)
+        # Blur any active field via JS so the form is committed before submit.
         try:
-            await self.page.wait_for_function(
-                "() => !location.href.includes('pageName=BusinessOwnerInfo')",
-                timeout=30_000,
+            await self.page.evaluate(
+                "() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }"
             )
-            await self.page.wait_for_load_state("networkidle", timeout=30_000)
-            print("    [Progressive] Quote started - moved to VehicleSummary")
         except Exception:
-            errors = await self._collect_validation_errors()
-            await self.screenshot("start_quote_did_not_advance")
-            raise RuntimeError(
-                "START page did not advance after 'Ok, start quote.' — a "
-                f"required field is missing or invalid. Page reported: {errors}"
-            )
+            pass
+        await self.page.wait_for_timeout(300)
+
+        btn = self.page.get_by_role("button", name="Ok, start quote.")
+        await btn.first.scroll_into_view_if_needed(timeout=3_000)
+        await btn.first.click(timeout=10_000)
+
+        # Retry the click up to 2 times if the page silently refuses to
+        # advance (intermittent Progressive backend issue with non-trucking
+        # commodities — same root cause as VehicleSummary Continue flake).
+        for attempt in range(3):
+            try:
+                await self.page.wait_for_function(
+                    "() => !location.href.includes('pageName=BusinessOwnerInfo')",
+                    timeout=30_000,
+                )
+                await self.page.wait_for_load_state("networkidle", timeout=30_000)
+                print("    [Progressive] Quote started - moved to VehicleSummary")
+                return
+            except Exception:
+                if attempt == 2:
+                    break  # give up
+                print(f"    [Progressive] Start quote did not advance; retry click {attempt + 1}/2")
+                await self.page.wait_for_timeout(3000)
+                try:
+                    await btn.first.click(timeout=10_000, force=True)
+                except Exception:
+                    pass
+
+        errors = await self._collect_validation_errors()
+        await self.screenshot("start_quote_did_not_advance")
+        raise RuntimeError(
+            "START page did not advance after 'Ok, start quote.' — a "
+            f"required field is missing or invalid. Page reported: {errors}"
+        )
 
     async def _collect_validation_errors(self) -> str:
         """Scrape visible inline error messages + unanswered required questions
@@ -504,12 +782,32 @@ class BusinessInfoPage(BasePage):
         try:
             return await self.page.evaluate(
                 """() => {
+                    const isReallyVisible = (e) => {
+                        if (!e.offsetParent && e.tagName !== 'BODY') return false;
+                        const r = e.getBoundingClientRect();
+                        if (r.width === 0 || r.height === 0) return false;
+                        const cs = window.getComputedStyle(e);
+                        if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+                        if (parseFloat(cs.opacity) === 0) return false;
+                        return true;
+                    };
                     const msgs = [];
-                    document.querySelectorAll(
-                        '.error-message, .x-form-invalid-field, [class*="error"]'
-                    ).forEach(e => {
-                        const t = (e.textContent || '').replace(/\\s+/g,' ').trim();
-                        if (t && e.offsetParent !== null) msgs.push(t.slice(0,90));
+                    // The visible per-field error text on Progressive's START
+                    // page is a tiny "This field is required" label that lives
+                    // next to the input. Search for that exact phrase among
+                    // visible elements — narrow and reliable.
+                    document.querySelectorAll('label, span, div').forEach(e => {
+                        if (!isReallyVisible(e)) return;
+                        const t = (e.textContent || '').trim();
+                        if (t === 'This field is required' ||
+                            t.startsWith('Please take a look at the')) {
+                            // Try to attach the field label sitting next to
+                            // the error message for context.
+                            const parent = e.closest('tr, fieldset, div.x-form-item') || e.parentElement;
+                            const lbl = parent ? parent.querySelector('label, span') : null;
+                            const ctx = lbl ? (lbl.textContent || '').replace(/\\s+/g,' ').trim().slice(0,60) : '';
+                            msgs.push(ctx ? ctx + ': ' + t.slice(0,80) : t.slice(0,120));
+                        }
                     });
                     // Required labels (label.requiredField) whose field group
                     // has no checked/filled control.

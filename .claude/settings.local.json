@@ -93,7 +93,8 @@
       "Bash(docker exec *)",
       "Bash(node -e \"const tls=require\\('tls'\\); const s=tls.connect\\(993,'imap.gmail.com',{servername:'imap.gmail.com'},\\(\\)=>{console.log\\('NODE TLS OK', s.getProtocol\\(\\)\\); s.end\\(\\);}\\); s.setTimeout\\(15000,\\(\\)=>{console.log\\('TIMEOUT'\\); s.destroy\\(\\);}\\); s.on\\('error',e=>console.log\\('NODE FAIL', e.code||e.message\\)\\);\")",
       "Bash(echo \"exit:$?\")",
-      "Bash([ -s \"$f\" ])"
+      "Bash([ -s \"$f\" ])",
+      "Bash(grep -E \"^\\\\.env$|^\\\\.env\\\\.\")"
     ]
   },
   "enabledMcpjsonServers": [

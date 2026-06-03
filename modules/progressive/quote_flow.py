@@ -109,7 +109,7 @@ class QuoteFlow:
 
             # Step 4: VEHICLES (loop over fields.vehicles)
             result.step_reached = "vehicles"
-            await self._add_all_vehicles(wizard_page, fields)
+            await self._add_all_vehicles(wizard_page, fields, result)
 
             # Step 5: DRIVERS (Policyholder auto-added; edit + add additional)
             result.step_reached = "drivers"
@@ -167,15 +167,43 @@ class QuoteFlow:
 
     # ---- Sub-flows ----
 
-    async def _add_all_vehicles(self, wizard_page: Page, fields: MappedFields) -> None:
-        """Loop over fields.vehicles, adding each via VehicleSummary -> AddVehicle."""
+    async def _add_all_vehicles(
+        self, wizard_page: Page, fields: MappedFields, result: QuoteResult
+    ) -> None:
+        """Loop over fields.vehicles, adding each via VehicleSummary -> AddVehicle.
+
+        Trailers are SKIPPED with a warning: Progressive routes them through
+        a separate "Add Trailer" form (different fields, different selectors)
+        that isn't supported yet. For initial pricing, the tractor + skipping
+        trailers gives a usable quote — the trailer can be endorsed after bind.
+        """
         if not fields.vehicles:
             raise RuntimeError("At least one vehicle is required to quote")
 
+        # Filter out trailers; flag them in warnings so the operator knows.
+        powered, trailers = [], []
+        for v in fields.vehicles:
+            (trailers if self._looks_like_trailer(v) else powered).append(v)
+
+        if trailers:
+            msg = (
+                f"Skipped {len(trailers)} trailer(s) — Progressive's Add "
+                f"Trailer flow is not yet automated. VIN(s): "
+                + ", ".join((t.vin or "(no vin)") for t in trailers)
+            )
+            print(f"    [Progressive] WARN: {msg}")
+            result.warnings.append(msg)
+
+        if not powered:
+            raise RuntimeError(
+                "All vehicles in the profile look like trailers; "
+                "at least one powered unit is required to quote."
+            )
+
         summary = VehicleSummaryPage(wizard_page)
 
-        for i, vehicle in enumerate(fields.vehicles):
-            print(f"    [Progressive] Vehicle {i + 1} / {len(fields.vehicles)}")
+        for i, vehicle in enumerate(powered):
+            print(f"    [Progressive] Vehicle {i + 1} / {len(powered)}")
             await summary.add_vehicle()
 
             most_common = MostCommonVehiclesPage(wizard_page)
@@ -187,6 +215,19 @@ class QuoteFlow:
 
         # All vehicles added; continue to drivers
         await summary.click_continue()
+
+    @staticmethod
+    def _looks_like_trailer(vehicle) -> bool:
+        """Detect trailers by VIN signature or model/type containing TRAILER.
+
+        Trailer VINs commonly start with letters indicating a non-powered unit
+        (e.g. WABASH, GREAT DANE, UTILITY VINs). The safest reliable signal
+        is the model/type string from the blue quote.
+        """
+        for s in (vehicle.trailer_type, vehicle.model, vehicle.make):
+            if s and "TRAILER" in s.upper():
+                return True
+        return False
 
     async def _configure_drivers(
         self,

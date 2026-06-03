@@ -48,7 +48,7 @@ class RuleEngine:
         "SPECIAL_FORM", "NOTAS_EXTRA"
     ]
 
-    def __init__(self, excel_path: str, sheet_name: str = "REGLAS"):
+    def __init__(self, excel_path: str, sheet_name: str = "REGLAS FINALES"):
         self.excel_path = Path(excel_path)
         if not self.excel_path.exists():
             raise FileNotFoundError(f"Excel not found: {excel_path}")

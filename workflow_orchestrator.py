@@ -52,6 +52,15 @@ class QuoteWorkflowOrchestrator:
         import os
         self.dry_run = os.getenv("DRY_RUN", "False").lower() in ("true", "1", "yes")
 
+        # Pull latest rules/checklist from Drive (no-op if REGLAS_DRIVE_FILE_ID not set
+        # or REGLAS_SYNC_ENABLED=false). Falls back to existing local xlsx if Drive
+        # is unreachable. All readers below see the freshest version of the sheet.
+        try:
+            from modules.drive_sheet_sync import sync_from_env
+            self.excel_path = sync_from_env(self.excel_path)
+        except Exception as e:
+            print(f"  Drive sync skipped ({e}); using existing local xlsx.")
+
         # Initialize components
         self.mapper = COMMTDNMapper(str(self.excel_path))
         self.mga_reader = MGAReader(str(self.excel_path))

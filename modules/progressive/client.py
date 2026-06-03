@@ -142,4 +142,16 @@ async def _run_with_browser(config: ProgressiveConfig, fields) -> QuoteResult:
             if last_result.success:
                 return last_result
 
+            # Only retry when the failure was at LOGIN itself (OTP flake,
+            # redirect timing). Restarting from scratch after a mid-flow
+            # failure (vehicles/drivers/business/rates) just wastes an OTP
+            # and reproduces the same bug — return the original error so the
+            # caller can see WHERE the flow actually broke.
+            if last_result.step_reached not in ("login", "", None):
+                print(
+                    f"    [Progressive] Failure at step '{last_result.step_reached}' "
+                    f"is not retryable; returning original error."
+                )
+                return last_result
+
     return last_result

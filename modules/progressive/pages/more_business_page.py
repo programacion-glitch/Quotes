@@ -2,12 +2,23 @@
 More About Business page (BUSINESS step in wizard breadcrumb).
 
 URL: pageName=MoreAboutBusiness
-Validated live 2026-05-25 with USDOT 2998569 (M&D CUSTOM FREIGHT LLC).
+Validated live 2026-06-01 with USDOT 2998569 (M&D CUSTOM FREIGHT LLC).
 
-Required fields:
-  - "Is the customer currently insured?" Yes/No
-  - "Does the customer have other coverages for the business?" GL/BOP/None
-  - "Is an Electronic Logging Device (ELD) required to record hours of service?" Yes/No
+Required fields (current Progressive UI - 2026-06):
+  - "Is the customer currently insured?" Yes/No radio
+  - "Does the customer currently have any of the following insurance policies
+     for their business?" — CHECKBOX GROUP: Business Owners Policy /
+     General Liability / Workers' Compensation / None of the above
+  - "Does the customer currently have, or will they purchase, any of the
+     following insurance policies with Progressive within 45 days?" — second
+     CHECKBOX GROUP with the same options.
+  - "Is an Electronic Logging Device (ELD) required to record hours of
+     service?" Yes/No radio
+
+NOTE 2026-06-01: "Other coverages" used to be a radio group with options
+"GL / BOP / None". Progressive split it into TWO checkbox groups (existing
+policies + bundle-with-Progressive). To indicate "no extras" we tick
+"None of the above" in BOTH groups.
 
 Optional fields (have defaults):
   - Customer Email Address
@@ -65,15 +76,52 @@ class MoreBusinessPage(BasePage):
         await self.page.wait_for_timeout(300)
 
     async def _answer_other_coverages(self, choice: str) -> None:
-        valid = {"General Liability", "Business Owner's Policy", "None"}
-        if choice not in valid:
-            choice = "None"
+        """Tick the appropriate checkbox(es) in BOTH 'other coverages' groups.
+
+        Progressive replaced the old single radio (GL/BOP/None) with TWO
+        checkbox groups: existing-policies + bundle-with-Progressive.
+
+        For now we support only choice="None" (default) — tick
+        "None of the above" in both groups. To support multi-select in the
+        future, accept a list and tick each matching checkbox by label.
+        """
         print(f"    [Progressive] Other coverages: {choice}")
-        group = self.page.get_by_role(
+        # Map the legacy choice string to checkbox labels.
+        if choice in ("None", None, ""):
+            target_labels = ["None of the above"]
+        else:
+            # legacy single value -> single checkbox (in the existing-policies group)
+            target_labels = [choice]
+
+        # Click ALL matching checkboxes (one per "Other coverages" question).
+        for label in target_labels:
+            checkboxes = self.page.get_by_role("checkbox", name=label, exact=True)
+            n = await checkboxes.count()
+            print(f"    [Progressive] Found {n} '{label}' checkbox(es); ticking each")
+            for i in range(n):
+                cb = checkboxes.nth(i)
+                try:
+                    if not await cb.is_checked():
+                        await cb.click(timeout=5_000)
+                        await self.page.wait_for_timeout(200)
+                except Exception as e:
+                    # If the checkbox is in a hidden container (e.g. when the
+                    # form variant is the old radiogroup), fall through.
+                    print(f"    [Progressive] WARN: checkbox '{label}'[{i}] click failed: {e}")
+
+        # Legacy fallback: if the radiogroup variant still exists in some
+        # Progressive flows, tick the matching radio. Safe no-op when the
+        # checkboxes above already satisfied the requirement.
+        legacy_group = self.page.get_by_role(
             "radiogroup",
             name="Does the customer have other coverages for the business?",
         )
-        await group.get_by_role("radio", name=choice, exact=True).click()
+        if await legacy_group.count() > 0:
+            try:
+                radio_label = choice if choice and choice != "None" else "None"
+                await legacy_group.get_by_role("radio", name=radio_label, exact=True).click(timeout=3_000)
+            except Exception:
+                pass
         await self.page.wait_for_timeout(300)
 
     async def _answer_federal_filings(self, required: bool) -> None:
@@ -98,8 +146,33 @@ class MoreBusinessPage(BasePage):
         await self.page.wait_for_timeout(300)
 
     async def _click_continue(self) -> None:
+        """Click Continue → RATES with retry + force=True + URL verify.
+
+        Same flake pattern as VehicleSummary/AddDriver Continue: clicks are
+        sometimes silently absorbed by Progressive's frontend.
+        """
         print("    [Progressive] Continuing to RATES...")
-        # Two Continue buttons (top + bottom); bottom is the safe one
-        btn = self.page.get_by_role("button", name="Continue").last
-        await btn.click(timeout=10_000)
-        await self.page.wait_for_load_state("networkidle", timeout=60_000)
+        # Blur active field so ExtJS commits all radio/checkbox state.
+        try:
+            await self.page.evaluate(
+                "() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }"
+            )
+            await self.page.wait_for_timeout(400)
+        except Exception:
+            pass
+
+        for attempt in range(3):
+            try:
+                # Two Continue buttons (top + bottom); bottom is the safe one
+                btn = self.page.get_by_role("button", name="Continue").last
+                await btn.scroll_into_view_if_needed(timeout=2_000)
+                await btn.click(timeout=10_000, force=True)
+            except Exception as e:
+                print(f"    [Progressive] more_business Continue click failed: {e}")
+            await self.page.wait_for_load_state("networkidle", timeout=60_000)
+            await self.page.wait_for_timeout(1_500)
+            if "MoreAboutBusiness" not in self.page.url:
+                return  # advanced
+            if attempt < 2:
+                print(f"    [Progressive] more_business Continue did not advance; retry {attempt + 1}/2")
+                await self.page.wait_for_timeout(2_500)
