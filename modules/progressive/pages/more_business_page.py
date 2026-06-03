@@ -9,6 +9,7 @@ REQUIRED fields:
 CONDITIONAL fields (may not render for some commodities — soft-skipped):
   - eld_required          (NOT rendered for Beverage Distributor)
   - federal_filings_required
+  - snapshot_proview      (renders for Beverage Distributor, NOT for Trucker)
 
 OPTIONAL fields:
   - customer_email
@@ -25,7 +26,7 @@ class MoreBusinessPage(BasePage):
     """Progressive wizard - MoreAboutBusiness page (BUSINESS step)."""
 
     REQUIRED_FIELDS = ("currently_insured", "other_coverages")
-    CONDITIONAL_FIELDS = ("eld_required", "federal_filings_required")
+    CONDITIONAL_FIELDS = ("eld_required", "federal_filings_required", "snapshot_proview")
     OPTIONAL_FIELDS = ("customer_email",)
 
     def __init__(self, page):
@@ -39,6 +40,7 @@ class MoreBusinessPage(BasePage):
         eld_required: bool = False,
         customer_email: Optional[str] = None,
         federal_filings_required: bool = False,
+        snapshot_proview: bool = False,
     ) -> None:
         await self.wait_for_extjs_idle()
         await self.remove_overlays()
@@ -50,6 +52,7 @@ class MoreBusinessPage(BasePage):
         await self._answer_other_coverages(other_coverages)
         await self._answer_federal_filings_conditional(federal_filings_required)
         await self._answer_eld_required_conditional(eld_required)
+        await self._answer_snapshot_proview_conditional(snapshot_proview)
         await self.safe_click_continue(expect_url_changes_from="MoreAboutBusiness")
 
     async def _fill_email(self, email: str) -> None:
@@ -97,6 +100,25 @@ class MoreBusinessPage(BasePage):
             self._log_skipped("eld_required", "field_not_rendered_for_this_commodity")
             return
         print(f"    [Progressive] ELD required: {answer}")
+        await self.safe_radio(group, answer)
+
+    async def _answer_snapshot_proview_conditional(self, accept: bool = False) -> None:
+        """Answer the Snapshot ProView enrollment radio — defaults to No.
+
+        This question ("The customer is eligible for additional savings of 20%...")
+        renders for Beverage Distributor commodities but NOT for Trucker.
+        The bot declines by default: enrolling the customer in a telematics
+        hardware programme requires explicit customer consent.
+        """
+        answer = "Yes" if accept else "No"
+        group = await self.find_radiogroup(
+            "The customer is eligible for additional savings",
+            timeout_ms=2000,
+        )
+        if not await self.field_exists(group, wait_ms=1000):
+            self._log_skipped("snapshot_proview", "field_not_rendered_for_this_commodity")
+            return
+        print(f"    [Progressive] Snapshot ProView (accept): {answer}")
         await self.safe_radio(group, answer)
 
     def _log_skipped(self, field: str, reason: str) -> None:
