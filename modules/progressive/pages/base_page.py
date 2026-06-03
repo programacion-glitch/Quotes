@@ -95,6 +95,23 @@ class BasePage:
         }
 
     # ============================================================
+    # Familia C — Esperas dinámicas
+    # ============================================================
+
+    async def wait_for_extjs_idle(self, *, timeout_ms: int = 10_000) -> None:
+        """Wait until ExtJS finishes: no pending Ajax, no visible masks, document ready."""
+        await self.page.wait_for_function(
+            """() => {
+                const extQuiet = typeof Ext === 'undefined' ||
+                                 !Ext.Ajax || !Ext.Ajax.isLoading();
+                const noMask = !document.querySelector('.x-mask:not(.x-mask-fixed)');
+                const ready = document.readyState === 'complete';
+                return extQuiet && noMask && ready;
+            }""",
+            timeout=timeout_ms,
+        )
+
+    # ============================================================
     # DEPRECATED helpers — kept until phase 7 cleanup
     # ============================================================
 
