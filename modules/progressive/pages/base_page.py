@@ -342,6 +342,84 @@ class BasePage:
             debug_context=debug,
         )
 
+    async def safe_click_continue(
+        self,
+        *,
+        expect_url_changes_from: str,
+        retries: int = 3,
+    ) -> None:
+        """Click 'Continue' robustly: blur → text-based locator → force=True → JS dispatch fallback.
+
+        Verifies URL no longer contains `expect_url_changes_from` token.
+        Raises ContinueStuckError if URL never advances.
+        """
+        from modules.progressive.pages._exceptions import ContinueStuckError
+
+        await self.blur_active_element()
+        await self.page.wait_for_timeout(300)
+
+        attempts = 0
+        for attempt in range(retries + 1):
+            attempts = attempt + 1
+            try:
+                btn = self.page.get_by_text("Continue", exact=True).last
+                await btn.scroll_into_view_if_needed(timeout=2_000)
+                await btn.click(timeout=10_000, force=True)
+            except Exception:
+                try:
+                    btn = self.page.get_by_role("button", name="Continue").last
+                    await btn.click(timeout=5_000, force=True)
+                except Exception:
+                    pass
+
+            try:
+                await self.page.wait_for_load_state("networkidle", timeout=30_000)
+            except Exception:
+                pass
+
+            if expect_url_changes_from not in self.page.url:
+                return
+
+            if attempt >= 1:
+                try:
+                    await self.page.evaluate(
+                        """() => {
+                            const spans = Array.from(document.querySelectorAll('span'))
+                              .filter(s => (s.innerText || '').trim() === 'Continue');
+                            for (const span of spans) {
+                                let el = span;
+                                while (el && !(el.classList && el.classList.contains('x-btn'))) {
+                                    el = el.parentElement;
+                                }
+                                if (el) {
+                                    ['mousedown','mouseup','click'].forEach(t =>
+                                        el.dispatchEvent(new MouseEvent(t, {bubbles: true}))
+                                    );
+                                    return;
+                                }
+                            }
+                        }"""
+                    )
+                    await self.page.wait_for_timeout(1_500)
+                    if expect_url_changes_from not in self.page.url:
+                        return
+                except Exception:
+                    pass
+
+            if attempt < retries:
+                await self.page.wait_for_timeout(1_000 * (attempt + 1))
+
+        debug = await self.dump_debug_context("safe_click_continue")
+        screenshot = await self.screenshot(f"continue_stuck_{expect_url_changes_from}_{attempts}")
+        raise ContinueStuckError(
+            f"safe_click_continue: URL still contains '{expect_url_changes_from}' after {attempts} attempts",
+            primitive="safe_click_continue",
+            field=None,
+            attempts=attempts,
+            screenshot_path=screenshot,
+            debug_context=debug,
+        )
+
     # ============================================================
     # Familia C — Esperas dinámicas
     # ============================================================

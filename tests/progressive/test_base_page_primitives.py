@@ -252,3 +252,31 @@ async def test_safe_select_combo_raises_ComboSelectError_when_value_not_set(mock
     bp = BasePage(mock_page)
     with pytest.raises(ComboSelectError):
         await bp.safe_select_combo(mock_locator, "Texas", retries=1)
+
+
+@pytest.mark.asyncio
+async def test_safe_click_continue_returns_when_url_changes(mock_page, mock_locator):
+    from unittest.mock import PropertyMock, patch
+    state = {"url": "https://x.com/?pageName=MoreAboutBusiness"}
+
+    async def click_advances_url(*args, **kwargs):
+        state["url"] = "https://x.com/?pageName=Rates"
+
+    mock_locator.click = AsyncMock(side_effect=click_advances_url)
+    mock_locator.scroll_into_view_if_needed = AsyncMock()
+
+    bp = BasePage(mock_page)
+    with patch.object(type(mock_page), "url", new_callable=PropertyMock, create=True) as url_mock:
+        url_mock.side_effect = lambda: state["url"]
+        await bp.safe_click_continue(expect_url_changes_from="MoreAboutBusiness")
+    mock_locator.click.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_safe_click_continue_raises_ContinueStuckError(mock_page, mock_locator):
+    from modules.progressive.pages._exceptions import ContinueStuckError
+    mock_page.url = "https://x.com/?pageName=MoreAboutBusiness"
+    bp = BasePage(mock_page)
+    with pytest.raises(ContinueStuckError) as exc_info:
+        await bp.safe_click_continue(expect_url_changes_from="MoreAboutBusiness", retries=2)
+    assert exc_info.value.primitive == "safe_click_continue"
