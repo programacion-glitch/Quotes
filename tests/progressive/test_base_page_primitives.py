@@ -205,3 +205,27 @@ async def test_safe_radio_raises_RadioStuckError_after_retries(mock_page, mock_l
     with pytest.raises(RadioStuckError) as exc_info:
         await bp.safe_radio(mock_locator, "Yes", retries=2)
     assert exc_info.value.primitive == "safe_radio"
+
+
+@pytest.mark.asyncio
+async def test_safe_checkbox_checks_when_unchecked(mock_page, mock_locator):
+    mock_locator.is_checked = AsyncMock(side_effect=[False, True])
+    bp = BasePage(mock_page)
+    await bp.safe_checkbox(mock_locator, check=True)
+    mock_locator.click.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_safe_checkbox_skips_when_already_correct(mock_page, mock_locator):
+    mock_locator.is_checked = AsyncMock(return_value=True)
+    bp = BasePage(mock_page)
+    await bp.safe_checkbox(mock_locator, check=True)
+    mock_locator.click.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_safe_checkbox_unchecks_when_check_false(mock_page, mock_locator):
+    mock_locator.is_checked = AsyncMock(side_effect=[True, False])
+    bp = BasePage(mock_page)
+    await bp.safe_checkbox(mock_locator, check=False)
+    mock_locator.click.assert_awaited()
