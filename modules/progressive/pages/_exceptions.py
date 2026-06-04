@@ -63,7 +63,7 @@ class UnmappableValueError(ExtJSInteractionError):
         *,
         field: str,
         source_value: Optional[str],
-        available_options: list,
+        available_options: list[str],
         screenshot_path: Optional[Path] = None,
         debug_context: Optional[dict] = None,
     ) -> None:
@@ -72,7 +72,7 @@ class UnmappableValueError(ExtJSInteractionError):
             f"match among {len(available_options)} options",
             primitive="resolve_choice",
             field=field,
-            attempts=1,
+            attempts=1,  # mapping failure: one resolution attempt, no retries
             screenshot_path=screenshot_path,
             debug_context=debug_context,
         )
