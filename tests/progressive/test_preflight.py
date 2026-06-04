@@ -50,6 +50,12 @@ def test_quoteresult_has_assumptions_field():
     assert hasattr(r, "assumptions") and r.assumptions == []
 
 
+def test_specific_commodity_is_not_listed_as_assumption():
+    rep = run_preflight(_fields("BEVERAGE DISTRIBUTION", "FLATBED"))
+    assert rep.ok()
+    assert not any(a.value == "Beverage Distributor" for a in rep.assumptions)
+
+
 def test_run_halts_before_browser_on_blocker(monkeypatch):
     # PACKED CHARCOAL blocks at preflight; run() must return WITHOUT login.
     flow = QuoteFlow.__new__(QuoteFlow)          # bypass __init__/browser

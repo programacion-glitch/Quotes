@@ -21,8 +21,8 @@ VEHICLE_TILE_MAP = {
 
 # Commodity table: (synonym keys, Progressive Business-type option).
 _COMMODITY_TABLE = [
-    (("DIRT", "SAND", "GRAVEL"), "Dirt Sand & Gravel (For A Fee)"),
     (("FRACK", "FRACKING"), "Fracking Sand Hauling"),
+    (("DIRT", "SAND", "GRAVEL"), "Dirt Sand & Gravel (For A Fee)"),
     (("COAL",), "Coal Hauling"),
     (("AUTO HAUL", "CAR HAUL", "AUTO HAULER", "CAR HAULER"),
      "Auto Hauler (For Hire Trucking)"),
@@ -31,10 +31,12 @@ _COMMODITY_TABLE = [
     (("GARBAGE", "TRASH"), "Garbage & Trash Hauling/Removal"),
     (("HAZARD", "HAZMAT", "HAZARDOUS"), "Hazardous Materials Hauling"),
     (("CONTAINER", "CONTAINERS"), "Container Hauling"),
-    (("AGRICULTUR", "AGRICULTURAL", "AGRICULTURE", "FARM PRODUCE"),
+    (("AGRICULTURAL", "AGRICULTURE", "FARM PRODUCE"),
      "Agricultural Hauling (For A Fee)"),
     (("DAIRY",), "Dairy Products Hauling (For A Fee)"),
     (("REFRIG", "REFRIGERATED", "REEFER", "FROZEN"), "Frozen Foods Hauling"),
+    # NOTE: "WATER" maps to Beverage Distributor as a known approximation
+    # (inherited; water/liquid tanker hauling is technically distinct).
     (("BEVERAGE", "BEER", "WATER", "LIQUIDS", "BOTTLED"), "Beverage Distributor"),
 ]
 

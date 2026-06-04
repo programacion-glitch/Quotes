@@ -25,6 +25,7 @@ from typing import List, Optional
 from modules.progressive.choice_resolver import resolve_choice, Resolution
 from modules.progressive.field_mapper import MappedVehicle
 from modules.progressive.mappings import VEHICLE_TILE_MAP
+from modules.progressive.pages._exceptions import UnmappableValueError
 from modules.progressive.pages.base_page import BasePage
 from modules.progressive.unit_matching import normalize_identifier
 
@@ -268,16 +269,18 @@ class MostCommonVehiclesPage(BasePage):
 
     async def _enumerate_tiles(self) -> list:
         """Read the vehicle-type tile labels actually rendered on screen."""
+        fallback = list(dict.fromkeys(VEHICLE_TILE_MAP.values()))
         try:
-            return await self.page.evaluate(
+            result = await self.page.evaluate(
                 """() => Array.from(document.querySelectorAll(
                     '.x-btn-inner, [role=button], .tile, button'
                 )).filter(el => el.offsetParent !== null)
                   .map(el => (el.innerText || '').trim())
                   .filter(t => t.length > 0)"""
             )
+            return result if isinstance(result, list) else fallback
         except Exception:
-            return list(VEHICLE_TILE_MAP.values())   # offline/test fallback
+            return fallback
 
     async def resolve_tile(self, trailer_type: str) -> Resolution:
         """Resolve the Blue-Quote vehicle string to a tile actually on screen.
@@ -292,7 +295,6 @@ class MostCommonVehiclesPage(BasePage):
             mapping=mapping, screenshot_path=screenshot,
         )
         if res.value not in options:
-            from modules.progressive.pages._exceptions import UnmappableValueError
             raise UnmappableValueError(
                 field="Vehicle tile",
                 source_value=trailer_type,

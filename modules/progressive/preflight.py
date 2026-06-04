@@ -39,10 +39,10 @@ def _check_commodity(mapped: MappedFields, rep: PreflightReport) -> None:
         return  # absence handled by field_mapper defaults (Trucker)
     opt, is_generic = map_commodity(commodity)
     if opt is not None:
-        rep.assumptions.append(
-            Resolution("Business type", opt, "MATCHED", commodity,
-                       "generic" if is_generic else "mapping")
-        )
+        if is_generic:
+            rep.assumptions.append(
+                Resolution("Business type", opt, "MATCHED", commodity, "generic")
+            )
         return
     rep.blockers.append(Blocker(
         field="Business type",
@@ -77,13 +77,13 @@ def run_preflight(mapped: MappedFields) -> PreflightReport:
 
 
 def format_report(rep: PreflightReport, business: str) -> str:
-    lines = [f"PREFLIGHT — {business}"]
+    lines = [f"PREFLIGHT - {business}"]
     if rep.blockers:
-        lines.append(f"BLOCKERS ({len(rep.blockers)}) — resolvé antes de re-correr:")
+        lines.append(f"BLOCKERS ({len(rep.blockers)}) - resolver antes de re-correr:")
         for b in rep.blockers:
             lines.append(f"  - {b.field}: {b.source_value!r} no matchea.")
             lines.append(f"      Opciones: {', '.join(b.available_options[:8])}...")
-            lines.append(f"      Acción: {b.suggestion}")
+            lines.append(f"      Accion: {b.suggestion}")
     if rep.assumptions:
         lines.append(f"ASSUMPTIONS ({len(rep.assumptions)}):")
         for a in rep.assumptions:

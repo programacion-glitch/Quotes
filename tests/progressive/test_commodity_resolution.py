@@ -35,3 +35,8 @@ def test_vehicle_tile_map_restores_box_truck_synonyms():
     t = "UTILITY DRY VAN".upper()
     token = next((k for k in VEHICLE_TILE_MAP if k in t), None)
     assert VEHICLE_TILE_MAP[token] == "Box Truck"
+
+
+def test_map_commodity_fracking_sand_not_dirt():
+    opt, generic = map_commodity("FRACKING SAND")
+    assert opt == "Fracking Sand Hauling" and generic is False
