@@ -14,8 +14,9 @@ _DIR = Path(__file__).parent / "catalogs"
 class Catalog:
     field: str
     captured: str
-    options: tuple
-    generic_aliases: frozenset = field(default_factory=frozenset)
+    source: str
+    options: tuple[str, ...]
+    generic_aliases: frozenset[str] = field(default_factory=frozenset)
 
 
 @lru_cache(maxsize=None)
@@ -26,6 +27,7 @@ def load_catalog(name: str) -> Catalog:
     return Catalog(
         field=data["field"],
         captured=data["captured"],
+        source=data.get("source", ""),
         options=tuple(data["options"]),
         generic_aliases=frozenset(
             a.lower() for a in data.get("generic_aliases", [])
