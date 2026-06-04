@@ -439,11 +439,11 @@ class BusinessInfoPage(BasePage):
         Specific hit -> MATCHED. General-freight family / 'Trucker' sentinel ->
         MATCHED (generic). Anything else present-but-unmapped -> UnmappableValueError.
         """
-        cat = load_catalog("business_type")
         opt, is_generic = map_commodity(commodity)
         if opt is not None:
             note = "generic" if is_generic else "mapping"
             return Resolution("Business type", opt, "MATCHED", commodity, note)
+        cat = load_catalog("business_type")
         raise UnmappableValueError(
             field="Business type",
             source_value=commodity,
@@ -486,6 +486,7 @@ class BusinessInfoPage(BasePage):
             await self.wait_for_extjs_idle(timeout_ms=4_000)
         except Exception:
             pass
+        # let ExtJS finish rendering the conditional dropdown before enumerating options
         await self.page.wait_for_timeout(500)
 
         combo = await self.find_combo("Type of Trucker")
@@ -497,7 +498,7 @@ class BusinessInfoPage(BasePage):
         raw = await self.page.get_by_role("option").all_inner_texts()
         options = [o.strip() for o in raw
                    if o.strip() and o.strip() not in self._TYPE_OF_TRUCKER_HEADERS]
-        screenshot = await self.screenshot("type_of_trucker_unmapped")
+        screenshot = await self.screenshot("type_of_trucker_options")
         res = resolve_choice(
             "Type of Trucker", commodity, options,
             default=self._TYPE_OF_TRUCKER_DEFAULT,

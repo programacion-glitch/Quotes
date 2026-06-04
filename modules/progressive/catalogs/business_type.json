@@ -1,7 +1,7 @@
 {
   "field": "Business type",
   "captured": "2026-06-04",
-  "source": "business_info_page._map_commodity_to_option table targets",
+  "source": "modules/progressive/mappings.map_commodity",
   "options": [
     "Dirt Sand & Gravel (For A Fee)", "Fracking Sand Hauling", "Coal Hauling",
     "Auto Hauler (For Hire Trucking)", "Livestock Hauling (For A Fee)",
