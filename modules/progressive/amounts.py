@@ -39,8 +39,11 @@ def parse_amount(raw: Optional[str]) -> Optional[float]:
         return _to_number(s.replace(sep, ""))
 
     # Single occurrence: 3 digits after -> thousands; 1-2 -> decimal; 4+ -> decimal.
-    after = s.split(sep)[1]
-    if len(after) == 3:
+    before, after = s.split(sep)[0], s.split(sep)[1]
+    # 3 digits after -> thousands separator (e.g. "51.000" -> 51000),
+    # EXCEPT when the integer part is just "0" (e.g. "0.001"), which is a
+    # genuine fraction, not 0 thousands.
+    if len(after) == 3 and before.strip("0") != "":
         return _to_number(s.replace(sep, ""))
     return _to_number(s.replace(sep, ".") if sep == "," else s)
 

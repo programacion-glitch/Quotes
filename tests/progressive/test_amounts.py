@@ -15,6 +15,8 @@ from modules.progressive.amounts import parse_amount
     ("45.000", 45000),           # single dot, 3 digits -> thousands
     ("26001", 26001),            # plain integer
     ("$0", 0),                   # zero
+    ("0.001", 0.001),            # zero integer part + 3 digits -> decimal, not thousands
+    ("10.000", 10000),           # real thousands still work (integer part not zero)
 ])
 def test_parse_amount_formats(raw, expected):
     assert parse_amount(raw) == expected
