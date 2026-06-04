@@ -47,6 +47,7 @@ def mock_page(mock_locator: AsyncMock) -> AsyncMock:
     page.wait_for_function = AsyncMock(return_value=None)
     page.wait_for_load_state = AsyncMock(return_value=None)
     page.wait_for_timeout = AsyncMock(return_value=None)
+    page.wait_for_url = AsyncMock(side_effect=TimeoutError)
     page.keyboard = MagicMock()
     page.keyboard.press = AsyncMock()
     page.screenshot = AsyncMock(return_value=None)

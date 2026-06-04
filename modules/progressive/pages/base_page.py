@@ -375,10 +375,29 @@ class BasePage:
     ) -> None:
         """Click 'Continue' robustly: blur → text-based locator → force=True → JS dispatch fallback.
 
-        Verifies URL no longer contains `expect_url_changes_from` token.
+        Verifies URL no longer contains `expect_url_changes_from` token using a
+        dynamic wait (page.wait_for_url) instead of an instantaneous snapshot,
+        so slow Progressive-side transitions (NoHit / reduced-underwriting
+        flows where backend compute takes seconds after networkidle settles)
+        are tolerated without false-positive timeouts.
+
         Raises ContinueStuckError if URL never advances.
         """
         from modules.progressive.pages._exceptions import ContinueStuckError
+
+        token = expect_url_changes_from
+
+        async def _wait_url_changed(timeout_ms: int) -> bool:
+            """Return True if URL no longer contains the token within timeout_ms.
+            Best-effort: swallows TimeoutError and returns False instead."""
+            try:
+                await self.page.wait_for_url(
+                    lambda url: token not in url,
+                    timeout=timeout_ms,
+                )
+                return True
+            except Exception:
+                return token not in self.page.url   # final snapshot check
 
         await self.blur_active_element()
         await self.page.wait_for_timeout(300)
@@ -402,7 +421,10 @@ class BasePage:
             except Exception:
                 pass
 
-            if expect_url_changes_from not in self.page.url:
+            # Dynamic URL-change wait. 15s per attempt is enough for NoHit
+            # backend compute; cheaper than a hard sleep because it resolves
+            # as soon as Progressive navigates.
+            if await _wait_url_changed(timeout_ms=15_000):
                 return
 
             if attempt >= 1:
@@ -425,8 +447,8 @@ class BasePage:
                             }
                         }"""
                     )
-                    await self.page.wait_for_timeout(1_500)
-                    if expect_url_changes_from not in self.page.url:
+                    # JS-dispatched click — give the same dynamic wait budget.
+                    if await _wait_url_changed(timeout_ms=10_000):
                         return
                 except Exception:
                     pass
