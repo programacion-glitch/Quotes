@@ -79,3 +79,33 @@ def resolve_gvw(
             available_options=list(options),
             screenshot_path=screenshot_path,
         )
+
+
+VALUE_FLOOR = 100   # Progressive: "The vehicle value must be greater than $100."
+
+
+def resolve_vehicle_value(
+    raw: Optional[str], *, floor: float = VALUE_FLOOR, screenshot_path: Optional[str] = None
+) -> Optional[float]:
+    """Validate a raw Blue-Quote vehicle value.
+
+    absent / zero -> None (no APD). present & >= floor -> the number.
+    present but unparseable OR 0 < value < floor -> HALT.
+    """
+    if not (raw and str(raw).strip()):
+        return None
+    num = parse_amount(raw)
+    if num is None:
+        raise UnmappableValueError(
+            field="Vehicle value", source_value=raw,
+            available_options=[], screenshot_path=screenshot_path,
+        )
+    if num == 0:
+        return None
+    if num < floor:
+        raise UnmappableValueError(
+            field="Vehicle value", source_value=raw,
+            available_options=[f"must be greater than ${floor}"],
+            screenshot_path=screenshot_path,
+        )
+    return num
