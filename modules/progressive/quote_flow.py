@@ -56,7 +56,7 @@ class QuoteResult:
     error: Optional[str] = None
     screenshot_path: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
-    assumptions: List[str] = field(default_factory=list)   # DEFAULTED resolutions
+    assumptions: List[str] = field(default_factory=list)   # offline preflight assumptions (logged for traceability)
     # Quote details (when success)
     price: Optional[QuotePrice] = None
 
@@ -184,7 +184,7 @@ class QuoteFlow:
             result.error = (
                 f"HALT at '{result.step_reached}': {e.field} value "
                 f"{e.source_value!r} matched no option. Options: "
-                f"{', '.join(map(str, e.available_options[:8]))}"
+                f"{', '.join(map(str, e.available_options[:8] or ['(none)']))}"
             )
             result.screenshot_path = (
                 str(e.screenshot_path) if e.screenshot_path
