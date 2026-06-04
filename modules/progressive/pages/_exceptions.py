@@ -50,3 +50,31 @@ class ComboSelectError(ExtJSInteractionError):
 
 class FieldNotFoundError(ExtJSInteractionError):
     """find_* primitive could not locate a REQUIRED field within timeout."""
+
+
+class UnmappableValueError(ExtJSInteractionError):
+    """A Blue Quote value was present but matched no Progressive option with
+    confidence, OR a critical field was absent with no default. Raised by
+    resolve_choice; used both offline (preflight, screenshot_path=None) and
+    in-flight (with screenshot)."""
+
+    def __init__(
+        self,
+        *,
+        field: str,
+        source_value: Optional[str],
+        available_options: list,
+        screenshot_path: Optional[Path] = None,
+        debug_context: Optional[dict] = None,
+    ) -> None:
+        super().__init__(
+            f"Cannot map {field!r}: value {source_value!r} has no confident "
+            f"match among {len(available_options)} options",
+            primitive="resolve_choice",
+            field=field,
+            attempts=1,
+            screenshot_path=screenshot_path,
+            debug_context=debug_context,
+        )
+        self.source_value = source_value
+        self.available_options = list(available_options)
