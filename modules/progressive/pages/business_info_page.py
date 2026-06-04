@@ -554,19 +554,106 @@ class BusinessInfoPage(BasePage):
     async def _answer_type_of_trucker(self) -> None:
         """Conditional combobox revealed when business type = 'Trucker'.
 
-        Progressive asks to refine the Trucker category (options like "For
-        Hire Trucking", "Private Carrier", etc.). Without filling this, the
-        START page blocks: 'Type of Trucker: This field is required'.
-
-        Strategy: open the combobox, enumerate visible options, click the
-        first. The first option is always a real underwriting category
-        (Progressive doesn't use 'Select…' sentinels in ExtJS combos). We
-        also log the available labels so future sessions can refine this
-        into a commodity-aware mapping if business need arises.
+        DIAGNOSTIC MODE: dumps every visible combobox on the page (accessible
+        name + nearby label text + aria-label + placeholder) BEFORE attempting
+        to locate "Type of Trucker". Once the real selector is identified
+        from the dump, this method gets simplified to a plain
+        `find_combo(<real label>)` + open + pick first option.
         """
+        # Give ExtJS time to render the conditional after Trucker selection.
+        try:
+            await self.wait_for_extjs_idle(timeout_ms=4_000)
+        except Exception:
+            pass
+        await self.page.wait_for_timeout(500)
+
+        # DIAGNOSTIC: dump ALL visible comboboxes and their context.
+        try:
+            dump = await self.page.evaluate("""() => {
+                const visible = el => {
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0;
+                };
+                // ExtJS combos render as input[role="combobox"] or sometimes a
+                // wrapping div. Catch both.
+                const combos = [
+                    ...document.querySelectorAll('[role="combobox"]'),
+                    ...document.querySelectorAll('input.x-form-field'),
+                ];
+                const seen = new Set();
+                const out = [];
+                for (const el of combos) {
+                    if (!visible(el)) continue;
+                    const id = el.id || el.outerHTML.slice(0, 60);
+                    if (seen.has(id)) continue;
+                    seen.add(id);
+                    // Find nearest preceding label: look up the DOM for a
+                    // sibling/ancestor label, or the previous sibling text.
+                    let labelText = '';
+                    // Try <label for="id">
+                    if (el.id) {
+                        const lbl = document.querySelector(`label[for="${el.id}"]`);
+                        if (lbl) labelText = (lbl.textContent || '').trim();
+                    }
+                    // Fallback: walk up looking for a sibling div with text
+                    if (!labelText) {
+                        let p = el.parentElement;
+                        for (let i = 0; i < 6 && p; i++, p = p.parentElement) {
+                            const prev = p.previousElementSibling;
+                            if (prev && prev.textContent) {
+                                const t = prev.textContent.trim();
+                                if (t && t.length < 100) { labelText = t; break; }
+                            }
+                        }
+                    }
+                    out.push({
+                        id: el.id,
+                        name: el.name || null,
+                        aria: el.getAttribute('aria-label'),
+                        ariaLabelledBy: el.getAttribute('aria-labelledby'),
+                        placeholder: el.placeholder || null,
+                        value: el.value || '',
+                        label: labelText,
+                        required: el.getAttribute('aria-required') === 'true' ||
+                                  el.required === true,
+                    });
+                }
+                // Also dump any element with text "Type of Trucker" to confirm
+                // it really exists on the page.
+                const textMatches = [];
+                const walker = document.createTreeWalker(
+                    document.body, NodeFilter.SHOW_TEXT, null
+                );
+                let node;
+                while ((node = walker.nextNode())) {
+                    const t = (node.textContent || '').trim();
+                    if (t && t.toLowerCase().includes('type of trucker')) {
+                        textMatches.push({
+                            text: t.slice(0, 80),
+                            parentTag: node.parentElement?.tagName,
+                            parentClass: node.parentElement?.className?.slice(0, 60),
+                        });
+                    }
+                }
+                return {combos: out, textMatches};
+            }""")
+            print("    [Progressive] === DIAG Type-of-Trucker hunt ===")
+            print(f"    [Progressive] DIAG combos visible: {len(dump.get('combos', []))}")
+            for c in dump.get("combos", []):
+                print(f"    [Progressive] DIAG combo: {c}")
+            print(f"    [Progressive] DIAG 'Type of Trucker' text matches: {dump.get('textMatches')}")
+        except Exception as e:
+            print(f"    [Progressive] DIAG combo dump failed: {e}")
+
+        # Try the original guess; if it works, fill it. If not, leave for now —
+        # the dump above tells us what to write next.
         combo = await self.find_combo("Type of Trucker")
         if not await self.field_exists(combo, wait_ms=1_500):
-            return  # Not revealed when business type is not Trucker
+            print(
+                "    [Progressive] WARN: find_combo('Type of Trucker') did not "
+                "match — see DIAG dump above for actual accessible name/label."
+            )
+            return
 
         try:
             await combo.click(timeout=5_000)
