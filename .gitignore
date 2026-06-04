@@ -62,10 +62,12 @@ results_display.txt
 ~$*.xlsb
 ~$*.xls
 
-# Data (if sensitive)
-# Uncomment if you don't want to commit PDFs/JSONs
-# data/input/*.pdf
+# Data (if sensitive) — input Blue Quotes are runtime data, not tracked
+data/input/*.pdf
 # data/output/*.json
+
+# Claude Code runtime
+.claude/scheduled_tasks.lock
 
 # Testing
 .pytest_cache/

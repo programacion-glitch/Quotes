@@ -379,7 +379,10 @@ def build_sample_profile() -> QuoteProfile:
                     make="GMC",
                     model="TERRAIN",
                     trailer_type="PICKUP",
-                    gvw="6,000 or less",
+                    # GVW within the catalog-backed mock combo (the simulator's
+                    # GVW dropdown returns load_catalog('gvw').options, which is
+                    # now the partial heavy-range seed from the REPUBLIC DIAG).
+                    gvw="40,000",
                     radius_miles="500 miles",
                     has_loan="No",
                     garaging_zip="77055",

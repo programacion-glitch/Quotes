@@ -46,3 +46,17 @@ async def test_resolve_tile_halts_when_mapped_tile_absent_from_screen():
     page = _mk(["Truck Tractor", "Pickup Truck", "Dump Truck"])
     with pytest.raises(UnmappableValueError):
         await page.resolve_tile("UTILITY DRY VAN")
+
+
+@pytest.mark.asyncio
+async def test_enumerate_tiles_filters_nav_tabs():
+    from modules.progressive.pages.vehicles_page import MostCommonVehiclesPage
+    obj = MostCommonVehiclesPage.__new__(MostCommonVehiclesPage)
+    class _Pg:
+        async def evaluate(self, js):
+            return ["START", "VEHICLES", "RATES", "Dump Truck", "Truck Tractor",
+                    "Pickup Truck", "Other / Not Listed", "Continue", "Edit"]
+    obj.page = _Pg()
+    tiles = await obj._enumerate_tiles()
+    assert "Dump Truck" in tiles and "Truck Tractor" in tiles
+    assert "START" not in tiles and "RATES" not in tiles and "Continue" not in tiles

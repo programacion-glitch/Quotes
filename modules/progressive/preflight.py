@@ -13,7 +13,8 @@ from modules.progressive.field_mapper import MappedFields
 from modules.progressive.catalogs import load_catalog
 from modules.progressive.choice_resolver import Resolution
 from modules.progressive.mappings import map_commodity, VEHICLE_TILE_MAP
-from modules.progressive.vehicle_amounts import resolve_gvw, resolve_vehicle_value
+from modules.progressive.vehicle_amounts import resolve_vehicle_value
+from modules.progressive.amounts import parse_amount
 from modules.progressive.pages._exceptions import UnmappableValueError
 
 
@@ -72,16 +73,21 @@ def _check_vehicle_tiles(mapped: MappedFields, rep: PreflightReport) -> None:
 
 
 def _check_gvw(mapped: MappedFields, rep: PreflightReport) -> None:
+    # Offline, the catalog may be PARTIAL (only the heavy ranges captured from a
+    # live run). The LIVE GVW combo is authoritative for bucketing, so the only
+    # reliably-detectable problem here is an UNPARSEABLE value (garbage) — NOT a
+    # parseable weight that simply falls outside the partial catalog (e.g. a
+    # light 8000-lb pickup, which the live combo would bucket fine).
     cat = load_catalog("gvw")
     for i, v in enumerate(mapped.vehicles):
-        try:
-            resolve_gvw(v.gvw, list(cat.options))
-        except UnmappableValueError as e:
+        if not (v.gvw or "").strip():
+            continue  # absent GVW — fine, handled downstream by default bucket
+        if parse_amount(v.gvw) is None:
             rep.blockers.append(Blocker(
                 field="Gross vehicle weight",
-                source_value=f"vehicle[{i}]: {e.source_value}",
+                source_value=f"vehicle[{i}]: {v.gvw}",
                 available_options=list(cat.options),
-                suggestion="GVW present but not parseable / out of range — fix the Blue Quote.",
+                suggestion="GVW present but not a parseable number — fix the Blue Quote.",
             ))
 
 

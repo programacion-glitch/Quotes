@@ -115,3 +115,16 @@ def test_preflight_blocks_garbage_gvw():
     rep = run_preflight(f)
     assert not rep.ok()
     assert any(b.field == "Gross vehicle weight" for b in rep.blockers)
+
+
+def test_preflight_light_vehicle_not_blocked_by_partial_catalog():
+    # gvw=8000 LBS parses fine but is NOT in the partial heavy-only catalog
+    # (['33,001 to 45,000','45,001 or more']). The LIVE combo is authoritative,
+    # so preflight must NOT falsely block a parseable-but-out-of-catalog GVW.
+    f = MappedFields(
+        usdot="1", business_name="LIGHT LLC", effective_date="06/15/2026",
+        owner_name="O", commodity="Trucker",
+        vehicles=[MappedVehicle(trailer_type="PICKUP", gvw="8000 LBS")],
+    )
+    rep = run_preflight(f)
+    assert rep.ok()

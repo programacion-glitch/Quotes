@@ -70,18 +70,6 @@ class VehicleSummaryPage(BasePage):
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         print("    [Progressive] Adding new vehicle...")
 
-        # --- TEMPORARY DIAG (multi-vehicle nav): page state at entry ---
-        try:
-            _tok = await self.current_page_token()
-            _picker = await self.page.get_by_text(
-                "Most common vehicles for the customer's business", exact=False
-            ).count()
-            print(f"    [Progressive] DIAG add_vehicle ENTRY: pageName={_tok!r} "
-                  f"tile_picker_present={_picker > 0} url={self.page.url}")
-        except Exception as _e:
-            print(f"    [Progressive] DIAG add_vehicle ENTRY failed: {_e}")
-        # --- END DIAG ---
-
         # Fresh quotes for USDOTs with no existing vehicles land DIRECTLY on
         # MostCommonVehicles (tile picker: Dump Truck / Truck Tractor / Pickup
         # Truck / Other / Add a trailer instead) — there is NO 'Add Vehicle'
@@ -316,6 +304,15 @@ class MostCommonVehiclesPage(BasePage):
     URL: pageName=MostCommonVehicles
     """
 
+    # Labels the tile-enumeration selector ([role=button]/button) also captures
+    # — wizard nav tabs and summary action buttons — which are NOT vehicle tiles.
+    # Filtered out so a HALT diagnostic lists real tiles, not nav chrome.
+    _NON_TILE_LABELS = frozenset(s.lower() for s in {
+        "Quote Comments", "START", "VEHICLES", "DRIVERS", "BUSINESS", "RATES",
+        "FINAL DETAILS", "PAYMENT", "COMPLETE", "Continue", "Edit", "Remove",
+        "Back", "Save & Return Later",
+    })
+
     async def _enumerate_tiles(self) -> list:
         """Read the vehicle-type tile labels actually rendered on screen."""
         fallback = list(dict.fromkeys(VEHICLE_TILE_MAP.values()))
@@ -327,7 +324,9 @@ class MostCommonVehiclesPage(BasePage):
                   .map(el => (el.innerText || '').trim())
                   .filter(t => t.length > 0)"""
             )
-            return result if isinstance(result, list) else fallback
+            if not isinstance(result, list):
+                return fallback
+            return [t for t in result if t.lower() not in self._NON_TILE_LABELS]
         except Exception:
             return fallback
 
@@ -453,14 +452,6 @@ class AddVehiclePage(BasePage):
         if await combo.count() > 0:
             await self.safe_select_combo(combo, gvw_label)
         print(f"    [Progressive] GVW: {vehicle.gvw!r} -> {gvw_label!r}")
-
-        # --- TEMPORARY DIAG (remove in Task 8): dump live GVW options ---
-        try:
-            _diag = await self._enumerate_gvw_options()
-            print(f"    [Progressive] DIAG GVW options: {_diag}")
-        except Exception:
-            pass
-        # --- END DIAG ---
 
         # Pickup-only conditional: trailer hitch combobox.
         # Confirmed live 2026-06-04 (JUAREZ Pickup + Gooseneck Trailer): this

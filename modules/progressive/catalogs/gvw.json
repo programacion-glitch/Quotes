@@ -1,11 +1,10 @@
 {
   "field": "Gross vehicle weight",
   "captured": "2026-06-04",
-  "source": "initial seed — confirm via DIAG (Task 8)",
+  "source": "DIAG REPUBLIC run (may be partial — live enumeration is authoritative)",
   "options": [
-    "10,000 lbs or less",
-    "10,001 - 26,000 lbs",
-    "26,001 lbs or greater"
+    "33,001 to 45,000",
+    "45,001 or more"
   ],
   "generic_aliases": []
 }
