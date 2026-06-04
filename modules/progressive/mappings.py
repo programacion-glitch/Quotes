@@ -74,4 +74,12 @@ def map_commodity(commodity: Optional[str]) -> Tuple[Optional[str], bool]:
             return (opt, False)
     if any(matches(k) for k in _GENERAL_FREIGHT_KEYS):
         return ("General Freight Hauler", True)
+    # Mixed/percentage-split load with no dominant specialty -> generic Trucker
+    # (general freight). E.g. "Processed wood 33%, pipes 33%, Building Materials
+    # 34%": two or more percentage shares and no single specialty keyword above
+    # means it's hauled as general freight. Routes to the live-validated
+    # "Trucker" path (M&D baseline -> Type-of-Trucker 'General Freight / Other'),
+    # not the unvalidated "General Freight Hauler" option.
+    if len(re.findall(r"\d+\s*%", c)) >= 2:
+        return ("Trucker", True)
     return (None, False)

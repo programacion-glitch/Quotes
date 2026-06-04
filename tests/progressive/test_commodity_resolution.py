@@ -40,3 +40,18 @@ def test_vehicle_tile_map_restores_box_truck_synonyms():
 def test_map_commodity_fracking_sand_not_dirt():
     opt, generic = map_commodity("FRACKING SAND")
     assert opt == "Fracking Sand Hauling" and generic is False
+
+
+def test_map_commodity_mixed_percentage_load_is_trucker():
+    # Mixed/percentage-split load, no dominant specialty -> generic Trucker.
+    opt, generic = map_commodity(
+        "Processed wood 33%, pipes 33%, Building Materials (LIGHT MACHINERY) 34%"
+    )
+    assert opt == "Trucker" and generic is True
+
+
+def test_map_commodity_single_specialty_with_percent_still_specialty():
+    # A single specialty with one percentage still maps to the specialty
+    # (table is checked before the mixed-load rule).
+    opt, generic = map_commodity("SAND & GRAVEL 100%")
+    assert opt == "Dirt Sand & Gravel (For A Fee)" and generic is False
