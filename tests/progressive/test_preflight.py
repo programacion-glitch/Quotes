@@ -128,3 +128,19 @@ def test_preflight_light_vehicle_not_blocked_by_partial_catalog():
     )
     rep = run_preflight(f)
     assert rep.ok()
+
+
+def test_preflight_skips_trailer_powered_vehicle_checks():
+    # A trailer (is_trailer=True) with a non-tile type / heavy GVW must NOT block
+    # preflight — trailers go through the Add Trailer flow, not the powered
+    # AddVehicle tile picker (JUAREZ: Pickup + Gooseneck Trailer).
+    f = MappedFields(
+        usdot="1", business_name="JUAREZ", effective_date="06/15/2026",
+        owner_name="O", commodity="Trucker",
+        vehicles=[
+            MappedVehicle(trailer_type="PICKUP TRUCK", gvw="9,000 lbs", is_trailer=False),
+            MappedVehicle(trailer_type="GOOSENECK TRAILER", gvw="15,950 lbs", is_trailer=True),
+        ],
+    )
+    rep = run_preflight(f)
+    assert rep.ok()

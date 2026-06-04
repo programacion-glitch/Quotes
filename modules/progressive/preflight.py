@@ -58,6 +58,8 @@ def _check_commodity(mapped: MappedFields, rep: PreflightReport) -> None:
 def _check_vehicle_tiles(mapped: MappedFields, rep: PreflightReport) -> None:
     cat = load_catalog("vehicle_tiles")
     for i, v in enumerate(mapped.vehicles):
+        if v.is_trailer:
+            continue  # trailers use the Add Trailer flow, not the tile picker
         src = (v.trailer_type or "").strip()
         if not src:
             continue
@@ -80,6 +82,8 @@ def _check_gvw(mapped: MappedFields, rep: PreflightReport) -> None:
     # light 8000-lb pickup, which the live combo would bucket fine).
     cat = load_catalog("gvw")
     for i, v in enumerate(mapped.vehicles):
+        if v.is_trailer:
+            continue  # trailers use the Add Trailer flow (separate GVW field)
         if not (v.gvw or "").strip():
             continue  # absent GVW — fine, handled downstream by default bucket
         if parse_amount(v.gvw) is None:
@@ -93,6 +97,8 @@ def _check_gvw(mapped: MappedFields, rep: PreflightReport) -> None:
 
 def _check_value(mapped: MappedFields, rep: PreflightReport) -> None:
     for i, v in enumerate(mapped.vehicles):
+        if v.is_trailer:
+            continue  # trailers use the Add Trailer flow (separate value field)
         try:
             resolve_vehicle_value(v.value)
         except UnmappableValueError as e:
