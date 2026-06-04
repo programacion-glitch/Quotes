@@ -372,8 +372,24 @@ class AddVehiclePage(BasePage):
             "What is the gross vehicle weight?", vehicle.gvw
         )
 
+        # Pickup-only conditional: trailer hitch combobox.
+        # Confirmed live 2026-06-04 (JUAREZ Pickup + Gooseneck Trailer): this
+        # combo is required and not auto-defaulted by VIN lookup. We prefer
+        # "Gooseneck" (matches the commercial pickup-pulling-trailer use case
+        # JUAREZ has), falling back to the first non-empty option.
+        await self._set_trailer_hitch()
+
         # Business/personal use - default Business Only
         await self._set_radio("Is this vehicle used for business, personal or both?", "Business Only")
+
+        # Pickup-only conditional: For-Hire basis radio.
+        # Confirmed live 2026-06-04: appears after Business use radio for
+        # Pickup. Default "Yes" — any USDOT-registered commercial trucking
+        # operation that landed here via the Trucker fallback is, by
+        # definition, hauling for compensation.
+        await self._set_radio(
+            "Is this vehicle used to haul goods on a For-Hire basis?", "Yes"
+        )
 
         # Loan/Lease
         loan_label = {
@@ -563,6 +579,61 @@ class AddVehiclePage(BasePage):
         await self._set_combobox_by_label(
             "Farthest one-way distance this vehicle typically travels", option
         )
+
+    # Section headers in ExtJS combobox dropdowns — render as rows but are
+    # NOT selectable. Same pattern as Type of Trucker combo.
+    _COMBO_HEADERS = frozenset({"Most common types", "All types"})
+
+    async def _set_trailer_hitch(self) -> None:
+        """Pickup-only conditional: 'What type of trailer hitch does this
+        vehicle have?'
+
+        Common options: Bumper Pull, Gooseneck, Fifth Wheel, None. Prefer
+        'Gooseneck' (matches the JUAREZ-style configuration of a commercial
+        pickup pulling a commercial trailer); fall back to the first
+        non-empty, non-section-header option if 'Gooseneck' isn't present
+        (e.g. a different Pickup configuration).
+        """
+        combo = await self.find_combo(
+            "What type of trailer hitch does this vehicle have?"
+        )
+        if not await self.field_exists(combo, wait_ms=1_500):
+            return  # Field not rendered (non-Pickup vehicle type)
+
+        try:
+            await combo.click(timeout=5_000)
+            await self.page.wait_for_timeout(400)
+
+            options = self.page.get_by_role("option")
+            preferred = options.filter(has_text="Gooseneck")
+            if await preferred.count() > 0:
+                await preferred.first.click(timeout=5_000)
+                await self.page.wait_for_timeout(500)
+                print("    [Progressive] Trailer hitch = 'Gooseneck'")
+                return
+
+            n = await options.count()
+            for i in range(n):
+                try:
+                    text = (await options.nth(i).text_content() or "").strip()
+                except Exception:
+                    continue
+                if not text or text in self._COMBO_HEADERS:
+                    continue
+                await options.nth(i).click(timeout=5_000)
+                await self.page.wait_for_timeout(500)
+                print(
+                    f"    [Progressive] Trailer hitch = {text!r} "
+                    "(fallback: 'Gooseneck' not present)"
+                )
+                return
+
+            print(
+                "    [Progressive] WARN: Trailer hitch dropdown has no "
+                "selectable options"
+            )
+        except Exception as e:
+            print(f"    [Progressive] WARN: Trailer hitch fill failed: {e}")
 
     async def _set_combobox_by_label(self, label: str, option_text: str) -> None:
         """Generic helper for Sencha ExtJS comboboxes via BasePage primitives."""
