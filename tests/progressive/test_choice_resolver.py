@@ -58,8 +58,8 @@ def test_present_but_no_match_raises():
     assert exc.value.available_options == OPTS
 
 
-def test_ambiguous_token_raises_not_guesses():
-    # "hauling" appears in 2 options -> not confident -> HALT, no guess
+def test_leftover_token_raises_not_guesses():
+    # "stuff" is absent from "Coal Hauling" -> all_present guard fails -> HALT
     from modules.progressive.pages._exceptions import UnmappableValueError
     with pytest.raises(UnmappableValueError):
         resolve_choice("Business type", "hauling stuff", OPTS)
@@ -75,3 +75,18 @@ def test_absent_critical_field_raises():
     from modules.progressive.pages._exceptions import UnmappableValueError
     with pytest.raises(UnmappableValueError):
         resolve_choice("vehicle tile", None, ["Pickup Truck"])
+
+
+def test_generic_alias_without_catchall_halts():
+    # alias recognized but options has no 'other'/'general' option -> HALT
+    from modules.progressive.pages._exceptions import UnmappableValueError
+    with pytest.raises(UnmappableValueError):
+        resolve_choice("type", "general freight",
+                       ["Coal Hauling", "Beverage Distributor"],
+                       generic_aliases=frozenset({"general freight"}))
+
+
+def test_empty_string_source_treated_as_absent():
+    # "" and whitespace are treated like None (absent)
+    r = resolve_choice("GVW", "   ", [], default="26,001 lbs or greater")
+    assert r.kind == "DEFAULTED" and r.value == "26,001 lbs or greater"

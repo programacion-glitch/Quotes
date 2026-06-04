@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import NoReturn, Optional
 
 from modules.progressive.pages._exceptions import UnmappableValueError
 
@@ -36,7 +36,7 @@ def resolve_choice(
     *,
     mapping: Optional[dict] = None,
     default: Optional[str] = None,
-    generic_aliases: frozenset = frozenset(),
+    generic_aliases: frozenset[str] = frozenset(),
     screenshot_path=None,
     debug_context: Optional[dict] = None,
 ) -> Resolution:
@@ -45,8 +45,13 @@ def resolve_choice(
     source_value present  -> mapping / exact / generic-alias / unique-token,
                              else HALT (UnmappableValueError).
     source_value absent    -> default if provided, else HALT (critical).
+
+    Trust-boundary note: when a `mapping` entry matches, its mapped value is
+    returned WITHOUT validating it against `options` — callers are expected to
+    pass live-enumerated options and rely on the downstream `safe_select_combo`
+    to enforce the value actually exists on the page.
     """
-    def _halt() -> None:
+    def _halt() -> NoReturn:
         raise UnmappableValueError(
             field=field,
             source_value=source_value,
@@ -83,6 +88,7 @@ def resolve_choice(
         )
         if catch is not None:
             return Resolution(field, catch, "MATCHED", sv, "generic")
+        _halt()  # alias recognized but no catch-all on this page -> HALT
 
     # 4. strong UNIQUE token (>=3 chars, appears in exactly one option)
     # For confidence, ALL meaningful tokens in the source must be present in the
