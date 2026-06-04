@@ -98,11 +98,11 @@ def resolve_vehicle_value(
     if num is None:
         raise UnmappableValueError(
             field="Vehicle value", source_value=raw,
-            available_options=[], screenshot_path=screenshot_path,
+            available_options=["value must be a number"], screenshot_path=screenshot_path,
         )
     if num == 0:
         return None
-    if num < floor:
+    if num <= floor:
         raise UnmappableValueError(
             field="Vehicle value", source_value=raw,
             available_options=[f"must be greater than ${floor}"],

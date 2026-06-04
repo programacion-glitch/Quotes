@@ -28,6 +28,16 @@ def test_value_below_floor_halts():
     assert exc.value.source_value == "$45"
 
 
+def test_value_exactly_floor_halts():
+    # exactly $100 is NOT greater than $100 -> HALT
+    with pytest.raises(UnmappableValueError):
+        resolve_vehicle_value("$100")
+
+
+def test_value_just_above_floor_processes():
+    assert resolve_vehicle_value("$101") == 101
+
+
 def test_value_garbage_halts():
     with pytest.raises(UnmappableValueError):
         resolve_vehicle_value("banana")
