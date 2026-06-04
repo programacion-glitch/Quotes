@@ -22,7 +22,9 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional
 
+from modules.progressive.choice_resolver import resolve_choice, Resolution
 from modules.progressive.field_mapper import MappedVehicle
+from modules.progressive.mappings import VEHICLE_TILE_MAP
 from modules.progressive.pages.base_page import BasePage
 from modules.progressive.unit_matching import normalize_identifier
 
@@ -274,16 +276,37 @@ class MostCommonVehiclesPage(BasePage):
     URL: pageName=MostCommonVehicles
     """
 
-    async def select_vehicle_type(self, trailer_type: str) -> None:
-        """Pick the most appropriate type for the trailer string.
+    async def _enumerate_tiles(self) -> list:
+        """Read the vehicle-type tile labels actually rendered on screen."""
+        try:
+            return await self.page.evaluate(
+                """() => Array.from(document.querySelectorAll(
+                    '.x-btn-inner, [role=button], .tile, button'
+                )).filter(el => el.offsetParent !== null)
+                  .map(el => (el.innerText || '').trim())
+                  .filter(t => t.length > 0)"""
+            )
+        except Exception:
+            return list(VEHICLE_TILE_MAP.values())   # offline/test fallback
 
-        The vehicle type options are rendered as clickable tiles (styled divs
-        or buttons). Use get_by_text to find the tile by visible label and
-        force=True to bypass any overlay checks.
-        """
-        label = self._map_to_button(trailer_type)
-        print(f"    [Progressive] Selecting vehicle type: {label}")
-        tile = self.page.get_by_text(label, exact=True).first
+    async def resolve_tile(self, trailer_type: str) -> Resolution:
+        """Resolve the Blue-Quote vehicle string to a tile actually on screen.
+        Raises UnmappableValueError (HALT) instead of guessing a catch-all."""
+        options = await self._enumerate_tiles()
+        t = (trailer_type or "").upper()
+        token = next((k for k in VEHICLE_TILE_MAP if k in t), None)
+        mapping = {trailer_type: VEHICLE_TILE_MAP[token]} if token else None
+        screenshot = await self.screenshot("vehicle_tile_unmapped")
+        return resolve_choice(
+            "Vehicle tile", trailer_type, options,
+            mapping=mapping, screenshot_path=screenshot,
+        )
+
+    async def select_vehicle_type(self, trailer_type: str) -> None:
+        """Pick the most appropriate tile for the trailer string, or HALT."""
+        res = await self.resolve_tile(trailer_type)
+        print(f"    [Progressive] Selecting vehicle type: {res.value} ({res.note})")
+        tile = self.page.get_by_text(res.value, exact=True).first
         await tile.click(force=True)
         await self.wait_for_extjs_idle()
 
@@ -294,21 +317,6 @@ class MostCommonVehiclesPage(BasePage):
             link = self.page.get_by_role("link", name="Add a trailer instead")
         await link.click(timeout=10_000)
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
-
-    def _map_to_button(self, trailer_type: str) -> str:
-        """Map blue-quote trailer string to Progressive's button label."""
-        t = (trailer_type or "").upper()
-        if "FLATBED" in t:
-            return "Flatbed Truck"
-        if "BOX" in t or "STRAIGHT" in t or "DRY VAN" in t or "REEFER" in t:
-            return "Box Truck"
-        if "PICKUP" in t:
-            return "Pickup Truck"
-        if "CARGO VAN" in t:
-            return "Cargo Van"
-        if "TRACTOR" in t:
-            return "Truck Tractor"
-        return "Other / Not Listed"
 
 
 class AddVehiclePage(BasePage):
