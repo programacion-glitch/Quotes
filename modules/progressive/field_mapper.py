@@ -25,7 +25,7 @@ class MappedVehicle:
     make: Optional[str] = None
     model: Optional[str] = None
     trailer_type: str = "FLATBED"
-    gvw: str = "26,001 lbs or greater"
+    gvw: Optional[str] = None       # raw Blue Quote GVW; resolved by resolve_gvw
     radius_miles: str = "Over 500 miles"
     has_loan: str = "No"           # "No" | "Loan" | "Lease"
     garaging_zip: Optional[str] = None
@@ -147,26 +147,17 @@ def _map_vehicle(v: VehicleProfile, fallback_zip: Optional[str], fallback_type: 
     loan_raw = (v.has_loan or "No").lower()
     has_loan = loan_map.get(loan_raw, "No")
 
-    # Normalize the value: keep only digits + decimal point. Blue Quote may
-    # surface "$80,000" / "80000" / "80,000.00" — all should reduce to a clean
-    # numeric string. If empty/None/zero, treat as no-APD-requested.
-    value_normalized = None
-    if v.value:
-        digits = "".join(ch for ch in v.value if ch.isdigit() or ch == ".")
-        if digits and digits not in ("0", "0.00", "0.0", "00"):
-            value_normalized = digits
-
     return MappedVehicle(
         vin=v.vin,
         year=v.year,
         make=v.make,
         model=v.model,
         trailer_type=(v.trailer_type or fallback_type or "FLATBED"),
-        gvw=v.gvw or "26,001 lbs or greater",
+        gvw=(v.gvw or None),               # raw; resolve_gvw defaults if absent
         radius_miles=v.radius_miles or "Over 500 miles",
         has_loan=has_loan,
         garaging_zip=v.garaging_zip or fallback_zip,
-        value=value_normalized,
+        value=(v.value or None),           # raw; resolve_vehicle_value validates
         is_trailer=v.is_trailer,
     )
 
