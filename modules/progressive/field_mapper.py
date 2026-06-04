@@ -267,6 +267,19 @@ def map_profile_to_fields(
         owner_driver.date_of_birth if owner_driver else None
     )
 
+    # Commodity defaults to "Trucker" when missing — Progressive's START page
+    # requires the Business Type combobox to be filled, and any quote with a
+    # valid USDOT is, by definition, a trucking operation. Without this default,
+    # PDFs that omit the commodity column block at START with "This field is
+    # required". Explicit commodities from the PDF win over the default.
+    commodity_resolved = (profile.commodity or "").strip() or None
+    if not commodity_resolved and (profile.applicant.usdot or "").strip():
+        commodity_resolved = "Trucker"
+        print(
+            "    [Progressive] field_mapper: commodity unset in PDF; "
+            "defaulting to 'Trucker' (USDOT present)"
+        )
+
     return MappedFields(
         usdot=profile.applicant.usdot or None,
         business_name=biz_name or None,
@@ -280,7 +293,7 @@ def map_profile_to_fields(
         owner_zip=profile.applicant.zip_code,
         owner_phone=profile.applicant.phone,
         owner_email=profile.applicant.email,
-        commodity=profile.commodity or None,
+        commodity=commodity_resolved,
         dba_name=dba,
         vehicles=mapped_vehicles,
         drivers=mapped_drivers,

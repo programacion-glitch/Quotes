@@ -111,3 +111,54 @@ def test_empty_string_vin_with_normal_make_is_not_non_owned():
     fields = map_profile_to_fields(profile, effective_date="06/15/2026")
     assert len(fields.vehicles) == 1
     assert fields.coverages.non_owned_trailer_phys_damage_limit is None
+
+
+def test_missing_commodity_with_usdot_defaults_to_trucker():
+    """A PDF that omits commodity but provides a USDOT must default to
+    'Trucker' so Progressive's required Business Type combobox is filled."""
+    profile = QuoteProfile(
+        applicant=ApplicantProfile(
+            business_name="JUAREZ LOGISTICS LLC",
+            owner_name="OWNER",
+            usdot="4535088",
+        ),
+        units=UnitsProfile(count=1, vehicles=[
+            VehicleProfile(vin="3C6UR5FL8RG195691", year=2024, make="RAM", model="250", is_trailer=False),
+        ]),
+        coverages_detail=CoveragesProfile(),
+    )
+    profile.commodity = ""   # missing in PDF
+    fields = map_profile_to_fields(profile, effective_date="06/15/2026")
+    assert fields.commodity == "Trucker"
+
+
+def test_explicit_commodity_wins_over_trucker_default():
+    """Explicit commodity from the PDF is preserved even when USDOT is present."""
+    profile = QuoteProfile(
+        applicant=ApplicantProfile(
+            business_name="X", owner_name="O", usdot="123",
+        ),
+        units=UnitsProfile(count=1, vehicles=[
+            VehicleProfile(vin="1ABCDEFGHJKLMNPRS", year=2024, make="X", model="Y", is_trailer=False),
+        ]),
+        coverages_detail=CoveragesProfile(),
+    )
+    profile.commodity = "Dirt Sand & Gravel"
+    fields = map_profile_to_fields(profile, effective_date="06/15/2026")
+    assert fields.commodity == "Dirt Sand & Gravel"
+
+
+def test_no_commodity_no_usdot_stays_none():
+    """If neither commodity nor USDOT exist, do not invent a 'Trucker' default —
+    something is wrong upstream and the bot should fail loudly later (USDOT is
+    actually required to quote, so this case mostly never happens)."""
+    profile = QuoteProfile(
+        applicant=ApplicantProfile(business_name="X", owner_name="O"),
+        units=UnitsProfile(count=1, vehicles=[
+            VehicleProfile(vin="1ABCDEFGHJKLMNPRS", year=2024, make="X", model="Y", is_trailer=False),
+        ]),
+        coverages_detail=CoveragesProfile(),
+    )
+    profile.commodity = ""
+    fields = map_profile_to_fields(profile, effective_date="06/15/2026")
+    assert fields.commodity is None
