@@ -498,9 +498,18 @@ class BusinessInfoPage(BasePage):
         raw = await self.page.get_by_role("option").all_inner_texts()
         options = [o.strip() for o in raw
                    if o.strip() and o.strip() not in self._TYPE_OF_TRUCKER_HEADERS]
+        # This conditional only appears when the business type resolved to the
+        # generic "Trucker" (commodity absent / mixed / sentinel), so the raw
+        # commodity here is NOT a specific freight subtype — a mixed string like
+        # "Processed wood 33%, pipes 33%, Building Materials 34%" must NOT be
+        # matched against the subtype list. Treat a generic commodity as absent
+        # so the catch-all default ("General Freight / Other") is selected
+        # instead of HALTing. (Confirmed live: JUAREZ LOGISTICS, mixed load.)
+        _, is_generic = map_commodity(commodity)
+        source = None if (is_generic or not (commodity or "").strip()) else commodity
         screenshot = await self.screenshot("type_of_trucker_options")
         res = resolve_choice(
-            "Type of Trucker", commodity, options,
+            "Type of Trucker", source, options,
             default=self._TYPE_OF_TRUCKER_DEFAULT,
             generic_aliases=frozenset({"general freight", "mixed", "other", "trucker"}),
             screenshot_path=screenshot,
