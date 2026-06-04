@@ -239,14 +239,45 @@ class QuoteFlow:
             if hasattr(add_form, "warnings") and add_form.warnings:
                 result.warnings.extend(add_form.warnings)
 
-        # Trailer loop: Phase 1 will wire AddTrailerPage here. Until then,
-        # log skip so live runs show the trailer count clearly.
+        # DIAGNOSTIC (Phase 1 Task 9 — removed in Task 12): dump trailer form
+        # so Task 10 has concrete selectors.
         if trailers:
+            print(f"    [Progressive] DIAG: opening Add Trailer for discovery; "
+                  f"{len(trailers)} trailer(s) queued, only 1st is probed")
+            try:
+                await summary.add_trailer()
+                await wizard_page.wait_for_load_state("networkidle", timeout=30_000)
+                print(f"    [Progressive] DIAG: URL={wizard_page.url}")
+                print(f"    [Progressive] DIAG: title={await wizard_page.title()}")
+                # Dump visible inputs / radios / comboboxes
+                dump = await wizard_page.evaluate("""() => {
+                    const visible = el => {
+                        const r = el.getBoundingClientRect();
+                        return r.width > 0 && r.height > 0;
+                    };
+                    const inputs = [...document.querySelectorAll('input')]
+                        .filter(visible)
+                        .map(i => ({tag: i.tagName, type: i.type, name: i.name,
+                                    placeholder: i.placeholder, aria: i.getAttribute('aria-label')}));
+                    const radios = [...document.querySelectorAll('[role="radiogroup"]')]
+                        .filter(visible)
+                        .map(g => ({label: g.getAttribute('aria-label') || g.textContent.slice(0,80)}));
+                    const combos = [...document.querySelectorAll('[role="combobox"]')]
+                        .filter(visible)
+                        .map(c => ({label: c.getAttribute('aria-label'), value: c.value || ''}));
+                    return {inputs, radios, combos};
+                }""")
+                print(f"    [Progressive] DIAG inputs: {dump.get('inputs')}")
+                print(f"    [Progressive] DIAG radios: {dump.get('radios')}")
+                print(f"    [Progressive] DIAG combos: {dump.get('combos')}")
+                await summary.screenshot("phase1_add_trailer_form")
+            except Exception as e:
+                print(f"    [Progressive] DIAG failed: {e}")
+
             msg = (
-                f"Skipped {len(trailers)} trailer(s) — Phase 1 wiring "
-                f"pending. VIN(s): " + ", ".join((t.vin or "(no vin)") for t in trailers)
+                f"Discovery mode: {len(trailers)} trailer(s) probed for "
+                f"selector capture. AddTrailerPage not yet implemented."
             )
-            print(f"    [Progressive] WARN: {msg}")
             result.warnings.append(msg)
 
         # All units added; continue to drivers
