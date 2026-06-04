@@ -19,6 +19,12 @@ def test_map_commodity_packed_charcoal_does_not_hit_coal():
     assert opt is None and generic is False    # -> caller HALTs
 
 
+def test_map_commodity_trucker_sentinel_is_generic():
+    # field_mapper's absent-commodity default must NOT be treated as unmappable
+    opt, generic = map_commodity("Trucker")
+    assert opt == "Trucker" and generic is True
+
+
 def test_vehicle_tile_map_has_core_types():
     assert VEHICLE_TILE_MAP["FLATBED"] == "Flatbed Truck"
     assert VEHICLE_TILE_MAP["DUMP"] == "Dump Truck"

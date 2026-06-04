@@ -8,7 +8,8 @@
     "Logging Trucker", "Garbage & Trash Hauling/Removal",
     "Hazardous Materials Hauling", "Container Hauling",
     "Agricultural Hauling (For A Fee)", "Dairy Products Hauling (For A Fee)",
-    "Frozen Foods Hauling", "Beverage Distributor", "General Freight Hauler"
+    "Frozen Foods Hauling", "Beverage Distributor", "General Freight Hauler",
+    "Trucker"
   ],
   "generic_aliases": ["general freight", "mixed", "other", "freight"]
 }

@@ -33,3 +33,10 @@ def test_collects_all_blockers_in_one_pass():
 def test_generic_commodity_is_assumption_not_blocker():
     rep = run_preflight(_fields("DRY VAN FREIGHT", "FLATBED"))
     assert rep.ok()
+
+
+def test_trucker_default_is_assumption_not_blocker():
+    # absent-commodity quotes default to "Trucker" — must pass preflight
+    rep = run_preflight(_fields("Trucker", "FLATBED"))
+    assert rep.ok()
+    assert any(a.value == "Trucker" for a in rep.assumptions)

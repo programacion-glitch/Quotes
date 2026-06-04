@@ -48,6 +48,13 @@ def map_commodity(commodity: Optional[str]) -> Tuple[Optional[str], bool]:
     - nothing -> (None, False)   # caller HALTs
     """
     c = (commodity or "").upper()
+
+    # field_mapper defaults an absent-commodity quote to the "Trucker" sentinel
+    # (USDOT present). That is a valid generic business-type selection the live
+    # page already uses — treat it as a generic match, not an unmappable value.
+    if c.strip() == "TRUCKER":
+        return ("Trucker", True)
+
     tokens = set(re.findall(r"\b[A-Z][A-Z0-9]+\b", c))
 
     def matches(key: str) -> bool:
