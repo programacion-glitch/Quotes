@@ -1,0 +1,15 @@
+{
+  "field": "Type of Trucker",
+  "captured": "2026-06-04",
+  "source": "business_info_page.TRUCKER_SUBTYPES + DIAG JUAREZ run",
+  "options": [
+    "Agricultural", "Auto Hauler", "Coal", "Containers", "Debris Removal",
+    "Dirt, Sand and Gravel", "Escort Vehicles", "Expediters",
+    "Fracking, Sand or Water", "Freight Forwarder", "Garbage & Trash",
+    "General Freight / Other", "Hazardous Materials / Placards",
+    "Hotshot Transport", "Household Goods Mover", "Livestock",
+    "Logging / Wood Chips", "Machinery & Heavy Equipment",
+    "Mobile Home Toter", "Oilfield Materials", "Refrigerated Goods"
+  ],
+  "generic_aliases": ["general freight", "mixed", "other", "trucker"]
+}

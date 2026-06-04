@@ -1,0 +1,10 @@
+{
+  "field": "Vehicle tile",
+  "captured": "2026-06-04",
+  "source": "vehicles_page.VEHICLE_TYPES + live picker (Dump Truck)",
+  "options": [
+    "Truck Tractor", "Box Truck", "Pickup Truck", "Flatbed Truck",
+    "Cargo Van", "Dump Truck", "Other / Not Listed"
+  ],
+  "generic_aliases": ["other"]
+}
