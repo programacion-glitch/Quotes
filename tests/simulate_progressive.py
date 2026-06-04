@@ -8,6 +8,7 @@ Run:
 """
 
 import asyncio
+import re
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -32,6 +33,13 @@ from modules.progressive import otp_reader as otp_reader_module  # noqa: E402
 # ---------- Mock Playwright ------------------------------------------------
 
 TRACE: list[str] = []
+
+# Mutable holder modelling the "current value" of the most-recently
+# committed field/combobox. A text field's value is what was filled into it;
+# a combobox's value becomes the named option that was clicked. This lets
+# safe_fill (fill -> verify input_value) and safe_select_combo (click option ->
+# verify input_value) both verify against the actually-committed value.
+_LAST_VALUE = {"v": ""}
 
 
 def _t(msg: str) -> None:
@@ -87,9 +95,20 @@ class MockLocator:
         return MockLocator(self.page, f"{self.path} >> text={text!r}")
 
     async def fill(self, value: str, **_):
+        # A text field's committed value is what was filled into it.
+        _LAST_VALUE["v"] = value
         _t(f"FILL {self.path} = {value!r}")
 
     async def click(self, **_):
+        # Clicking a NAMED dropdown option commits that option's text as the
+        # combo's value. Combobox clicks (role=combobox) only open the dropdown
+        # and must NOT change the value. An unnamed option query leaves it as-is.
+        if "role=option" in self.path:
+            m = re.search(r"name=(?:'([^']*)'|\"([^\"]*)\")", self.path)
+            if m:
+                name = m.group(1) if m.group(1) is not None else m.group(2)
+                if name:
+                    _LAST_VALUE["v"] = name
         _t(f"CLICK {self.path}")
 
     async def check(self, **_):
@@ -107,11 +126,22 @@ class MockLocator:
     async def all_text_contents(self):
         return []
 
+    async def all_inner_texts(self):
+        # Model option enumeration. A query over options (role=option) returns
+        # the live list the resolver enumerates — for Type-of-Trucker this is
+        # the real TRUCKER_SUBTYPES (includes "General Freight / Other").
+        if "role=option" in self.path:
+            from modules.progressive.pages.business_info_page import TRUCKER_SUBTYPES
+            return list(TRUCKER_SUBTYPES)
+        return []
+
     async def inner_text(self):
         return ""
 
     async def input_value(self):
-        return ""
+        # Return the most-recently committed value (set by fill() or by clicking
+        # a named option). Models real field/combobox value read-back.
+        return _LAST_VALUE["v"]
 
     async def evaluate(self, _js: str):
         return None
@@ -198,6 +228,15 @@ class MockPage:
         return b""
 
     async def evaluate(self, _js: str):
+        # Model the vehicle-type tile enumeration: in a real browser this JS
+        # query returns the labels of the tiles actually rendered on screen.
+        # MostCommonVehiclesPage._enumerate_tiles queries '.tile'/buttons; return
+        # the standard Progressive tile set (includes "Pickup Truck") so
+        # resolve_tile finds its mapped value among the live options. All other
+        # evaluate() calls (scroll, side-effects, debug dumps) tolerate None.
+        if isinstance(_js, str) and ".tile" in _js:
+            from modules.progressive.mappings import VEHICLE_TILE_MAP
+            return list(dict.fromkeys(VEHICLE_TILE_MAP.values()))
         return None
 
     async def wait_for_function(self, expression: str, **_):
@@ -298,7 +337,12 @@ def build_sample_profile() -> QuoteProfile:
             state="TX",
             zip_code="77055",
         ),
-        commodity="GENERAL FREIGHT / FLATBED",
+        # Empty commodity models the true M&D baseline: field_mapper applies
+        # its documented absent-commodity default ("Trucker" when a USDOT is
+        # present), which quotes as a plain Trucker (matches the live $53,064
+        # baseline). A compound string like "GENERAL FREIGHT / FLATBED" carries
+        # a leftover "flatbed" token that makes the Type-of-Trucker resolver HALT.
+        commodity="",
         coverages=["AL", "PD"],
         coverages_detail=CoveragesProfile(
             hired_auto=True,
