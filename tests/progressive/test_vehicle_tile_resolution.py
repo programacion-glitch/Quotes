@@ -38,3 +38,11 @@ async def test_resolve_tile_halts_when_absent():
     with pytest.raises(UnmappableValueError) as exc:
         await page.resolve_tile("MONORAIL SLED")
     assert "Dump Truck" in exc.value.available_options
+
+
+@pytest.mark.asyncio
+async def test_resolve_tile_halts_when_mapped_tile_absent_from_screen():
+    # trailer maps to "Box Truck" but the live picker doesn't show it -> HALT
+    page = _mk(["Truck Tractor", "Pickup Truck", "Dump Truck"])
+    with pytest.raises(UnmappableValueError):
+        await page.resolve_tile("UTILITY DRY VAN")

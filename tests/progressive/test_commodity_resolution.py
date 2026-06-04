@@ -28,3 +28,10 @@ def test_map_commodity_trucker_sentinel_is_generic():
 def test_vehicle_tile_map_has_core_types():
     assert VEHICLE_TILE_MAP["FLATBED"] == "Flatbed Truck"
     assert VEHICLE_TILE_MAP["DUMP"] == "Dump Truck"
+
+
+def test_vehicle_tile_map_restores_box_truck_synonyms():
+    from modules.progressive.mappings import VEHICLE_TILE_MAP
+    t = "UTILITY DRY VAN".upper()
+    token = next((k for k in VEHICLE_TILE_MAP if k in t), None)
+    assert VEHICLE_TILE_MAP[token] == "Box Truck"

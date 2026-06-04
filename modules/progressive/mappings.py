@@ -9,6 +9,9 @@ from typing import Optional, Tuple
 VEHICLE_TILE_MAP = {
     "FLATBED": "Flatbed Truck",
     "BOX": "Box Truck",
+    "STRAIGHT": "Box Truck",
+    "DRY VAN": "Box Truck",
+    "REEFER": "Box Truck",
     "PICKUP": "Pickup Truck",
     "CARGO": "Cargo Van",
     "VAN": "Cargo Van",

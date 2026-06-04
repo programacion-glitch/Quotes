@@ -46,16 +46,6 @@ class ExistingUnit:
     row_locator: object = None     # Playwright Locator; typed loose for tests
 
 
-VEHICLE_TYPES = [
-    "Truck Tractor",
-    "Box Truck",
-    "Pickup Truck",
-    "Flatbed Truck",
-    "Cargo Van",
-    "Other / Not Listed",
-]
-
-
 class VehicleSummaryPage(BasePage):
     """VehicleSummary page - lists vehicles on the quote.
 
@@ -296,11 +286,20 @@ class MostCommonVehiclesPage(BasePage):
         t = (trailer_type or "").upper()
         token = next((k for k in VEHICLE_TILE_MAP if k in t), None)
         mapping = {trailer_type: VEHICLE_TILE_MAP[token]} if token else None
-        screenshot = await self.screenshot("vehicle_tile_unmapped")
-        return resolve_choice(
+        screenshot = await self.screenshot("vehicle_tile_selection")
+        res = resolve_choice(
             "Vehicle tile", trailer_type, options,
             mapping=mapping, screenshot_path=screenshot,
         )
+        if res.value not in options:
+            from modules.progressive.pages._exceptions import UnmappableValueError
+            raise UnmappableValueError(
+                field="Vehicle tile",
+                source_value=trailer_type,
+                available_options=list(options),
+                screenshot_path=screenshot,
+            )
+        return res
 
     async def select_vehicle_type(self, trailer_type: str) -> None:
         """Pick the most appropriate tile for the trailer string, or HALT."""
