@@ -264,6 +264,18 @@ class QuoteFlow:
             await summary.add_vehicle()
 
             most_common = MostCommonVehiclesPage(wizard_page)
+            # --- TEMPORARY DIAG (multi-vehicle nav): state right before tile select ---
+            try:
+                _tok = await most_common.current_page_token()
+                _picker = await wizard_page.get_by_text(
+                    "Most common vehicles for the customer's business", exact=False
+                ).count()
+                _tiles = await most_common._enumerate_tiles()
+                print(f"    [Progressive] DIAG pre-select v{i + 1}: pageName={_tok!r} "
+                      f"tile_picker_present={_picker > 0} enumerated_tiles={_tiles}")
+            except Exception as _e:
+                print(f"    [Progressive] DIAG pre-select v{i + 1} failed: {_e}")
+            # --- END DIAG ---
             await most_common.select_vehicle_type(vehicle.trailer_type)
 
             add_form = AddVehiclePage(wizard_page)

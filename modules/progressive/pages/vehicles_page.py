@@ -70,6 +70,18 @@ class VehicleSummaryPage(BasePage):
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         print("    [Progressive] Adding new vehicle...")
 
+        # --- TEMPORARY DIAG (multi-vehicle nav): page state at entry ---
+        try:
+            _tok = await self.current_page_token()
+            _picker = await self.page.get_by_text(
+                "Most common vehicles for the customer's business", exact=False
+            ).count()
+            print(f"    [Progressive] DIAG add_vehicle ENTRY: pageName={_tok!r} "
+                  f"tile_picker_present={_picker > 0} url={self.page.url}")
+        except Exception as _e:
+            print(f"    [Progressive] DIAG add_vehicle ENTRY failed: {_e}")
+        # --- END DIAG ---
+
         # Fresh quotes for USDOTs with no existing vehicles land DIRECTLY on
         # MostCommonVehicles (tile picker: Dump Truck / Truck Tractor / Pickup
         # Truck / Other / Add a trailer instead) — there is NO 'Add Vehicle'
@@ -113,7 +125,10 @@ class VehicleSummaryPage(BasePage):
             self.page.get_by_role("link", name="Add Vehicle", exact=False),
             self.page.get_by_role("button", name="Add another vehicle", exact=False),
         ]
-        for loc in candidates:
+        # --- TEMPORARY DIAG: parallel labels to identify which control clicks ---
+        _labels = ["text:Add Vehicle", "btn:Add Vehicle", "btn:Add a Vehicle",
+                   "link:Add Vehicle", "btn:Add another vehicle"]
+        for loc, _lbl in zip(candidates, _labels):
             n = await loc.count()
             for i in range(n):
                 el = loc.nth(i)
@@ -125,9 +140,27 @@ class VehicleSummaryPage(BasePage):
                     await self.page.wait_for_load_state(
                         "networkidle", timeout=30_000
                     )
+                    # --- TEMPORARY DIAG: page state after the click ---
+                    try:
+                        _tok = await self.current_page_token()
+                        _picker = await self.page.get_by_text(
+                            "Most common vehicles for the customer's business",
+                            exact=False,
+                        ).count()
+                        print(f"    [Progressive] DIAG add_vehicle CLICKED "
+                              f"{_lbl!r}[{i}] -> pageName={_tok!r} "
+                              f"tile_picker_present={_picker > 0} url={self.page.url}")
+                    except Exception:
+                        pass
+                    # --- END DIAG ---
                     return
                 except Exception:
                     continue
+
+        # --- TEMPORARY DIAG: no candidate clicked ---
+        print("    [Progressive] DIAG add_vehicle: NO 'Add Vehicle' candidate "
+              "clicked; falling through to add_suggested/RuntimeError")
+        # --- END DIAG ---
 
         # Fallback: a pre-detected suggestion with a plain "Add" button.
         if await self.add_suggested_vehicle(0):
