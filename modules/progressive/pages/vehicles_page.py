@@ -28,6 +28,7 @@ from modules.progressive.mappings import VEHICLE_TILE_MAP
 from modules.progressive.pages._exceptions import UnmappableValueError
 from modules.progressive.pages.base_page import BasePage
 from modules.progressive.unit_matching import normalize_identifier
+from modules.progressive.vehicle_amounts import resolve_gvw, resolve_vehicle_value
 
 
 @dataclass
@@ -357,6 +358,28 @@ class AddVehiclePage(BasePage):
         print(f"    [Progressive] {msg}")
         self.warnings.append(msg)
 
+    async def _enumerate_gvw_options(self) -> list:
+        """Open the GVW combo and read its real option labels."""
+        combo = await self.find_combo("What is the gross vehicle weight?")
+        if await combo.count() == 0:
+            return []
+        try:
+            await combo.click(timeout=5_000)
+            await self.page.wait_for_timeout(300)
+            raw = await self.page.get_by_role("option").all_inner_texts()
+            return [o.strip() for o in raw if o.strip()]
+        except Exception:
+            return []
+
+    async def resolve_gvw_label(self, gvw_raw) -> str:
+        """Resolve the raw Blue-Quote GVW to a live combo option (or HALT)."""
+        options = await self._enumerate_gvw_options()
+        if not options:
+            from modules.progressive.catalogs import load_catalog
+            options = list(load_catalog("gvw").options)
+        screenshot = await self.screenshot("gvw_unmapped")
+        return resolve_gvw(gvw_raw, options, screenshot_path=screenshot)
+
     async def fill_from_mapped(self, vehicle: MappedVehicle) -> None:
         """Fill the AddVehicle form from a MappedVehicle and click Continue."""
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
@@ -376,10 +399,20 @@ class AddVehiclePage(BasePage):
         # Farthest distance — convert simple miles to Progressive's option label
         await self._set_distance(vehicle.radius_miles)
 
-        # GVW
-        await self._set_combobox_by_label(
-            "What is the gross vehicle weight?", vehicle.gvw
-        )
+        # GVW — resolve the raw value to a live range bucket, or HALT.
+        gvw_label = await self.resolve_gvw_label(vehicle.gvw)
+        combo = await self.find_combo("What is the gross vehicle weight?")
+        if await combo.count() > 0:
+            await self.safe_select_combo(combo, gvw_label)
+        print(f"    [Progressive] GVW: {vehicle.gvw!r} -> {gvw_label!r}")
+
+        # --- TEMPORARY DIAG (remove in Task 8): dump live GVW options ---
+        try:
+            _diag = await self._enumerate_gvw_options()
+            print(f"    [Progressive] DIAG GVW options: {_diag}")
+        except Exception:
+            pass
+        # --- END DIAG ---
 
         # Pickup-only conditional: trailer hitch combobox.
         # Confirmed live 2026-06-04 (JUAREZ Pickup + Gooseneck Trailer): this
@@ -424,7 +457,9 @@ class AddVehiclePage(BasePage):
         # Note: when has_loan != "No" Progressive auto-requires Comp/Coll
         # (it's a lender mandate) so we DON'T expose this branch.
         if vehicle.has_loan == "No":
-            wants_apd = bool(vehicle.value)
+            screenshot = await self.screenshot("vehicle_value_unmapped")
+            val = resolve_vehicle_value(vehicle.value, screenshot_path=screenshot)
+            wants_apd = val is not None
             apd_answer = "Yes" if wants_apd else "No"
             await self._set_radio(
                 "Does the customer need Comprehensive or Collision coverage",
@@ -433,23 +468,23 @@ class AddVehiclePage(BasePage):
             # Wait for ExtJS to render the equipment + value fields that
             # are revealed by Comp/Coll=Yes (no-op if we answered No).
             try:
-                await self.wait_for_extjs_idle(timeout_ms=5_000)
+                await self.wait_for_extjs_idle(timeout_ms=4_000)
             except Exception:
                 pass
-            await self.page.wait_for_timeout(800)
 
             if wants_apd:
                 # Equipment value: Progressive's 2026-06 UI uses a free-text
                 # "Value" textbox plus a "Vehicle has no equipment" checkbox.
                 # We assume no permanently-attached equipment by default.
                 await self._tick_no_equipment_checkbox()
-                # Vehicle market value: use the Blue Quote Value column. If
-                # it's missing we'd never enter this branch (wants_apd=False).
-                await self._fill_vehicle_value(default=vehicle.value)
+                # Vehicle market value: validated Blue Quote Value column (a
+                # clean integer string). If absent/unusable we'd never reach
+                # this branch (wants_apd False or already HALTed above).
+                await self._fill_vehicle_value(default=str(int(val)))
             else:
                 print(
-                    "    [Progressive] APD = No (Blue Quote has no Value for "
-                    "this vehicle); skipping equipment + Vehicle Value section"
+                    "    [Progressive] APD = No (no usable Value for this "
+                    "vehicle); skipping equipment + Vehicle Value section"
                 )
 
         await self._click_continue()

@@ -41,6 +41,12 @@ TRACE: list[str] = []
 # verify input_value) both verify against the actually-committed value.
 _LAST_VALUE = {"v": ""}
 
+# Records the accessible name of the most-recently-clicked combobox, so
+# all_inner_texts() can return that combo's OWN option set (each ExtJS combo
+# shows a different dropdown). Without this, every option enumeration returned
+# TRUCKER_SUBTYPES, which is wrong for e.g. the GVW combo.
+_LAST_COMBO = {"name": ""}
+
 
 def _t(msg: str) -> None:
     TRACE.append(msg)
@@ -109,6 +115,14 @@ class MockLocator:
                 name = m.group(1) if m.group(1) is not None else m.group(2)
                 if name:
                     _LAST_VALUE["v"] = name
+        elif "role=combobox" in self.path:
+            # Opening a combobox: remember WHICH combo so a subsequent
+            # option enumeration returns this combo's own dropdown contents.
+            m = re.search(r"name=(?:'([^']*)'|\"([^\"]*)\")", self.path)
+            if m:
+                name = m.group(1) if m.group(1) is not None else m.group(2)
+                if name:
+                    _LAST_COMBO["name"] = name
         _t(f"CLICK {self.path}")
 
     async def check(self, **_):
@@ -128,9 +142,15 @@ class MockLocator:
 
     async def all_inner_texts(self):
         # Model option enumeration. A query over options (role=option) returns
-        # the live list the resolver enumerates — for Type-of-Trucker this is
-        # the real TRUCKER_SUBTYPES (includes "General Freight / Other").
+        # the live list the resolver enumerates — but WHICH list depends on the
+        # combo that was opened (each ExtJS combo shows its own dropdown). The
+        # GVW combo shows weight ranges; the Type-of-Trucker combo shows the
+        # real TRUCKER_SUBTYPES (includes "General Freight / Other").
         if "role=option" in self.path:
+            combo = (_LAST_COMBO["name"] or "").lower()
+            if "gross vehicle weight" in combo:
+                from modules.progressive.catalogs import load_catalog
+                return list(load_catalog("gvw").options)
             from modules.progressive.pages.business_info_page import TRUCKER_SUBTYPES
             return list(TRUCKER_SUBTYPES)
         return []
