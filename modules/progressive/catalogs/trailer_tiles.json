@@ -1,0 +1,7 @@
+{
+  "field": "Trailer tile",
+  "captured": "2026-06-04",
+  "source": "live screenshot JUAREZ run (Trailer Information picker)",
+  "options": ["Dry Freight Trailer", "Flatbed Trailer", "Refrigerated Dry Freight", "Gooseneck Trailer", "Other / Not Listed"],
+  "generic_aliases": ["other"]
+}

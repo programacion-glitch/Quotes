@@ -19,6 +19,19 @@ VEHICLE_TILE_MAP = {
     "DUMP": "Dump Truck",
 }
 
+# Trailer-tile synonyms (token -> Progressive trailer tile label).
+# Matched as `token in trailer_type.upper()` (same scheme as VEHICLE_TILE_MAP).
+# Order note: "DRY VAN"/"DRY FREIGHT" listed before generic terms; there is no
+# bare "VAN" key here so no Cargo-Van collision.
+TRAILER_TILE_MAP = {
+    "GOOSENECK": "Gooseneck Trailer",
+    "FLATBED": "Flatbed Trailer",
+    "DRY VAN": "Dry Freight Trailer",
+    "DRY FREIGHT": "Dry Freight Trailer",
+    "REEFER": "Refrigerated Dry Freight",
+    "REFRIGERAT": "Refrigerated Dry Freight",
+}
+
 # Commodity table: (synonym keys, Progressive Business-type option).
 _COMMODITY_TABLE = [
     (("FRACK", "FRACKING"), "Fracking Sand Hauling"),

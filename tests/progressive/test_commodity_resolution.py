@@ -37,6 +37,11 @@ def test_vehicle_tile_map_restores_box_truck_synonyms():
     assert VEHICLE_TILE_MAP[token] == "Box Truck"
 
 
+def test_trailer_tile_map_has_gooseneck():
+    from modules.progressive.mappings import TRAILER_TILE_MAP
+    assert TRAILER_TILE_MAP["GOOSENECK"] == "Gooseneck Trailer"
+
+
 def test_map_commodity_fracking_sand_not_dirt():
     opt, generic = map_commodity("FRACKING SAND")
     assert opt == "Fracking Sand Hauling" and generic is False
