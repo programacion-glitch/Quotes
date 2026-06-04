@@ -11,6 +11,10 @@ from typing import Optional
 
 from modules.progressive.pages.base_page import BasePage
 from modules.progressive.field_mapper import MappedFields
+from modules.progressive.choice_resolver import resolve_choice, Resolution
+from modules.progressive.mappings import map_commodity
+from modules.progressive.catalogs import load_catalog
+from modules.progressive.pages._exceptions import UnmappableValueError
 
 
 
@@ -116,7 +120,7 @@ class BusinessInfoPage(BasePage):
         await self._select_entity_type(fields.entity_type)
         await self._fill_business_name(fields.business_name, fields.dba_name)
         await self._select_business_type(fields.commodity)
-        await self._answer_type_of_trucker()        # conditional: revealed when business=Trucker
+        await self._answer_type_of_trucker(fields.commodity)  # conditional: revealed when business=Trucker
         await self._answer_hazmat_placard(False)  # default No
         await self._fill_owner_info(
             fields.owner_name,
@@ -429,127 +433,37 @@ class BusinessInfoPage(BasePage):
             if await dba_box.count() > 0:
                 await self.safe_fill(dba_box.first, dba, verify=False)
 
+    def resolve_business_type(self, commodity: Optional[str]) -> Resolution:
+        """Resolve commodity -> Business type option, or HALT (no silent Trucker).
+
+        Specific hit -> MATCHED. General-freight family / 'Trucker' sentinel ->
+        MATCHED (generic). Anything else present-but-unmapped -> UnmappableValueError.
+        """
+        cat = load_catalog("business_type")
+        opt, is_generic = map_commodity(commodity)
+        if opt is not None:
+            note = "generic" if is_generic else "mapping"
+            return Resolution("Business type", opt, "MATCHED", commodity, note)
+        raise UnmappableValueError(
+            field="Business type",
+            source_value=commodity,
+            available_options=list(cat.options),
+        )
+
     async def _select_business_type(self, commodity: Optional[str]) -> None:
         """Select the business type via the 'Business type list' combobox.
 
-        This combobox IS the required "keyword describing your business" field.
-        The quick-button shortcuts ("Trucker", etc.) do NOT populate it, so the
-        START page rejects submission ("This field is required") — we must drive
-        the combobox itself. Its accessible name ("Business type list") and the
-        option labels are stable; only the per-session ExtJS ids change.
+        Resolves the commodity up front — raises UnmappableValueError (HALT) for
+        a present-but-unmappable commodity instead of silently selecting 'Trucker'.
         """
         if not commodity:
             print("    [Progressive] WARN: no commodity provided, skipping")
             return
-        search_term, preferred = self._map_commodity_to_option(commodity)
-        print(
-            f"    [Progressive] Business type: '{commodity}' -> "
-            f"option~'{preferred or search_term}'"
-        )
-
+        res = self.resolve_business_type(commodity)
+        print(f"    [Progressive] Business type: '{commodity}' -> '{res.value}' ({res.note})")
         combo = await self.find_combo("Business type list")
         await combo.wait_for(state="visible", timeout=15_000)
-
-        # Prefer the exact mapped option from the full (non-virtualized) list
-        # via safe_select_combo when we have a known preferred label.
-        if preferred:
-            try:
-                await self.safe_select_combo(combo, preferred)
-                return
-            except Exception:
-                # Preferred label not in list — fall through to search/filter
-                pass
-
-        # Unmappable commodity (preferred is None): route directly to "Trucker"
-        # via safe_select_combo. Background: a previous version of this code
-        # tried `combo.fill(search_term)` to filter the dropdown by the
-        # first-meaningful-word of the commodity (e.g. "Processed" for
-        # "Processed wood 33%, pipes 33%, Building Materials 34%"). ExtJS
-        # comboboxes do not reliably react to programmatic .fill() — the
-        # filter never narrowed, `options.count() > 0` was vacuously true
-        # against the full unfiltered list, and the bot silently clicked
-        # the alphabetically-first option ("Accountant"), which ExtJS then
-        # dropped on the floor. Result: combobox empty, Progressive blocks
-        # at START with "This field is required". safe_select_combo finds
-        # named options deterministically (it enumerates the rendered DOM)
-        # and "Trucker" is in Progressive's "Most Common Business Types"
-        # shortcut — universal catch-all for USDOT-registered commercial
-        # auto operations.
-        print(
-            f"    [Progressive] WARN: '{search_term}' has no mapped option; "
-            f"falling back to 'Trucker'"
-        )
-        try:
-            await self.safe_select_combo(combo, "Trucker")
-        except Exception as e:
-            print(
-                f"    [Progressive] WARN: 'Trucker' fallback also failed: {e}; "
-                f"the START page will reject submission"
-            )
-
-    def _map_commodity_to_option(
-        self, commodity: str
-    ) -> tuple[str, Optional[str]]:
-        """Map a BlueQuote commodity to (search_term, preferred_option_text)
-        for the Business type list combobox. `preferred` is an exact-ish option
-        label when known; `search_term` filters the list as a fallback for
-        anything not explicitly mapped (keeps this dynamic for any BlueQuote).
-
-        Uses word-boundary matching (not substring) so that e.g. "PACKED
-        CHARCOAL" does NOT trigger the "COAL" rule. Multi-word keys are
-        matched as ordered substring tokens (e.g. "AUTO HAUL" matches
-        "auto haul" or "auto-haul" but not "AUTOMATIC HAUL").
-        """
-        import re
-        c = (commodity or "").upper()
-        # Tokenize: split on any non-alpha-numeric so "PACKED CHARCOAL: 20%"
-        # becomes ["PACKED", "CHARCOAL", "20"] and "COAL" won't be a token.
-        tokens = set(re.findall(r"\b[A-Z][A-Z0-9]+\b", c))
-
-        def matches(key: str) -> bool:
-            """key matches if every whitespace-separated part is a token, OR
-            the key as a phrase appears with word boundaries in the commodity."""
-            parts = key.split()
-            if len(parts) == 1:
-                return parts[0] in tokens
-            # multi-word: require the phrase with word boundaries
-            pattern = r"\b" + r"\W+".join(re.escape(p) for p in parts) + r"\b"
-            return re.search(pattern, c) is not None
-
-        table = [
-            (("DIRT", "SAND", "GRAVEL"), "Dirt Sand", "Dirt Sand & Gravel (For A Fee)"),
-            (("FRACK", "FRACKING"), "Fracking", "Fracking Sand Hauling"),
-            (("COAL",), "Coal", "Coal Hauling"),
-            (("AUTO HAUL", "CAR HAUL", "AUTO HAULER", "CAR HAULER"),
-             "Auto Hauler", "Auto Hauler (For Hire Trucking)"),
-            (("LIVESTOCK",), "Livestock", "Livestock Hauling (For A Fee)"),
-            (("LOG", "LOGGING", "WOOD CHIP", "WOOD CHIPS"), "Logging", "Logging Trucker"),
-            (("GARBAGE", "TRASH"), "Garbage", "Garbage & Trash Hauling/Removal"),
-            (("HAZARD", "HAZMAT", "HAZARDOUS"), "Hazardous", "Hazardous Materials Hauling"),
-            (("CONTAINER", "CONTAINERS"), "Container", "Container Hauling"),
-            (("AGRICULTUR", "AGRICULTURAL", "AGRICULTURE", "FARM PRODUCE"),
-             "Agricultural", "Agricultural Hauling (For A Fee)"),
-            (("DAIRY",), "Dairy", "Dairy Products Hauling (For A Fee)"),
-            (("REFRIG", "REFRIGERATED", "REEFER", "FROZEN"), "Frozen Foods", "Frozen Foods Hauling"),
-            (("BEVERAGE", "BEER", "WATER", "LIQUIDS", "BOTTLED"),
-             "Beverage", "Beverage Distributor"),
-        ]
-        for keys, term, opt in table:
-            if any(matches(k) for k in keys):
-                return (term, opt)
-        # General freight family (multi-word phrases need substring still).
-        general_keys = ("FLATBED", "DRY VAN", "BOX TRUCK", "STRAIGHT",
-                        "CARGO VAN", "FREIGHT", "GENERAL")
-        if any(matches(k) for k in general_keys):
-            return ("General Freight", "General Freight Hauler")
-        # Last resort: filter by the first meaningful word.
-        skip = {"THE", "FOR", "AND", "100", "OF"}
-        word = next(
-            (w for w in c.replace(",", " ").replace("%", " ").split()
-             if len(w) > 2 and w not in skip),
-            "Hauling",
-        )
-        return (word.title(), None)
+        await self.safe_select_combo(combo, res.value)
 
     # Section headers in Progressive's Type-of-Trucker dropdown — render in
     # the options list but are NOT selectable (clicking them does nothing).
@@ -562,27 +476,11 @@ class BusinessInfoPage(BasePage):
     # specialty category".
     _TYPE_OF_TRUCKER_DEFAULT = "General Freight / Other"
 
-    async def _answer_type_of_trucker(self) -> None:
-        """Conditional combobox revealed when business type = 'Trucker'.
-
-        Dropdown structure (confirmed live 2026-06-04 via DIAG, JUAREZ run):
-          [ '', '', 'Most common types', 'Agricultural',
-            'Dirt, Sand and Gravel', 'General Freight / Other',
-            'Logging / Wood Chips', 'Refrigerated Goods', '', 'All types',
-            ... 24 more under 'All types' ]
-
-        Indices 0-1 are empty separators, 'Most common types' / 'All types'
-        are section headers — none are selectable. A naïve `options.first`
-        click lands on an empty separator and leaves the field blank, which
-        Progressive rejects at submit with "This field is required".
-
-        Strategy: open the combo, enumerate option text, filter out empty
-        strings and known section headers, prefer "General Freight / Other"
-        (Progressive's canonical Trucker catch-all for mixed/unclassified
-        freight — what we'd want for any commodity that fell through the
-        commodity-mapping table to the Trucker fallback). If that exact
-        label isn't present, click the first non-empty, non-header option.
-        """
+    async def _answer_type_of_trucker(self, commodity: Optional[str]) -> None:
+        """Conditional combobox revealed when business type = Trucker. Resolve the
+        commodity to a subtype; HALT if present-but-unmatched (was: silently click
+        the first non-empty option). 'General Freight / Other' is used only as the
+        generic catch-all (commodity absent or generic)."""
         # Give ExtJS time to render the conditional after Trucker is committed.
         try:
             await self.wait_for_extjs_idle(timeout_ms=4_000)
@@ -594,46 +492,21 @@ class BusinessInfoPage(BasePage):
         if not await self.field_exists(combo, wait_ms=1_500):
             return  # Not revealed when business type is not Trucker
 
-        try:
-            await combo.click(timeout=5_000)
-            await self.page.wait_for_timeout(500)
-
-            # Preferred path: filter the option locator by exact text.
-            options = self.page.get_by_role("option")
-            preferred = options.filter(has_text=self._TYPE_OF_TRUCKER_DEFAULT)
-            if await preferred.count() > 0:
-                await preferred.first.click(timeout=5_000)
-                await self.page.wait_for_timeout(800)
-                print(
-                    f"    [Progressive] Type of Trucker = "
-                    f"{self._TYPE_OF_TRUCKER_DEFAULT!r}"
-                )
-                return
-
-            # Fallback: walk the option list, click the first selectable
-            # (non-empty, non-section-header) entry.
-            n = await options.count()
-            for i in range(n):
-                try:
-                    text = (await options.nth(i).text_content() or "").strip()
-                except Exception:
-                    continue
-                if not text or text in self._TYPE_OF_TRUCKER_HEADERS:
-                    continue
-                await options.nth(i).click(timeout=5_000)
-                await self.page.wait_for_timeout(800)
-                print(
-                    f"    [Progressive] Type of Trucker = {text!r} "
-                    f"(fallback: '{self._TYPE_OF_TRUCKER_DEFAULT}' not present)"
-                )
-                return
-
-            print(
-                "    [Progressive] WARN: Type of Trucker dropdown has no "
-                "selectable options; START will reject submission"
-            )
-        except Exception as e:
-            print(f"    [Progressive] WARN: Type of Trucker fill failed: {e}")
+        await combo.click(timeout=5_000)
+        await self.page.wait_for_timeout(500)
+        raw = await self.page.get_by_role("option").all_inner_texts()
+        options = [o.strip() for o in raw
+                   if o.strip() and o.strip() not in self._TYPE_OF_TRUCKER_HEADERS]
+        screenshot = await self.screenshot("type_of_trucker_unmapped")
+        res = resolve_choice(
+            "Type of Trucker", commodity, options,
+            default=self._TYPE_OF_TRUCKER_DEFAULT,
+            generic_aliases=frozenset({"general freight", "mixed", "other", "trucker"}),
+            screenshot_path=screenshot,
+        )
+        await self.page.get_by_role("option", name=res.value, exact=True).first.click(timeout=5_000)
+        await self.page.wait_for_timeout(800)
+        print(f"    [Progressive] Type of Trucker = {res.value!r} ({res.note})")
 
     async def _answer_hazmat_placard(self, has_placard: bool) -> None:
         """
