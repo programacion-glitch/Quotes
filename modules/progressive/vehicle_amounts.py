@@ -23,6 +23,8 @@ def _label_to_range(label: str) -> tuple[float, float]:
     low = label.lower()
     nums = [parse_amount(n) for n in re.findall(r"[\d.,]+", label)]
     nums = [n for n in nums if n is not None]
+    if not nums:
+        return (0.0, float("inf"))
     if "greater" in low or "more" in low or "over" in low:
         return (nums[0], float("inf"))
     if "less" in low or "under" in low:
@@ -51,7 +53,7 @@ def resolve_gvw(
     options: list[str],
     *,
     default: str = GVW_DEFAULT,
-    screenshot_path=None,
+    screenshot_path: Optional[str] = None,
 ) -> str:
     """Resolve a raw Blue-Quote GVW string to a Progressive range option.
 

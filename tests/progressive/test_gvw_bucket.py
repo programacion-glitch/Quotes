@@ -35,3 +35,9 @@ def test_resolve_gvw_present_but_garbage_halts():
     with pytest.raises(UnmappableValueError) as exc:
         resolve_gvw("banana", OPTS)
     assert exc.value.source_value == "banana"
+
+
+def test_label_with_no_number_does_not_crash():
+    from modules.progressive.vehicle_amounts import bucket_gvw
+    result = bucket_gvw(5000, ["10,000 lbs or less", "Unknown"])
+    assert result == "10,000 lbs or less"   # real range matches first; no crash
