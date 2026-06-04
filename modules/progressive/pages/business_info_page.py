@@ -459,50 +459,31 @@ class BusinessInfoPage(BasePage):
                 # Preferred label not in list — fall through to search/filter
                 pass
 
-        # Filter fallback: type search_term into the combo to narrow the list,
-        # then click the first remaining option. This handles unmapped commodities.
-        await combo.click(timeout=5_000)
-        await self.page.wait_for_timeout(400)
-        try:
-            await combo.fill(search_term)
-        except Exception:
-            await self.page.keyboard.type(search_term, delay=60)
-        await self.page.wait_for_timeout(1_200)
-        options = self.page.get_by_role("option")
-        if await options.count() > 0:
-            await options.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(1_000)
-            return
-
-        # Last-resort fallback: the commodity string is unmappable AND the
-        # filter found no options. Try "Trucker" — one of Progressive's "Most
-        # Common Business Types" visible at the top of the combobox and the
-        # universal catch-all for commercial-auto with USDOT. Without this,
-        # the combobox stays empty and Progressive blocks at START with
-        # "This field is required".
+        # Unmappable commodity (preferred is None): route directly to "Trucker"
+        # via safe_select_combo. Background: a previous version of this code
+        # tried `combo.fill(search_term)` to filter the dropdown by the
+        # first-meaningful-word of the commodity (e.g. "Processed" for
+        # "Processed wood 33%, pipes 33%, Building Materials 34%"). ExtJS
+        # comboboxes do not reliably react to programmatic .fill() — the
+        # filter never narrowed, `options.count() > 0` was vacuously true
+        # against the full unfiltered list, and the bot silently clicked
+        # the alphabetically-first option ("Accountant"), which ExtJS then
+        # dropped on the floor. Result: combobox empty, Progressive blocks
+        # at START with "This field is required". safe_select_combo finds
+        # named options deterministically (it enumerates the rendered DOM)
+        # and "Trucker" is in Progressive's "Most Common Business Types"
+        # shortcut — universal catch-all for USDOT-registered commercial
+        # auto operations.
         print(
-            f"    [Progressive] WARN: no business-type option matched "
-            f"'{search_term}'; falling back to 'Trucker'"
+            f"    [Progressive] WARN: '{search_term}' has no mapped option; "
+            f"falling back to 'Trucker'"
         )
-        # Clear the filter input by re-clicking the combo
         try:
-            await combo.click(timeout=5_000)
-            await self.page.wait_for_timeout(300)
-            await combo.fill("Trucker")
-        except Exception:
-            try:
-                await self.page.keyboard.type("Trucker", delay=60)
-            except Exception:
-                pass
-        await self.page.wait_for_timeout(1_200)
-        options = self.page.get_by_role("option")
-        if await options.count() > 0:
-            await options.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(1_000)
-        else:
+            await self.safe_select_combo(combo, "Trucker")
+        except Exception as e:
             print(
-                "    [Progressive] WARN: 'Trucker' fallback also produced "
-                "no options; the START page will reject submission"
+                f"    [Progressive] WARN: 'Trucker' fallback also failed: {e}; "
+                f"the START page will reject submission"
             )
 
     def _map_commodity_to_option(
