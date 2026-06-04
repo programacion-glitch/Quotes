@@ -175,14 +175,87 @@ class VehicleSummaryPage(BasePage):
         return False
 
     async def add_trailer(self) -> None:
-        """Click 'Add Trailer' / 'Add Another Trailer'."""
+        """Open the add-trailer (MostCommonTrailers) tile picker.
+
+        Mirrors add_vehicle's verified-navigation pattern: a click that lands
+        on a button's text span may register without firing the ExtJS handler,
+        leaving us on VehicleSummary. So: prefer role=button, click NATURALLY
+        first (Playwright auto-scrolls + fires the handler; force only as a
+        retry per CLAUDE.md), and confirm the trailer tile picker appeared
+        before returning. Without this, a no-op click strands the browser on
+        VehicleSummary and the next step (select_trailer_type) runs on the
+        wrong page (confirmed live: it broke the DRIVERS step).
+        """
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         print("    [Progressive] Adding trailer...")
-        btn = self.page.get_by_role("button", name="Add Another Trailer")
-        if await btn.count() == 0:
-            btn = self.page.get_by_role("button", name="Add Trailer")
-        await btn.first.click(timeout=10_000)
-        await self.page.wait_for_load_state("networkidle", timeout=30_000)
+
+        # Scroll to bottom so the gray footer with 'Add Trailer' is in view.
+        try:
+            await self.page.evaluate(
+                "window.scrollTo(0, document.body.scrollHeight)"
+            )
+            await self.page.wait_for_timeout(500)
+        except Exception:
+            pass
+
+        candidates = [
+            ("btn:Add Another Trailer", self.page.get_by_role("button", name="Add Another Trailer", exact=False)),
+            ("btn:Add Trailer", self.page.get_by_role("button", name="Add Trailer", exact=False)),
+            ("text:Add Another Trailer", self.page.get_by_text("Add Another Trailer", exact=True)),
+            ("text:Add Trailer", self.page.get_by_text("Add Trailer", exact=True)),
+        ]
+        for use_force in (False, True):
+            for lbl, loc in candidates:
+                n = await loc.count()
+                for i in range(n):
+                    el = loc.nth(i)
+                    try:
+                        if not await el.is_visible():
+                            continue
+                        await el.scroll_into_view_if_needed(timeout=3_000)
+                        await el.click(force=use_force, timeout=10_000)
+                        await self.page.wait_for_load_state(
+                            "networkidle", timeout=30_000
+                        )
+                    except Exception:
+                        continue
+                    # VERIFY navigation actually happened before returning.
+                    if await self._wait_for_trailer_picker(timeout_ms=6_000):
+                        print(f"    [Progressive] Add Trailer via {lbl!r} "
+                              f"(force={use_force}) -> trailer tile picker")
+                        return
+                    print(f"    [Progressive] WARN: {lbl!r} (force={use_force}) "
+                          f"clicked but trailer tile picker did not appear; "
+                          f"trying next")
+
+        await self.screenshot("vehicle_summary_no_add_trailer")
+        raise RuntimeError(
+            "Clicked 'Add Trailer' but never reached the trailer tile picker"
+        )
+
+    async def _wait_for_trailer_picker(self, *, timeout_ms: int = 6_000) -> bool:
+        """Poll until the MostCommonTrailers tile picker is on screen (or timeout).
+
+        Mirrors _wait_for_tile_picker but detects the TRAILER picker. Returns
+        True only once the picker is actually present, verifying that an
+        'Add Trailer' click fired the ExtJS handler instead of merely landing
+        on a text span.
+        """
+        import asyncio
+        deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                if await self.current_page_token() == "MostCommonTrailers":
+                    return True
+                if await self.page.get_by_text(
+                    "Most common trailers for the customer's business",
+                    exact=False,
+                ).count() > 0:
+                    return True
+            except Exception:
+                pass
+            await self.page.wait_for_timeout(200)
+        return False
 
     async def list_existing_units(self) -> List["ExistingUnit"]:
         """Read VehicleSummary rows for units Progressive already has on the quote.

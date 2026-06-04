@@ -40,6 +40,10 @@ from modules.progressive.pages.final_details_page import FinalDetailsPage
 from modules.progressive.pages.home_page import HomePage
 from modules.progressive.pages.login_page import LoginPage
 from modules.progressive.pages.more_business_page import MoreBusinessPage
+from modules.progressive.pages.trailers_page import (
+    AddTrailerPage,
+    MostCommonTrailersPage,
+)
 from modules.progressive.pages.vehicles_page import (
     AddVehiclePage,
     MostCommonVehiclesPage,
@@ -271,46 +275,16 @@ class QuoteFlow:
             if hasattr(add_form, "warnings") and add_form.warnings:
                 result.warnings.extend(add_form.warnings)
 
-        # DIAGNOSTIC (Phase 1 Task 9 — removed in Task 12): dump trailer form
-        # so Task 10 has concrete selectors.
-        if trailers:
-            print(f"    [Progressive] DIAG: opening Add Trailer for discovery; "
-                  f"{len(trailers)} trailer(s) queued, only 1st is probed")
-            try:
-                await summary.add_trailer()
-                await wizard_page.wait_for_load_state("networkidle", timeout=30_000)
-                print(f"    [Progressive] DIAG: URL={wizard_page.url}")
-                print(f"    [Progressive] DIAG: title={await wizard_page.title()}")
-                # Dump visible inputs / radios / comboboxes
-                dump = await wizard_page.evaluate("""() => {
-                    const visible = el => {
-                        const r = el.getBoundingClientRect();
-                        return r.width > 0 && r.height > 0;
-                    };
-                    const inputs = [...document.querySelectorAll('input')]
-                        .filter(visible)
-                        .map(i => ({tag: i.tagName, type: i.type, name: i.name,
-                                    placeholder: i.placeholder, aria: i.getAttribute('aria-label')}));
-                    const radios = [...document.querySelectorAll('[role="radiogroup"]')]
-                        .filter(visible)
-                        .map(g => ({label: g.getAttribute('aria-label') || g.textContent.slice(0,80)}));
-                    const combos = [...document.querySelectorAll('[role="combobox"]')]
-                        .filter(visible)
-                        .map(c => ({label: c.getAttribute('aria-label'), value: c.value || ''}));
-                    return {inputs, radios, combos};
-                }""")
-                print(f"    [Progressive] DIAG inputs: {dump.get('inputs')}")
-                print(f"    [Progressive] DIAG radios: {dump.get('radios')}")
-                print(f"    [Progressive] DIAG combos: {dump.get('combos')}")
-                await summary.screenshot("phase1_add_trailer_form")
-            except Exception as e:
-                print(f"    [Progressive] DIAG failed: {e}")
-
-            msg = (
-                f"Discovery mode: {len(trailers)} trailer(s) probed for "
-                f"selector capture. AddTrailerPage not yet implemented."
-            )
-            result.warnings.append(msg)
+        # Trailer loop (real Add Trailer flow).
+        for j, trailer in enumerate(trailers):
+            print(f"    [Progressive] Trailer {j + 1} / {len(trailers)}")
+            await summary.add_trailer()
+            most_common_t = MostCommonTrailersPage(wizard_page)
+            await most_common_t.select_trailer_type(trailer.trailer_type)
+            add_form_t = AddTrailerPage(wizard_page)
+            await add_form_t.fill_from_mapped(trailer)
+            if hasattr(add_form_t, "warnings") and add_form_t.warnings:
+                result.warnings.extend(add_form_t.warnings)
 
         # All units added; continue to drivers
         await summary.click_continue()
