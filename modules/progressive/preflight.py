@@ -13,6 +13,8 @@ from modules.progressive.field_mapper import MappedFields
 from modules.progressive.catalogs import load_catalog
 from modules.progressive.choice_resolver import Resolution
 from modules.progressive.mappings import map_commodity, VEHICLE_TILE_MAP
+from modules.progressive.vehicle_amounts import resolve_gvw, resolve_vehicle_value
+from modules.progressive.pages._exceptions import UnmappableValueError
 
 
 @dataclass
@@ -69,10 +71,39 @@ def _check_vehicle_tiles(mapped: MappedFields, rep: PreflightReport) -> None:
         ))
 
 
+def _check_gvw(mapped: MappedFields, rep: PreflightReport) -> None:
+    cat = load_catalog("gvw")
+    for i, v in enumerate(mapped.vehicles):
+        try:
+            resolve_gvw(v.gvw, list(cat.options))
+        except UnmappableValueError as e:
+            rep.blockers.append(Blocker(
+                field="Gross vehicle weight",
+                source_value=f"vehicle[{i}]: {e.source_value}",
+                available_options=list(cat.options),
+                suggestion="GVW present but not parseable / out of range — fix the Blue Quote.",
+            ))
+
+
+def _check_value(mapped: MappedFields, rep: PreflightReport) -> None:
+    for i, v in enumerate(mapped.vehicles):
+        try:
+            resolve_vehicle_value(v.value)
+        except UnmappableValueError as e:
+            rep.blockers.append(Blocker(
+                field="Vehicle value",
+                source_value=f"vehicle[{i}]: {e.source_value}",
+                available_options=list(e.available_options),
+                suggestion="Vehicle value present but unusable (< $100 or garbage) — fix the Blue Quote.",
+            ))
+
+
 def run_preflight(mapped: MappedFields) -> PreflightReport:
     rep = PreflightReport()
     _check_commodity(mapped, rep)
     _check_vehicle_tiles(mapped, rep)
+    _check_gvw(mapped, rep)
+    _check_value(mapped, rep)
     return rep
 
 

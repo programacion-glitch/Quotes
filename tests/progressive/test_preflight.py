@@ -82,3 +82,36 @@ def test_run_halts_before_browser_on_blocker(monkeypatch):
     assert not result.success
     assert "preflight" in (result.error or "").lower()
     assert called["login"] is False
+
+
+def test_preflight_republic_normalizes_and_passes():
+    # REPUBLIC: latino GVW + value -> must PROCESS (no blocker)
+    f = MappedFields(
+        usdot="1", business_name="REPUBLIC LLC", effective_date="06/15/2026",
+        owner_name="O", commodity="SAND & GRAVEL 100%",
+        vehicles=[MappedVehicle(trailer_type="DUMP TRUCK", gvw="51.000 LBS", value="$45.000")],
+    )
+    rep = run_preflight(f)
+    assert rep.ok()
+
+
+def test_preflight_blocks_unusable_value():
+    f = MappedFields(
+        usdot="1", business_name="X LLC", effective_date="06/15/2026",
+        owner_name="O", commodity="Trucker",
+        vehicles=[MappedVehicle(trailer_type="FLATBED", value="$45")],  # < $100
+    )
+    rep = run_preflight(f)
+    assert not rep.ok()
+    assert any(b.field == "Vehicle value" for b in rep.blockers)
+
+
+def test_preflight_blocks_garbage_gvw():
+    f = MappedFields(
+        usdot="1", business_name="X LLC", effective_date="06/15/2026",
+        owner_name="O", commodity="Trucker",
+        vehicles=[MappedVehicle(trailer_type="FLATBED", gvw="banana")],
+    )
+    rep = run_preflight(f)
+    assert not rep.ok()
+    assert any(b.field == "Gross vehicle weight" for b in rep.blockers)
