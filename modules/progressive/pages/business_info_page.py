@@ -116,6 +116,7 @@ class BusinessInfoPage(BasePage):
         await self._select_entity_type(fields.entity_type)
         await self._fill_business_name(fields.business_name, fields.dba_name)
         await self._select_business_type(fields.commodity)
+        await self._answer_type_of_trucker()        # conditional: revealed when business=Trucker
         await self._answer_hazmat_placard(False)  # default No
         await self._fill_owner_info(
             fields.owner_name,
@@ -549,6 +550,51 @@ class BusinessInfoPage(BasePage):
             "Hauling",
         )
         return (word.title(), None)
+
+    async def _answer_type_of_trucker(self) -> None:
+        """Conditional combobox revealed when business type = 'Trucker'.
+
+        Progressive asks to refine the Trucker category (options like "For
+        Hire Trucking", "Private Carrier", etc.). Without filling this, the
+        START page blocks: 'Type of Trucker: This field is required'.
+
+        Strategy: open the combobox, enumerate visible options, click the
+        first. The first option is always a real underwriting category
+        (Progressive doesn't use 'Select…' sentinels in ExtJS combos). We
+        also log the available labels so future sessions can refine this
+        into a commodity-aware mapping if business need arises.
+        """
+        combo = await self.find_combo("Type of Trucker")
+        if not await self.field_exists(combo, wait_ms=1_500):
+            return  # Not revealed when business type is not Trucker
+
+        try:
+            await combo.click(timeout=5_000)
+            await self.page.wait_for_timeout(500)
+            options = self.page.get_by_role("option")
+            n = await options.count()
+            if n == 0:
+                print(
+                    "    [Progressive] WARN: Type of Trucker combobox has no "
+                    "options; the START page will reject submission"
+                )
+                return
+            labels: list[str] = []
+            for i in range(min(n, 10)):
+                try:
+                    text = (await options.nth(i).text_content() or "").strip()
+                except Exception:
+                    text = "?"
+                labels.append(text)
+            print(
+                f"    [Progressive] Type of Trucker — {n} options "
+                f"(showing {len(labels)}): {labels}"
+            )
+            await options.first.click(timeout=5_000)
+            await self.page.wait_for_timeout(800)
+            print(f"    [Progressive] Type of Trucker = {labels[0]!r}")
+        except Exception as e:
+            print(f"    [Progressive] WARN: Type of Trucker fill failed: {e}")
 
     async def _answer_hazmat_placard(self, has_placard: bool) -> None:
         """
