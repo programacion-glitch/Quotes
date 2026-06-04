@@ -114,53 +114,44 @@ class VehicleSummaryPage(BasePage):
         except Exception:
             pass
 
-        # Try text-based and role-based selectors. ExtJS can render the
-        # "Add Vehicle" control as a button, link or styled div, so text
-        # match catches all. force=True bypasses overlap/visibility checks
-        # from ExtJS overlays that may cover the button.
+        # Click an 'Add Vehicle' control and VERIFY it actually navigated to the
+        # MostCommonVehicles tile picker. Root cause (confirmed live 2026-06-04,
+        # REPUBLIC 2nd vehicle): get_by_text('Add Vehicle') + force=True lands on
+        # the button's text span and does NOT fire the ExtJS handler — the page
+        # stays on VehicleSummary, yet the old code assumed success and returned,
+        # so select_vehicle_type then ran on the wrong page. So: prefer
+        # role=button, click NATURALLY first (Playwright auto-scrolls and fires
+        # the handler; force only as a retry per CLAUDE.md), and confirm the tile
+        # picker appeared before returning.
         candidates = [
-            self.page.get_by_text("Add Vehicle", exact=True),
-            self.page.get_by_role("button", name="Add Vehicle", exact=True),
-            self.page.get_by_role("button", name="Add a Vehicle"),
-            self.page.get_by_role("link", name="Add Vehicle", exact=False),
-            self.page.get_by_role("button", name="Add another vehicle", exact=False),
+            ("btn:Add Vehicle", self.page.get_by_role("button", name="Add Vehicle", exact=True)),
+            ("btn:Add a Vehicle", self.page.get_by_role("button", name="Add a Vehicle")),
+            ("link:Add Vehicle", self.page.get_by_role("link", name="Add Vehicle", exact=False)),
+            ("btn:Add another vehicle", self.page.get_by_role("button", name="Add another vehicle", exact=False)),
+            ("text:Add Vehicle", self.page.get_by_text("Add Vehicle", exact=True)),
         ]
-        # --- TEMPORARY DIAG: parallel labels to identify which control clicks ---
-        _labels = ["text:Add Vehicle", "btn:Add Vehicle", "btn:Add a Vehicle",
-                   "link:Add Vehicle", "btn:Add another vehicle"]
-        for loc, _lbl in zip(candidates, _labels):
-            n = await loc.count()
-            for i in range(n):
-                el = loc.nth(i)
-                try:
-                    if not await el.is_visible():
-                        continue
-                    await el.scroll_into_view_if_needed(timeout=3_000)
-                    await el.click(force=True, timeout=10_000)
-                    await self.page.wait_for_load_state(
-                        "networkidle", timeout=30_000
-                    )
-                    # --- TEMPORARY DIAG: page state after the click ---
+        for use_force in (False, True):
+            for lbl, loc in candidates:
+                n = await loc.count()
+                for i in range(n):
+                    el = loc.nth(i)
                     try:
-                        _tok = await self.current_page_token()
-                        _picker = await self.page.get_by_text(
-                            "Most common vehicles for the customer's business",
-                            exact=False,
-                        ).count()
-                        print(f"    [Progressive] DIAG add_vehicle CLICKED "
-                              f"{_lbl!r}[{i}] -> pageName={_tok!r} "
-                              f"tile_picker_present={_picker > 0} url={self.page.url}")
+                        if not await el.is_visible():
+                            continue
+                        await el.scroll_into_view_if_needed(timeout=3_000)
+                        await el.click(force=use_force, timeout=10_000)
+                        await self.page.wait_for_load_state(
+                            "networkidle", timeout=30_000
+                        )
                     except Exception:
-                        pass
-                    # --- END DIAG ---
-                    return
-                except Exception:
-                    continue
-
-        # --- TEMPORARY DIAG: no candidate clicked ---
-        print("    [Progressive] DIAG add_vehicle: NO 'Add Vehicle' candidate "
-              "clicked; falling through to add_suggested/RuntimeError")
-        # --- END DIAG ---
+                        continue
+                    # VERIFY navigation actually happened before returning.
+                    if await self._wait_for_tile_picker(timeout_ms=6_000):
+                        print(f"    [Progressive] Add Vehicle via {lbl!r} "
+                              f"(force={use_force}) -> tile picker")
+                        return
+                    print(f"    [Progressive] WARN: {lbl!r} (force={use_force}) "
+                          f"clicked but tile picker did not appear; trying next")
 
         # Fallback: a pre-detected suggestion with a plain "Add" button.
         if await self.add_suggested_vehicle(0):
@@ -168,8 +159,32 @@ class VehicleSummaryPage(BasePage):
 
         await self.screenshot("vehicle_summary_no_add_button")
         raise RuntimeError(
-            "Could not find a visible 'Add Vehicle' control on VehicleSummary"
+            "Clicked 'Add Vehicle' but never reached the MostCommonVehicles "
+            "tile picker (navigation did not occur), and no pre-detected "
+            "suggestion was available"
         )
+
+    async def _wait_for_tile_picker(self, *, timeout_ms: int = 6_000) -> bool:
+        """Poll until the MostCommonVehicles tile picker is on screen (or timeout).
+
+        Verifies navigation after an 'Add Vehicle' click: a click that lands on a
+        text span may register without firing the ExtJS handler, leaving us on
+        VehicleSummary. Returns True only once the picker is actually present.
+        """
+        import asyncio
+        deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                if await self.current_page_token() == "MostCommonVehicles":
+                    return True
+                if await self.page.get_by_text(
+                    "Most common vehicles for the customer's business", exact=False
+                ).count() > 0:
+                    return True
+            except Exception:
+                pass
+            await self.page.wait_for_timeout(200)
+        return False
 
     async def add_trailer(self) -> None:
         """Click 'Add Trailer' / 'Add Another Trailer'."""
