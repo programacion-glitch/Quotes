@@ -23,6 +23,8 @@ from playwright.async_api import Page, BrowserContext
 
 from modules.progressive.field_mapper import MappedFields
 from modules.progressive.otp_reader import GmailOTPReader
+from modules.progressive.pages._exceptions import UnmappableValueError
+from modules.progressive.preflight import run_preflight, format_report, write_report
 from modules.progressive.pages.base_page import BasePage
 from modules.progressive.pages.business_info_page import BusinessInfoPage
 from modules.progressive.pages.coverages_rates_page import (
@@ -54,6 +56,7 @@ class QuoteResult:
     error: Optional[str] = None
     screenshot_path: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
+    assumptions: List[str] = field(default_factory=list)   # DEFAULTED resolutions
     # Quote details (when success)
     price: Optional[QuotePrice] = None
 
@@ -80,6 +83,24 @@ class QuoteFlow:
     async def run(self, fields: MappedFields) -> QuoteResult:
         """Execute the full quote flow up to FINAL DETAILS (no payment)."""
         result = QuoteResult()
+
+        # Preflight: validate against catalogs offline. If any blocker, do NOT
+        # open the browser — hand back a batched report so the operator fixes
+        # everything before re-running (kills the fix-rerun-break cycle).
+        report = run_preflight(fields)
+        result.assumptions = [f"{a.field} = {a.value}" for a in report.assumptions]
+        if not report.ok():
+            business = fields.business_name or "unknown"
+            text = format_report(report, business)
+            path = write_report(report, business)
+            print(text)
+            print(f"    [Progressive] preflight report written to {path}")
+            result.step_reached = "preflight"
+            result.error = (
+                f"preflight: {len(report.blockers)} blocker(s) — "
+                f"see {path}"
+            )
+            return result
 
         try:
             # Step 1: Login
@@ -159,6 +180,17 @@ class QuoteFlow:
             )
             return result
 
+        except UnmappableValueError as e:
+            result.error = (
+                f"HALT at '{result.step_reached}': {e.field} value "
+                f"{e.source_value!r} matched no option. Options: "
+                f"{', '.join(map(str, e.available_options[:8]))}"
+            )
+            result.screenshot_path = (
+                str(e.screenshot_path) if e.screenshot_path
+                else await self._take_error_screenshot(result.step_reached)
+            )
+            return result
         except RuntimeError as e:
             # Expected errors (USDOT not found, missing critical field, etc.)
             result.error = str(e)
