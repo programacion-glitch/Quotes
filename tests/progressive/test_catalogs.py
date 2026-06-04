@@ -1,7 +1,7 @@
 import pytest
 from modules.progressive.catalogs import load_catalog, Catalog
 
-NAMES = ["type_of_trucker", "vehicle_tiles", "business_type"]
+NAMES = ["type_of_trucker", "vehicle_tiles", "business_type", "gvw"]
 
 
 @pytest.mark.parametrize("name", NAMES)
