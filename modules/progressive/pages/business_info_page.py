@@ -551,135 +551,87 @@ class BusinessInfoPage(BasePage):
         )
         return (word.title(), None)
 
+    # Section headers in Progressive's Type-of-Trucker dropdown — render in
+    # the options list but are NOT selectable (clicking them does nothing).
+    _TYPE_OF_TRUCKER_HEADERS = frozenset({"Most common types", "All types"})
+
+    # Catch-all option for Trucker quotes that arrived here via the unmapped
+    # commodity → Trucker fallback (mixed or unclassifiable freight). Sits in
+    # Progressive's "Most common types" section; matches the underwriting
+    # intent of "any general commercial trucking that doesn't fit a specific
+    # specialty category".
+    _TYPE_OF_TRUCKER_DEFAULT = "General Freight / Other"
+
     async def _answer_type_of_trucker(self) -> None:
         """Conditional combobox revealed when business type = 'Trucker'.
 
-        DIAGNOSTIC MODE: dumps every visible combobox on the page (accessible
-        name + nearby label text + aria-label + placeholder) BEFORE attempting
-        to locate "Type of Trucker". Once the real selector is identified
-        from the dump, this method gets simplified to a plain
-        `find_combo(<real label>)` + open + pick first option.
+        Dropdown structure (confirmed live 2026-06-04 via DIAG, JUAREZ run):
+          [ '', '', 'Most common types', 'Agricultural',
+            'Dirt, Sand and Gravel', 'General Freight / Other',
+            'Logging / Wood Chips', 'Refrigerated Goods', '', 'All types',
+            ... 24 more under 'All types' ]
+
+        Indices 0-1 are empty separators, 'Most common types' / 'All types'
+        are section headers — none are selectable. A naïve `options.first`
+        click lands on an empty separator and leaves the field blank, which
+        Progressive rejects at submit with "This field is required".
+
+        Strategy: open the combo, enumerate option text, filter out empty
+        strings and known section headers, prefer "General Freight / Other"
+        (Progressive's canonical Trucker catch-all for mixed/unclassified
+        freight — what we'd want for any commodity that fell through the
+        commodity-mapping table to the Trucker fallback). If that exact
+        label isn't present, click the first non-empty, non-header option.
         """
-        # Give ExtJS time to render the conditional after Trucker selection.
+        # Give ExtJS time to render the conditional after Trucker is committed.
         try:
             await self.wait_for_extjs_idle(timeout_ms=4_000)
         except Exception:
             pass
         await self.page.wait_for_timeout(500)
 
-        # DIAGNOSTIC: dump ALL visible comboboxes and their context.
-        try:
-            dump = await self.page.evaluate("""() => {
-                const visible = el => {
-                    const r = el.getBoundingClientRect();
-                    return r.width > 0 && r.height > 0;
-                };
-                // ExtJS combos render as input[role="combobox"] or sometimes a
-                // wrapping div. Catch both.
-                const combos = [
-                    ...document.querySelectorAll('[role="combobox"]'),
-                    ...document.querySelectorAll('input.x-form-field'),
-                ];
-                const seen = new Set();
-                const out = [];
-                for (const el of combos) {
-                    if (!visible(el)) continue;
-                    const id = el.id || el.outerHTML.slice(0, 60);
-                    if (seen.has(id)) continue;
-                    seen.add(id);
-                    // Find nearest preceding label: look up the DOM for a
-                    // sibling/ancestor label, or the previous sibling text.
-                    let labelText = '';
-                    // Try <label for="id">
-                    if (el.id) {
-                        const lbl = document.querySelector(`label[for="${el.id}"]`);
-                        if (lbl) labelText = (lbl.textContent || '').trim();
-                    }
-                    // Fallback: walk up looking for a sibling div with text
-                    if (!labelText) {
-                        let p = el.parentElement;
-                        for (let i = 0; i < 6 && p; i++, p = p.parentElement) {
-                            const prev = p.previousElementSibling;
-                            if (prev && prev.textContent) {
-                                const t = prev.textContent.trim();
-                                if (t && t.length < 100) { labelText = t; break; }
-                            }
-                        }
-                    }
-                    out.push({
-                        id: el.id,
-                        name: el.name || null,
-                        aria: el.getAttribute('aria-label'),
-                        ariaLabelledBy: el.getAttribute('aria-labelledby'),
-                        placeholder: el.placeholder || null,
-                        value: el.value || '',
-                        label: labelText,
-                        required: el.getAttribute('aria-required') === 'true' ||
-                                  el.required === true,
-                    });
-                }
-                // Also dump any element with text "Type of Trucker" to confirm
-                // it really exists on the page.
-                const textMatches = [];
-                const walker = document.createTreeWalker(
-                    document.body, NodeFilter.SHOW_TEXT, null
-                );
-                let node;
-                while ((node = walker.nextNode())) {
-                    const t = (node.textContent || '').trim();
-                    if (t && t.toLowerCase().includes('type of trucker')) {
-                        textMatches.push({
-                            text: t.slice(0, 80),
-                            parentTag: node.parentElement?.tagName,
-                            parentClass: node.parentElement?.className?.slice(0, 60),
-                        });
-                    }
-                }
-                return {combos: out, textMatches};
-            }""")
-            print("    [Progressive] === DIAG Type-of-Trucker hunt ===")
-            print(f"    [Progressive] DIAG combos visible: {len(dump.get('combos', []))}")
-            for c in dump.get("combos", []):
-                print(f"    [Progressive] DIAG combo: {c}")
-            print(f"    [Progressive] DIAG 'Type of Trucker' text matches: {dump.get('textMatches')}")
-        except Exception as e:
-            print(f"    [Progressive] DIAG combo dump failed: {e}")
-
-        # Try the original guess; if it works, fill it. If not, leave for now —
-        # the dump above tells us what to write next.
         combo = await self.find_combo("Type of Trucker")
         if not await self.field_exists(combo, wait_ms=1_500):
-            print(
-                "    [Progressive] WARN: find_combo('Type of Trucker') did not "
-                "match — see DIAG dump above for actual accessible name/label."
-            )
-            return
+            return  # Not revealed when business type is not Trucker
 
         try:
             await combo.click(timeout=5_000)
             await self.page.wait_for_timeout(500)
+
+            # Preferred path: filter the option locator by exact text.
             options = self.page.get_by_role("option")
-            n = await options.count()
-            if n == 0:
+            preferred = options.filter(has_text=self._TYPE_OF_TRUCKER_DEFAULT)
+            if await preferred.count() > 0:
+                await preferred.first.click(timeout=5_000)
+                await self.page.wait_for_timeout(800)
                 print(
-                    "    [Progressive] WARN: Type of Trucker combobox has no "
-                    "options; the START page will reject submission"
+                    f"    [Progressive] Type of Trucker = "
+                    f"{self._TYPE_OF_TRUCKER_DEFAULT!r}"
                 )
                 return
-            labels: list[str] = []
-            for i in range(min(n, 10)):
+
+            # Fallback: walk the option list, click the first selectable
+            # (non-empty, non-section-header) entry.
+            n = await options.count()
+            for i in range(n):
                 try:
                     text = (await options.nth(i).text_content() or "").strip()
                 except Exception:
-                    text = "?"
-                labels.append(text)
+                    continue
+                if not text or text in self._TYPE_OF_TRUCKER_HEADERS:
+                    continue
+                await options.nth(i).click(timeout=5_000)
+                await self.page.wait_for_timeout(800)
+                print(
+                    f"    [Progressive] Type of Trucker = {text!r} "
+                    f"(fallback: '{self._TYPE_OF_TRUCKER_DEFAULT}' not present)"
+                )
+                return
+
             print(
-                f"    [Progressive] Type of Trucker — {n} options "
-                f"(showing {len(labels)}): {labels}"
+                "    [Progressive] WARN: Type of Trucker dropdown has no "
+                "selectable options; START will reject submission"
             )
-            await options.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(800)
-            print(f"    [Progressive] Type of Trucker = {labels[0]!r}")
         except Exception as e:
             print(f"    [Progressive] WARN: Type of Trucker fill failed: {e}")
 
