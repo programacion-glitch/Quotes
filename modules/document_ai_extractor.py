@@ -642,13 +642,14 @@ class DocumentAIExtractor:
         trailers = vehicles.get("trailers", [])
         veh_records: List[VehicleProfile] = []
         for src, is_trailer_flag in ((trucks, False), (trailers, True)):
+            group: List[VehicleProfile] = []
             for t in src:
                 year_int = _first_int(t.get("year"))
                 # Value column from Blue Quote; presence implies the customer
                 # requested APD (Phys Damage). The pdf_extractor surfaces it
                 # in t["value"] (see modules/pdf_extractor.py:269,307).
                 value_raw = (t.get("value") or "").strip() or None
-                veh_records.append(VehicleProfile(
+                group.append(VehicleProfile(
                     vin=(t.get("vin") or "").strip() or None,
                     year=year_int,
                     make=(t.get("make") or "").strip() or None,
@@ -659,6 +660,22 @@ class DocumentAIExtractor:
                     value=value_raw,
                     is_trailer=is_trailer_flag,
                 ))
+            # Inherit a missing/whitespace Type from an earlier identical sibling
+            # (same year+make) within the SAME group. Blue Quote fillers often
+            # leave a repeated row's Type cell blank ("same as above"); the PDF
+            # form field then holds ' ' → extraction yields None even though the
+            # row renders the type. Confirmed live: REPUBLIC AGGREGATE, two
+            # identical 2012 KW dump trucks, 2nd Type form field = ' '.
+            for i, rec in enumerate(group):
+                if rec.trailer_type:
+                    continue
+                for prior in reversed(group[:i]):
+                    if (prior.trailer_type
+                            and prior.year == rec.year
+                            and prior.make == rec.make):
+                        rec.trailer_type = prior.trailer_type
+                        break
+            veh_records.extend(group)
         return veh_records
 
     # ---- Blue Quote helpers ----
