@@ -12,7 +12,10 @@ from typing import List, Optional
 from modules.progressive.field_mapper import MappedFields
 from modules.progressive.catalogs import load_catalog
 from modules.progressive.choice_resolver import Resolution
-from modules.progressive.mappings import map_commodity, VEHICLE_TILE_MAP
+from modules.progressive.mappings import VEHICLE_TILE_MAP
+from modules.progressive.business_type_classifier import (
+    resolve_commodity_to_business_type,
+)
 from modules.progressive.vehicle_amounts import resolve_vehicle_value
 from modules.progressive.amounts import parse_amount
 from modules.progressive.pages._exceptions import UnmappableValueError
@@ -40,18 +43,21 @@ def _check_commodity(mapped: MappedFields, rep: PreflightReport) -> None:
     commodity = (mapped.commodity or "").strip()
     if not commodity:
         return  # absence handled by field_mapper defaults (Trucker)
-    opt, is_generic = map_commodity(commodity)
-    if opt is not None:
-        if is_generic:
+    label, note = resolve_commodity_to_business_type(commodity)
+    if label is not None:
+        # 'generic' (table catch-all) and 'ai' (LLM classification) are both
+        # assumptions worth surfacing; a specific 'mapping' hit is silent.
+        if note in ("generic", "ai"):
             rep.assumptions.append(
-                Resolution("Business type", opt, "MATCHED", commodity, "generic")
+                Resolution("Business type", label, "MATCHED", commodity, note)
             )
         return
     rep.blockers.append(Blocker(
         field="Business type",
         source_value=commodity,
         available_options=list(cat.options),
-        suggestion="Add a mapping in mappings._COMMODITY_TABLE or fix the Blue Quote.",
+        suggestion="No table match and AI classifier could not map it — add a "
+                   "mapping or fix the Blue Quote.",
     ))
 
 

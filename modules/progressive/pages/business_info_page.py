@@ -13,6 +13,9 @@ from modules.progressive.pages.base_page import BasePage
 from modules.progressive.field_mapper import MappedFields
 from modules.progressive.choice_resolver import resolve_choice, Resolution
 from modules.progressive.mappings import map_commodity
+from modules.progressive.business_type_classifier import (
+    resolve_commodity_to_business_type,
+)
 from modules.progressive.catalogs import load_catalog
 from modules.progressive.pages._exceptions import (
     UnmappableValueError,
@@ -439,13 +442,13 @@ class BusinessInfoPage(BasePage):
     def resolve_business_type(self, commodity: Optional[str]) -> Resolution:
         """Resolve commodity -> Business type option, or HALT (no silent Trucker).
 
-        Specific hit -> MATCHED. General-freight family / 'Trucker' sentinel ->
-        MATCHED (generic). Anything else present-but-unmapped -> UnmappableValueError.
+        table hit -> MATCHED ('mapping'/'generic'). table miss -> AI classifier
+        against Progressive's live trucking taxonomy ('ai'). still nothing ->
+        UnmappableValueError (fail-loud). See business_type_classifier.
         """
-        opt, is_generic = map_commodity(commodity)
-        if opt is not None:
-            note = "generic" if is_generic else "mapping"
-            return Resolution("Business type", opt, "MATCHED", commodity, note)
+        label, note = resolve_commodity_to_business_type(commodity)
+        if label is not None:
+            return Resolution("Business type", label, "MATCHED", commodity, note)
         cat = load_catalog("business_type")
         raise UnmappableValueError(
             field="Business type",

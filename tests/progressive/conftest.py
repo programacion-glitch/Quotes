@@ -6,9 +6,16 @@ without launching a browser.
 
 from __future__ import annotations
 
+import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+# The Progressive commodity classifier falls back to a network AI proxy when a
+# commodity isn't in the keyword table. Disable that network path for the whole
+# test suite so offline runs stay deterministic and fast — tests that exercise
+# the AI branch inject a fake classifier explicitly (which bypasses this guard).
+os.environ.setdefault("PROGRESSIVE_AI_COMMODITY", "0")
 
 
 @pytest.fixture
