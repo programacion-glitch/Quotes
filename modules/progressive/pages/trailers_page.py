@@ -95,25 +95,27 @@ class MostCommonTrailersPage(BasePage):
 
 
 class AddTrailerPage(BasePage):
-    """Add-Trailer form. URL token: pageName=AddTrailer (TODO confirm via DIAG).
+    """Add-Trailer ("Trailer Information") form.
 
-    Fields (assumed, mirroring AddVehiclePage — confirm against DIAG dump):
-      - "Add Trailer By" radio: "Year, Make, Model" | "VIN" (default VIN)
-      - VIN textbox + "Lookup VIN" button
-      - "Trailer Type" combobox (Dry Van / Reefer / Flatbed / Dump / Tank / Gooseneck …)
-      - ZIP textbox (pre-filled from owner address; overwrite if different)
-      - "Farthest one-way distance this trailer typically travels…" combobox
-      - "What is the gross vehicle weight?" combobox (may not exist for trailers)
+    Fields confirmed live (JUAREZ 2026-06-05), in screen order:
+      - Trailer Type (read-only display + Edit button; set on the tile picker)
+      - "VIN" textbox (Optional, NO Lookup button)
+      - "Year" combobox
+      - "Make" combobox
+      - "Zip code where the vehicle is located" textbox (pre-filled)
+      - "Farthest one-way distance this trailer travels for work" combobox
       - "Is there a loan/lease on this trailer?" radio: Yes-Loan | Yes-Lease | No
-      - "Does the customer need Comprehensive or Collision coverage…" radio (post-loan)
-      - "What is the total value of all permanently attached equipment…" radio
-      - "Vehicle Value" / "Trailer Value" textbox (when Comp/Coll = Yes)
       - Continue button
+
+    NOT present on this form (unlike AddVehicle): GVW, tonnage, trailer-hitch,
+    business-use, For-Hire. Comp/Coll + equipment + value MAY reveal after
+    loan=No (mirrors the powered vehicle); each is guarded by field_exists and
+    self-skips when the trailer form does not ask.
     """
 
-    REQUIRED_FIELDS = ("year", "make", "model", "vin")
+    REQUIRED_FIELDS = ("year", "make", "vin")
     CONDITIONAL_FIELDS = ("vehicle_value", "vehicle_has_no_equipment")
-    OPTIONAL_FIELDS = ("trailer_type", "garaging_zip", "gvw")
+    OPTIONAL_FIELDS = ("garaging_zip",)
 
     def __init__(self, page):
         super().__init__(page)
@@ -127,44 +129,46 @@ class AddTrailerPage(BasePage):
     async def fill_from_mapped(self, trailer: MappedVehicle) -> None:
         """Fill the AddTrailer form from a MappedVehicle and click Continue.
 
-        Mirrors AddVehiclePage.fill_from_mapped step-for-step. APD conditional
-        on trailer.value (same convention as PR-A for powered vehicles):
+        Confirmed live (JUAREZ 2026-06-05) the Trailer Information form is
+        simpler than AddVehicle — fields, in screen order:
+          - Trailer Type (read-only; already chosen on the tile picker)
+          - VIN (label "VIN", Optional, NO Lookup button)
+          - Year (combobox), Make (combobox)
+          - ZIP ("Zip code where the vehicle is located", pre-filled)
+          - Distance ("Farthest one-way distance this trailer travels for work")
+          - Loan/lease radio ("Is there a loan/lease on this trailer?")
+        There is NO GVW / tonnage / trailer-hitch / business-use combobox here.
+        Comp/Coll + value may reveal after loan=No (mirrors the powered vehicle);
+        every such step is guarded by field_exists so it self-skips if absent.
+
+        APD conditional on trailer.value (same convention as powered vehicles):
           - trailer.value set    → Comp/Coll = Yes + fill Vehicle Value
           - trailer.value None   → Comp/Coll = No (liability-only)
         """
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
 
-        # 1. VIN or Y/M/M entry
-        # TODO(Task 10): confirm whether the VIN/YMM radio toggle exists.
-        # The form may default to VIN directly without a radio (trailers
-        # commonly skip the YMM cascade because VIN is mandatory in TX).
+        # Trailer Type is already chosen on the preceding tile picker
+        # (MostCommonTrailersPage.select_trailer_type); it shows here read-only
+        # next to an Edit button, so there is nothing to set on this form.
+
+        # 1. VIN (labelled just "VIN", Optional, no Lookup button)
         if trailer.vin:
             await self._fill_by_vin(trailer.vin)
-        else:
-            await self._fill_by_ymm(trailer.year, trailer.make, trailer.model)
 
-        # 2. Trailer Type combobox (likely required, even with VIN)
-        # TODO(Task 10): confirm combobox label. Candidates from existing UI:
-        #   - "Trailer Type"
-        #   - "What type of trailer is this?"
-        await self._set_trailer_type(trailer.trailer_type)
+        # 2. Year + Make comboboxes. Required; only set when the VIN did not
+        #    already auto-populate them (see _set_year / _set_make).
+        await self._set_year(trailer.year)
+        await self._set_make(trailer.make)
 
         # 3. ZIP override if different from pre-filled owner ZIP
         if trailer.garaging_zip:
             await self._set_zip(trailer.garaging_zip)
 
-        # 4. Distance (may share the same combobox label as AddVehicle)
-        # TODO(Task 10): confirm distance combobox exists on trailer form.
+        # 4. Distance — label "Farthest one-way distance this trailer travels
+        #    for work" (matched by the "Farthest one-way distance this" prefix).
         await self._set_distance(trailer.radius_miles)
 
-        # 5. GVW (may not be asked for trailers — call is no-op if combobox
-        # not found, courtesy of _set_combobox_by_label's silent skip)
-        # TODO(Task 10): confirm GVW combobox present.
-        await self._set_combobox_by_label(
-            "What is the gross vehicle weight?", trailer.gvw
-        )
-
-        # 6. Loan/Lease
+        # 5. Loan/Lease
         loan_label = {
             "Loan": "Yes - Loan",
             "Lease": "Yes - Lease",
@@ -212,107 +216,79 @@ class AddTrailerPage(BasePage):
     # ---- VIN / YMM entry helpers ----
 
     async def _fill_by_vin(self, vin: str) -> None:
-        """Enter VIN and trigger Lookup. Mirrors AddVehiclePage._fill_by_vin.
+        """Enter the trailer VIN.
 
-        TODO(Task 10): confirm the VIN textbox label. If different from
-        AddVehicle's "Vehicle Identification Number (VIN)", update the
-        get_by_role lookup.
+        Confirmed live: the trailer form labels the field just "VIN" (with an
+        "Optional" sub-label) and has NO "Lookup VIN" button — unlike the
+        powered-vehicle form. We fill it and blur so any inline ExtJS decode of
+        Year/Make can fire; Year/Make are then set explicitly by _set_year /
+        _set_make if the decode did not populate them.
         """
         print(f"    [Progressive] Adding trailer by VIN: {vin}")
-        # VIN radio toggle (if present)
-        vin_radio = self.page.get_by_role("radio", name="VIN", exact=True)
-        if await vin_radio.count() > 0:
-            try:
-                await vin_radio.first.click(timeout=2_000)
-            except Exception:
-                pass
-
-        # TODO(Task 10): confirm VIN textbox accessible name
-        vin_box = self.page.get_by_role(
-            "textbox", name="Vehicle Identification Number (VIN)"
-        )
-        # Could be pre-filled from suggestion — clear if needed
-        try:
-            current = await vin_box.first.input_value()
-            if current and current != vin:
-                clear_btn = self.page.get_by_role("button", name="Clear VIN")
-                if await clear_btn.count() > 0:
-                    await clear_btn.first.click()
-                    await self.page.wait_for_timeout(500)
-        except Exception:
-            pass
-
+        vin_box = self.page.get_by_role("textbox", name="VIN", exact=True)
+        if await vin_box.count() == 0:
+            vin_box = await self.find_by_label_text("VIN")
+        if await vin_box.count() == 0:
+            # Last resort: the powered-vehicle accessible name, just in case a
+            # future trailer variant reuses it.
+            vin_box = self.page.get_by_role(
+                "textbox", name="Vehicle Identification Number (VIN)"
+            )
         # verify=False because ExtJS may format VIN mid-stream (uppercase/mask)
         await self.safe_fill(vin_box.first, vin, verify=False)
-        lookup_btn = self.page.get_by_role("button", name="Lookup VIN")
-        if await lookup_btn.count() > 0:
-            await lookup_btn.first.click(timeout=10_000)
-            await self.page.wait_for_load_state("networkidle", timeout=20_000)
-            await self.page.wait_for_timeout(1_500)
-
-    async def _fill_by_ymm(
-        self, year: Optional[int], make: Optional[str], model: Optional[str]
-    ) -> None:
-        """Fallback Year/Make/Model entry. Same fragility caveat as AddVehicle.
-
-        Trailer Blue Quotes commonly have VIN; this path is best-effort only.
-        """
-        if not (year and make and model):
-            print(
-                f"    [Progressive] WARN: Y/M/M incomplete - "
-                f"year={year} make={make} model={model}"
-            )
-            return
-        print(
-            f"    [Progressive] Adding trailer by Y/M/M (fragile path): "
-            f"{year} {make} {model}"
-        )
-        ymm_radio = self.page.get_by_role("radio", name="Year, Make, Model")
-        if await ymm_radio.count() > 0:
-            await ymm_radio.first.click(timeout=2_000)
-            await self.page.wait_for_timeout(500)
-
-        await self.safe_select_combo(await self.find_combo("Year"), str(year))
-        try:
-            await self.page.keyboard.press("Tab")
-            await self.page.wait_for_timeout(800)
-        except Exception:
-            pass
-        await self.safe_select_combo(await self.find_combo("Make"), make)
-        await self.safe_select_combo(await self.find_combo("Model"), model)
+        await self.blur_active_element()
+        await self.page.wait_for_timeout(1_000)
 
     # ---- Trailer-specific field helpers ----
 
-    async def _set_trailer_type(self, trailer_type: Optional[str]) -> None:
-        """Map Blue Quote trailer type string to Progressive combobox option.
+    async def _combo_current_value(self, combo) -> str:
+        """Read an ExtJS combobox's current input value (empty string on error)."""
+        try:
+            return (await combo.first.input_value()).strip()
+        except Exception:
+            return ""
 
-        TODO(Task 10): confirm combobox label + option labels from DIAG.
-        Mapping below is a best-guess based on Progressive's typical UI taxonomy.
-        """
-        if not trailer_type:
-            self._log_skipped("trailer_type", "no value provided")
+    async def _set_year(self, year: Optional[int]) -> None:
+        """Set the Year combobox — unless the VIN already auto-decoded it."""
+        combo = await self.find_combo("Year")
+        if await combo.count() == 0:
+            self._log_skipped("year", "combo not present (VIN may have decoded it)")
             return
+        current = await self._combo_current_value(combo)
+        if current:
+            print(f"    [Progressive] Trailer Year already set: {current!r}")
+            return
+        if not year:
+            self._log_skipped("year", "no value and combo empty")
+            return
+        await self.safe_select_combo(combo, str(year))
+        print(f"    [Progressive] Trailer Year = {year}")
 
-        t = (trailer_type or "").upper()
-        option_label = "Other / Not Listed"  # safe fallback
-        if "GOOSENECK" in t:
-            option_label = "Gooseneck"
-        elif "DRY VAN" in t or "DRYVAN" in t:
-            option_label = "Dry Van"
-        elif "REEFER" in t or "REFRIGERAT" in t:
-            option_label = "Refrigerated"
-        elif "FLATBED" in t or "FLAT BED" in t:
-            option_label = "Flatbed"
-        elif "DUMP" in t:
-            option_label = "Dump"
-        elif "TANK" in t:
-            option_label = "Tank"
-        elif "LOWBOY" in t or "LOW BOY" in t:
-            option_label = "Lowboy"
-        elif "CAR HAULER" in t or "CARHAULER" in t:
-            option_label = "Car Hauler"
+    async def _set_make(self, make: Optional[str]) -> None:
+        """Set the Make combobox — unless the VIN already auto-decoded it.
 
-        await self._set_combobox_by_label("Trailer Type", option_label)
+        Make is tolerant: if the Blue-Quote make string doesn't match a combo
+        option we log a warning and continue rather than HALT mid-form, so the
+        Continue-step validation surfaces a single screenshot of the real
+        required-field state (and the real Make options) for the next pass.
+        """
+        combo = await self.find_combo("Make")
+        if await combo.count() == 0:
+            self._log_skipped("make", "combo not present (VIN may have decoded it)")
+            return
+        current = await self._combo_current_value(combo)
+        if current:
+            print(f"    [Progressive] Trailer Make already set: {current!r}")
+            return
+        if not make:
+            self._log_skipped("make", "no value and combo empty")
+            return
+        try:
+            await self.safe_select_combo(combo, make)
+            print(f"    [Progressive] Trailer Make = {make!r}")
+        except Exception as e:
+            print(f"    [Progressive] WARN: Trailer Make {make!r} not matched: {e}")
+            self.warnings.append(f"add_trailer: make {make!r} not matched in combo")
 
     async def _set_zip(self, zip_code: str) -> None:
         """ZIP textbox helper. Same shape as AddVehicle.
