@@ -126,13 +126,17 @@ class BlueQuotePDFExtractor:
             print("⚠️  No form fields found - attempting text extraction fallback")
             return self._extract_text_fallback()
         
-        # Process type values for vehicles
+        # Process type values: data_map['0'] holds the Type of the FIRST power
+        # row and the FIRST trailer row (their widgets are unnamed); all other
+        # rows carry Type per-row (see _resolve_row_type).
         type_vals = self.data_map.get('0', [])
         if not isinstance(type_vals, list):
             type_vals = [type_vals] if type_vals else []
         self.type_vals = type_vals
-        type_idx = 0
-        
+
+        vehicles_list = self._extract_vehicles(type_vals)
+        trailers_list = self._extract_trailers(type_vals, len(vehicles_list))
+
         # Extract data
         extracted = {
             "document_type": "Commercial Auto Quote Sheet",
@@ -144,12 +148,12 @@ class BlueQuotePDFExtractor:
             "applicant_info": self._extract_applicant_info(),
             "driver_information": self._extract_drivers(),
             "vehicles": {
-                "tractors_trucks_pickup": self._extract_vehicles(type_vals),
-                "trailers": self._extract_trailers(type_vals, len(self._extract_vehicles(type_vals)))
+                "tractors_trucks_pickup": vehicles_list,
+                "trailers": trailers_list
             },
             "coverages": self._extract_coverages()
         }
-        
+
         return extracted
 
     def _extract_text_fallback(self) -> Dict:
@@ -244,74 +248,87 @@ class BlueQuotePDFExtractor:
         
         return drivers
     
+    def _resolve_row_type(self, base_id: int, type_vals: List, *, section: str) -> str:
+        """Resolve a vehicle/trailer row's Type.
+
+        Each row stores its Type in the field right after the VIN (base+3). The
+        FIRST row of each section is the exception: its Type widget is unnamed,
+        so pdfplumber collects it under the shared key '0' as a 2-item list
+        [first_power_type, first_trailer_type]. We therefore prefer the per-row
+        field and fall back to the section's '0' slot only for the first row
+        that lacks one. (The old code read EVERY type positionally from '0',
+        which mis-aligned any quote with more than one power unit or trailer.)
+        """
+        per_row = self._get_val(self.data_map, str(base_id + 3))
+        if per_row and str(per_row).strip():
+            return str(per_row).strip()
+
+        slot = 0 if section == "power" else 1
+        used_attr = "_power_zero_used" if section == "power" else "_trailer_zero_used"
+        if not getattr(self, used_attr, False):
+            setattr(self, used_attr, True)
+            if slot < len(type_vals):
+                cand = type_vals[slot]
+                if cand and str(cand).strip():
+                    return str(cand).strip()
+        return "Unknown"
+
     def _extract_vehicles(self, type_vals: List) -> List[Dict]:
         """Extract tractor/truck information."""
         vehicles = []
         base_vehicle_id = 74
-        type_idx = 0
-        
+        self._power_zero_used = False
+
         while True:
             year_id = str(base_vehicle_id)
             if year_id not in self.data_map or not self._get_val(self.data_map, year_id):
                 break
-            
-            veh_type = "Unknown"
-            if type_idx < len(type_vals):
-                veh_type = type_vals[type_idx]
-                type_idx += 1
-            
+
             vehicle = {
                 "year": self._get_val(self.data_map, str(base_vehicle_id)),
                 "make": self._get_val(self.data_map, str(base_vehicle_id + 1)),
                 "vin": self._get_val(self.data_map, str(base_vehicle_id + 2)),
-                "type": veh_type,
+                "type": self._resolve_row_type(base_vehicle_id, type_vals, section="power"),
                 "gvw": self._get_val(self.data_map, str(base_vehicle_id + 4)),
                 "value": self._get_val(self.data_map, str(base_vehicle_id + 5))
             }
             vehicles.append(vehicle)
             base_vehicle_id += 6
-        
-        # Store type_idx for trailers
-        self._vehicle_type_idx = type_idx
+
         return vehicles
-    
+
     def _extract_trailers(self, type_vals: List, vehicle_count: int) -> List[Dict]:
         """Extract trailer information."""
         trailers = []
         base_trailer_id = 104
-        type_idx = getattr(self, '_vehicle_type_idx', vehicle_count)
-        
+        self._trailer_zero_used = False
+
         while True:
             vin_id = str(base_trailer_id + 2)
             if str(base_trailer_id) not in self.data_map and vin_id not in self.data_map:
                 break
-            
+
             has_data = (self._get_val(self.data_map, str(base_trailer_id)) or
                        self._get_val(self.data_map, str(base_trailer_id + 1)) or
                        self._get_val(self.data_map, str(base_trailer_id + 2)))
-            
+
             if not has_data:
                 break
-            
-            trailer_type = "Unknown"
-            if type_idx < len(type_vals):
-                trailer_type = type_vals[type_idx]
-                type_idx += 1
-            
+
             trailer = {
                 "year": self._get_val(self.data_map, str(base_trailer_id)),
                 "make": self._get_val(self.data_map, str(base_trailer_id + 1)),
                 "vin": self._get_val(self.data_map, str(base_trailer_id + 2)),
-                "type": trailer_type,
+                "type": self._resolve_row_type(base_trailer_id, type_vals, section="trailer"),
                 "gvw": self._get_val(self.data_map, str(base_trailer_id + 4)),
                 "value": self._get_val(self.data_map, str(base_trailer_id + 5))
             }
-            
+
             if trailer["vin"] or trailer["make"] or trailer["year"]:
                 trailers.append(trailer)
-            
+
             base_trailer_id += 6
-        
+
         return trailers
     
     def _extract_coverages(self) -> Dict:
