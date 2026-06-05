@@ -146,6 +146,13 @@ class AddTrailerPage(BasePage):
           - trailer.value None   → Comp/Coll = No (liability-only)
         """
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
+        # The AddTrailer ExtJS form builds its fields after navigation; let it
+        # settle so VIN/Year/Make are present before we touch them (a one-shot
+        # selector check raced and intermittently missed the VIN field).
+        try:
+            await self.wait_for_extjs_idle(timeout_ms=8_000)
+        except Exception:
+            pass
 
         # Trailer Type is already chosen on the preceding tile picker
         # (MostCommonTrailersPage.select_trailer_type); it shows here read-only
@@ -213,7 +220,7 @@ class AddTrailerPage(BasePage):
         # 8. Continue
         await self._click_continue()
 
-    # ---- VIN / YMM entry helpers ----
+    # ---- VIN entry helper ----
 
     async def _fill_by_vin(self, vin: str) -> None:
         """Enter the trailer VIN.
@@ -225,15 +232,32 @@ class AddTrailerPage(BasePage):
         _set_make if the decode did not populate them.
         """
         print(f"    [Progressive] Adding trailer by VIN: {vin}")
-        vin_box = self.page.get_by_role("textbox", name="VIN", exact=True)
-        if await vin_box.count() == 0:
+        # The trailer VIN field carries NO aria-label/placeholder; its accessible
+        # name comes from aria-labelledby and reads "VIN Optional" (confirmed via
+        # DIAG), so an exact "VIN" match misses. Use a partial accessible-name
+        # match, then the ExtJS VIN validation type ('alphanumericPre1981', a
+        # stable per-field-type marker on the name attribute).
+        #
+        # Crucially we WAIT for the field to render rather than a one-shot count
+        # check: the AddTrailer form builds asynchronously and a count==0 race
+        # used to fall through to the wrong selector and time out intermittently.
+        vin_box = None
+        for loc in (
+            self.page.get_by_role("textbox", name="VIN"),
+            self.page.locator('input[name*="alphanumericPre1981"]'),
+        ):
+            try:
+                await loc.first.wait_for(state="visible", timeout=8_000)
+                vin_box = loc
+                break
+            except Exception:
+                continue
+        if vin_box is None:
             vin_box = await self.find_by_label_text("VIN")
-        if await vin_box.count() == 0:
-            # Last resort: the powered-vehicle accessible name, just in case a
-            # future trailer variant reuses it.
-            vin_box = self.page.get_by_role(
-                "textbox", name="Vehicle Identification Number (VIN)"
-            )
+            if await vin_box.count() == 0:
+                vin_box = self.page.get_by_role(
+                    "textbox", name="Vehicle Identification Number (VIN)"
+                )
         # verify=False because ExtJS may format VIN mid-stream (uppercase/mask)
         await self.safe_fill(vin_box.first, vin, verify=False)
         await self.blur_active_element()
@@ -265,12 +289,15 @@ class AddTrailerPage(BasePage):
         print(f"    [Progressive] Trailer Year = {year}")
 
     async def _set_make(self, make: Optional[str]) -> None:
-        """Set the Make combobox — unless the VIN already auto-decoded it.
+        """Set the (required) Make combobox — unless the VIN already decoded it.
 
-        Make is tolerant: if the Blue-Quote make string doesn't match a combo
-        option we log a warning and continue rather than HALT mid-form, so the
-        Continue-step validation surfaces a single screenshot of the real
-        required-field state (and the real Make options) for the next pass.
+        Blue-Quote make strings are abbreviated/noisy (e.g. 'BIGT 16G' for a
+        Big Tex 16GN gooseneck), so a direct combo match usually misses. We then
+        fall back to a typeahead-filtered match: type the make's leading letters
+        to filter the (very long) manufacturer list, enumerate the filtered
+        options, and select ONLY on a confident prefix match — never an
+        arbitrary first option. If nothing confident matches we leave it empty
+        and let the Continue-step validation surface the real options.
         """
         combo = await self.find_combo("Make")
         if await combo.count() == 0:
@@ -283,12 +310,66 @@ class AddTrailerPage(BasePage):
         if not make:
             self._log_skipped("make", "no value and combo empty")
             return
+        # 1) Direct tolerant match (exact/partial via safe_select_combo).
         try:
             await self.safe_select_combo(combo, make)
             print(f"    [Progressive] Trailer Make = {make!r}")
+            return
+        except Exception:
+            pass
+        # 2) Typeahead-filtered confident match.
+        matched = await self._select_make_by_prefix(combo, make)
+        if matched:
+            print(f"    [Progressive] Trailer Make = {matched!r} (typeahead from {make!r})")
+            return
+        print(f"    [Progressive] WARN: Trailer Make {make!r} not matched in combo")
+        self.warnings.append(f"add_trailer: make {make!r} not matched in combo")
+
+    async def _select_make_by_prefix(self, combo, make: str) -> Optional[str]:
+        """Filter the Make list by typing the make's leading letters, then pick
+        the option whose compacted text begins with the make's first token.
+        Returns the chosen option label, or None if nothing confident matched."""
+        import re
+        tokens = re.findall(r"[A-Za-z]+", make.upper())
+        if not tokens:
+            return None
+        first = tokens[0]                    # e.g. "BIGT"
+        prefix = first[:3]                   # e.g. "BIG" — broad enough to filter
+        try:
+            await combo.first.click(timeout=5_000)
+            await self.page.wait_for_timeout(300)
+            await self.page.keyboard.type(prefix, delay=40)
+            await self.page.wait_for_timeout(800)
+            raw = await self.page.get_by_role("option").all_inner_texts()
+            opts = [o.strip() for o in raw if o.strip()]
+            print(f"    [DIAG] Make options for prefix {prefix!r} "
+                  f"({len(opts)}): {opts[:40]}")
+
+            def compact(s: str) -> str:
+                return re.sub(r"[^A-Z0-9]", "", s.upper())
+
+            cf = compact(first)
+            best = None
+            for o in opts:
+                co = compact(o)
+                if co.startswith(cf) or cf.startswith(co):
+                    best = o
+                    break
+            if best is None:
+                # second chance: option contains the whole first token
+                for o in opts:
+                    if cf in compact(o):
+                        best = o
+                        break
+            if best is not None:
+                await self.page.get_by_role(
+                    "option", name=best, exact=True
+                ).first.click(timeout=5_000)
+                await self.page.wait_for_timeout(500)
+                return best
         except Exception as e:
-            print(f"    [Progressive] WARN: Trailer Make {make!r} not matched: {e}")
-            self.warnings.append(f"add_trailer: make {make!r} not matched in combo")
+            print(f"    [DIAG] make prefix select failed: {e}")
+        return None
 
     async def _set_zip(self, zip_code: str) -> None:
         """ZIP textbox helper. Same shape as AddVehicle.
