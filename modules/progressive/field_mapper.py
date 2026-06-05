@@ -14,7 +14,7 @@ from modules.quote_profile import (
     DriverProfile,
     CoveragesProfile,
 )
-from modules.progressive.unit_matching import NON_OWNED_MARKERS
+from modules.progressive.unit_matching import NON_OWNED_MARKERS, looks_non_owned
 
 
 @dataclass
@@ -133,10 +133,10 @@ def _is_non_owned(
     non-owned — that's just an extraction gap, not a non-ownership signal.
     """
     vin_clean = (vin or "").strip().upper()
-    if vin_clean and vin_clean in NON_OWNED_MARKERS:
+    if vin_clean and (vin_clean in NON_OWNED_MARKERS or looks_non_owned(vin_clean)):
         return True
     for s in (make, model):
-        if s and "NON OWNED" in s.upper():
+        if s and looks_non_owned(s):
             return True
     return False
 

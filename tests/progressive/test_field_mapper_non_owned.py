@@ -62,6 +62,22 @@ def test_no_non_owned_means_no_coverage_bump():
     assert fields.coverages.non_owned_trailer_phys_damage_limit is None
 
 
+def test_non_owner_spelling_variant_is_non_owned():
+    """Live (SHALOM WAY): the Blue Quote VIN field read 'NON OWNER' — a spelling
+    variant of NON OWNED. It must route to non-owned coverage, not be treated as
+    a real trailer to add (which would fail with no VIN/make)."""
+    profile = _profile_with([
+        VehicleProfile(vin="1FUJGLDR8LSLT1234", year=2020, make="KW",
+                       model="T680", is_trailer=False),
+        VehicleProfile(vin="NON OWNER", year=2026, make=None,
+                       model=None, is_trailer=True),
+    ])
+    fields = map_profile_to_fields(profile, effective_date="06/15/2026")
+    assert len(fields.vehicles) == 1
+    assert fields.vehicles[0].vin == "1FUJGLDR8LSLT1234"
+    assert fields.coverages.non_owned_trailer_phys_damage_limit == "$25,000"
+
+
 def test_non_owned_via_make_field():
     """Some PDFs put 'NON OWNED' in make/model instead of VIN."""
     profile = _profile_with([

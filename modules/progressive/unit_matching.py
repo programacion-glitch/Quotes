@@ -16,6 +16,17 @@ from typing import Optional
 # but listing it here makes the intent visible alongside the named markers.
 NON_OWNED_MARKERS = frozenset({"NON OWNED", "NONOWNED", "NON-OWNED", "N/A", ""})
 
+
+def looks_non_owned(text: Optional[str]) -> bool:
+    """True if `text` is a non-owned-trailer marker, tolerant of the spelling
+    variants Blue Quote fillers actually use: NON OWNED / NON OWNER /
+    NON-OWNED / NONOWNED / NON OWN. Punctuation and spacing are ignored, so a
+    single 'NONOWN' core matches them all. (Live: SHALOM WAY wrote 'NON OWNER'.)
+    """
+    compact = re.sub(r"[^A-Z0-9]", "", (text or "").upper())
+    return "NONOWN" in compact
+
+
 # Standard VIN: 17 characters from A-Z (excluding I, O, Q) and 0-9.
 _VIN_PATTERN = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
 
