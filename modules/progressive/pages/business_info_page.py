@@ -14,7 +14,10 @@ from modules.progressive.field_mapper import MappedFields
 from modules.progressive.choice_resolver import resolve_choice, Resolution
 from modules.progressive.mappings import map_commodity
 from modules.progressive.catalogs import load_catalog
-from modules.progressive.pages._exceptions import UnmappableValueError
+from modules.progressive.pages._exceptions import (
+    UnmappableValueError,
+    FieldNotFoundError,
+)
 
 
 
@@ -481,6 +484,14 @@ class BusinessInfoPage(BasePage):
         commodity to a subtype; HALT if present-but-unmatched (was: silently click
         the first non-empty option). 'General Freight / Other' is used only as the
         generic catch-all (commodity absent or generic)."""
+        # The "Type of Trucker" subtype combo is revealed (asynchronously, by
+        # ExtJS) ONLY when the business type resolved to the generic "Trucker".
+        # For that case it is a REQUIRED field, so we must wait for it to render
+        # and fail loud if it never does — never silently skip (a 1.5s probe used
+        # to return early under live latency, leaving the field unanswered and
+        # tripping "Type of Trucker: This field is required" at Continue).
+        is_trucker = self.resolve_business_type(commodity).value == "Trucker"
+
         # Give ExtJS time to render the conditional after Trucker is committed.
         try:
             await self.wait_for_extjs_idle(timeout_ms=4_000)
@@ -490,7 +501,21 @@ class BusinessInfoPage(BasePage):
         await self.page.wait_for_timeout(500)
 
         combo = await self.find_combo("Type of Trucker")
-        if not await self.field_exists(combo, wait_ms=1_500):
+        # Required-field case (Trucker) polls generously; conditional case
+        # (non-Trucker business type) keeps the short probe-and-skip.
+        reveal_wait_ms = 12_000 if is_trucker else 1_500
+        if not await self.field_exists(combo, wait_ms=reveal_wait_ms):
+            if is_trucker:
+                screenshot = await self.screenshot("type_of_trucker_missing")
+                raise FieldNotFoundError(
+                    "Business type resolved to 'Trucker' but the required "
+                    "'Type of Trucker' combobox never rendered within "
+                    f"{reveal_wait_ms}ms.",
+                    primitive="find_combo",
+                    field="Type of Trucker",
+                    attempts=1,
+                    screenshot_path=screenshot,
+                )
             return  # Not revealed when business type is not Trucker
 
         await combo.click(timeout=5_000)
