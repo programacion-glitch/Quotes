@@ -500,6 +500,28 @@ class AddVehiclePage(BasePage):
         screenshot = await self.screenshot("gvw_unmapped")
         return resolve_gvw(gvw_raw, options, screenshot_path=screenshot)
 
+    async def _set_gvw(self, gvw_raw) -> None:
+        """Set the GVW — but only when an editable combo is actually present.
+
+        For many VINs Progressive auto-decodes the gross vehicle weight and
+        renders it as static read-only text (e.g. a 2024 RAM 2500 shows
+        '6,001 to 10,000' with no dropdown). In that case the displayed value
+        is authoritative and there is nothing to select — resolving the raw
+        Blue-Quote value against the (partial) seeded catalog would only
+        produce a false HALT. Treat an absent combo as already-resolved and
+        skip it, exactly like every other CONDITIONAL field.
+        """
+        combo = await self.find_combo("What is the gross vehicle weight?")
+        if await combo.count() == 0:
+            self._log_skipped(
+                "gross vehicle weight",
+                "auto-decoded from VIN (static text) — nothing to select",
+            )
+            return
+        gvw_label = await self.resolve_gvw_label(gvw_raw)
+        await self.safe_select_combo(combo, gvw_label)
+        print(f"    [Progressive] GVW: {gvw_raw!r} -> {gvw_label!r}")
+
     async def fill_from_mapped(self, vehicle: MappedVehicle) -> None:
         """Fill the AddVehicle form from a MappedVehicle and click Continue."""
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
@@ -519,12 +541,9 @@ class AddVehiclePage(BasePage):
         # Farthest distance — convert simple miles to Progressive's option label
         await self._set_distance(vehicle.radius_miles)
 
-        # GVW — resolve the raw value to a live range bucket, or HALT.
-        gvw_label = await self.resolve_gvw_label(vehicle.gvw)
-        combo = await self.find_combo("What is the gross vehicle weight?")
-        if await combo.count() > 0:
-            await self.safe_select_combo(combo, gvw_label)
-        print(f"    [Progressive] GVW: {vehicle.gvw!r} -> {gvw_label!r}")
+        # GVW — only set when an editable combo exists; VIN-decoded GVW shows
+        # as static text and must be left as-is (see _set_gvw).
+        await self._set_gvw(vehicle.gvw)
 
         # Pickup-only conditional: trailer hitch combobox.
         # Confirmed live 2026-06-04 (JUAREZ Pickup + Gooseneck Trailer): this
