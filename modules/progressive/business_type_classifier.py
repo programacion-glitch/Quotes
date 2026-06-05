@@ -43,21 +43,20 @@ def load_trucking_business_types() -> tuple:
         return tuple()
 
 
-def classify_business_type_ai(
+def ai_pick_from_options(
     commodity: Optional[str],
+    options: List[str],
     *,
     classifier=None,
-    options: Optional[List[str]] = None,
 ) -> Optional[str]:
-    """Map `commodity` to one Progressive Business Type via the AI classifier,
-    restricted to the trucking option subset. Returns the exact Progressive
-    label or None. Defensive: any failure (no config, network, off-list answer)
-    returns None so the caller fail-loud HALTs."""
+    """Map a free-text commodity to exactly ONE of `options` via the project's
+    AI classifier. Generic — used for the Progressive Business Type AND the MTC
+    cargo category/commodity cascading pickers. Returns the chosen option (must
+    be in `options`) or None. Defensive: any failure (no config, network,
+    off-list answer) returns None so the caller can fall back / HALT."""
     text = (commodity or "").strip()
-    if not text:
-        return None
-    opts = list(options) if options is not None else list(load_trucking_business_types())
-    if not opts:
+    opts = [o for o in (options or []) if o and o.strip()]
+    if not text or not opts:
         return None
     if classifier is None:
         # Opt-out switch for offline/test runs (the real classifier hits a
@@ -76,7 +75,21 @@ def classify_business_type_ai(
     except Exception as e:
         print(f"    [Progressive] AI commodity classify failed: {e}")
         return None
-    return result or None
+    if result and result in opts:
+        return result
+    return None
+
+
+def classify_business_type_ai(
+    commodity: Optional[str],
+    *,
+    classifier=None,
+    options: Optional[List[str]] = None,
+) -> Optional[str]:
+    """Map `commodity` to one Progressive Business Type via the AI classifier,
+    restricted to the trucking option subset (or `options` if given)."""
+    opts = list(options) if options is not None else list(load_trucking_business_types())
+    return ai_pick_from_options(commodity, opts, classifier=classifier)
 
 
 def resolve_commodity_to_business_type(

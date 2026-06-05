@@ -5,6 +5,7 @@ from __future__ import annotations
 from modules.progressive.business_type_classifier import (
     resolve_commodity_to_business_type,
     classify_business_type_ai,
+    ai_pick_from_options,
     load_trucking_business_types,
 )
 
@@ -73,6 +74,28 @@ def test_classify_ai_handles_classifier_exception():
     assert classify_business_type_ai(
         "SCRAP METAL", classifier=_Boom(), options=["Scrap Metal/Scrap Auto Hauler"]
     ) is None
+
+
+def test_ai_pick_from_options_generic_for_mtc():
+    """ai_pick_from_options is reused for the MTC cargo category/commodity
+    pickers — map a free-text commodity to one of an arbitrary option list."""
+    cats = ["Food & Beverage", "Metals/ Minerals/ Coal", "Paper/ Plastic/ Glass"]
+    fake = _FakeClassifier(answer="Metals/ Minerals/ Coal")
+    assert ai_pick_from_options("SCRAP METAL 100%", cats, classifier=fake) == "Metals/ Minerals/ Coal"
+    assert fake.calls[0][1] == cats
+
+
+def test_ai_pick_from_options_rejects_off_list_answer():
+    """If the model hallucinates an answer not in the offered list, return None
+    (the caller falls back) — never select something that isn't an option."""
+    fake = _FakeClassifier(answer="Something Not Offered")
+    assert ai_pick_from_options("X", ["A", "B"], classifier=fake) is None
+
+
+def test_ai_pick_from_options_empty_inputs():
+    fake = _FakeClassifier(answer="A")
+    assert ai_pick_from_options("", ["A"], classifier=fake) is None
+    assert ai_pick_from_options("X", [], classifier=fake) is None
 
 
 def test_trucking_subset_catalog_loads_and_has_scrap_metal():

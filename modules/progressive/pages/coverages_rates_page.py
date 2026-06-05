@@ -52,6 +52,11 @@ class CoveragesRatesPage(BasePage):
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         await self.remove_overlays()
 
+        # Stash the Blue-Quote commodity so the MTC cargo picker can classify it
+        # (free text -> Progressive's cargo Type/Commodity lists) via the AI
+        # classifier, instead of guessing from a hardcoded preference order.
+        self._commodity = fields.commodity
+
         coverages = fields.coverages
 
         # ---- Per-policy coverages (apply to all vehicles) ----
@@ -744,7 +749,8 @@ class CoveragesRatesPage(BasePage):
             "General", "Other",
         ]
         chosen_category = await self._pick_first_combo_option(
-            category_input, category_preferences, label="Commodity Type"
+            category_input, category_preferences, label="Commodity Type",
+            commodity=getattr(self, "_commodity", None),
         )
         if not chosen_category:
             print("    [Progressive] WARN: no matching commodity category found; canceling row")
@@ -777,7 +783,8 @@ class CoveragesRatesPage(BasePage):
             "General", "Other", "Misc",
         ]
         chosen_commodity = await self._pick_first_combo_option(
-            commodity_input, commodity_preferences, label="Commodity"
+            commodity_input, commodity_preferences, label="Commodity",
+            commodity=getattr(self, "_commodity", None),
         )
         if not chosen_commodity:
             # Last resort: pick whatever the first option is (we already
@@ -800,11 +807,33 @@ class CoveragesRatesPage(BasePage):
         await self.page.wait_for_timeout(800)
         print(f"    [Progressive] MTC commodity row committed: {chosen_category!r} / {chosen_commodity!r}")
 
+    async def _click_boundlist_option(self, opt_text: str, *, label: str) -> bool:
+        """Click an ExtJS x-boundlist option by its exact text. Returns success."""
+        try:
+            opt = self.page.get_by_role("option", name=opt_text, exact=True).first
+            if not await self.field_exists(opt, wait_ms=500):
+                opt = self.page.locator(
+                    f"li.x-boundlist-item:has-text({opt_text!r})"
+                ).first
+            await opt.click(timeout=3_000)
+            print(f"    [Progressive] {label} selected: {opt_text!r}")
+            return True
+        except Exception as e:
+            print(f"    [Progressive] {label} option click failed for {opt_text!r}: {e}")
+            return False
+
     async def _pick_first_combo_option(
-        self, combo_input, preferences: list, *, label: str
+        self, combo_input, preferences: list, *, label: str,
+        commodity: Optional[str] = None,
     ) -> Optional[str]:
-        """Click an ExtJS combo input, enumerate visible options, click the first
-        one whose name contains a preference keyword. Returns the selected text or None.
+        """Open an ExtJS combo, enumerate visible options, and select one.
+
+        Selection order: (1) AI classification of `commodity` against the real
+        option list (when commodity is provided) — maps free-text cargo like
+        'SCRAP METAL 100%' to 'Metals/ Minerals/ Coal' even with no keyword
+        overlap; (2) the first option matching a `preferences` keyword (the
+        validated fallback, e.g. RYD beverage path). Returns the selected text
+        or None.
         """
         try:
             await combo_input.click(timeout=3_000)
@@ -834,25 +863,20 @@ class CoveragesRatesPage(BasePage):
             visible_options = []
         print(f"    [Progressive] {label} options visible: {visible_options[:30]}")
 
-        # Pick first preference that matches (case-insensitive substring)
+        # (1) AI-first: map the Blue-Quote commodity to the best real option.
+        if commodity and visible_options:
+            from modules.progressive.business_type_classifier import ai_pick_from_options
+            ai_choice = ai_pick_from_options(commodity, visible_options)
+            if ai_choice and await self._click_boundlist_option(ai_choice, label=f"{label} (ai)"):
+                return ai_choice
+
+        # (2) Fallback: first preference keyword that matches (case-insensitive).
         for pref in preferences:
             pref_lower = pref.lower()
             for opt_text in visible_options:
                 if pref_lower in opt_text.lower():
-                    try:
-                        opt = self.page.get_by_role(
-                            "option", name=opt_text, exact=True
-                        ).first
-                        if not await self.field_exists(opt, wait_ms=500):
-                            opt = self.page.locator(
-                                f"li.x-boundlist-item:has-text({opt_text!r})"
-                            ).first
-                        await opt.click(timeout=3_000)
-                        print(f"    [Progressive] {label} selected: {opt_text!r}")
+                    if await self._click_boundlist_option(opt_text, label=label):
                         return opt_text
-                    except Exception as e:
-                        print(f"    [Progressive] {label} option click failed for {opt_text!r}: {e}")
-                        continue
         return None
 
     async def _pick_first_visible_combo_option(
