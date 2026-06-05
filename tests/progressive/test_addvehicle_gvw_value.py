@@ -1,23 +1,39 @@
 import pytest
+from unittest.mock import AsyncMock
 from modules.progressive.pages.vehicles_page import AddVehiclePage
 from modules.progressive.pages._exceptions import UnmappableValueError
 
 
 class _Combo:
-    def __init__(self, count):
+    def __init__(self, count, value=""):
         self._count = count
+        self._value = value
+
+    @property
+    def first(self):
+        return self
 
     async def count(self):
         return self._count
 
+    async def input_value(self):
+        return self._value
 
-def _set_gvw_page(*, combo_count, options):
-    """AddVehiclePage with find_combo + _enumerate_gvw_options stubbed."""
+
+def _set_gvw_page(*, combo_count, options, value=""):
+    """AddVehiclePage with find_combo + _enumerate_gvw_options stubbed.
+
+    `value` is the combo's current input value: non-empty means Progressive
+    already VIN-decoded the GVW (skip); empty means a required selection.
+    """
     page = AddVehiclePage.__new__(AddVehiclePage)
     page.warnings = []
+    page.page = AsyncMock()  # for wait_for_timeout in the enumerate retry
+
+    combo = _Combo(combo_count, value)
 
     async def _find_combo(label):
-        return _Combo(combo_count)
+        return combo
     page.find_combo = _find_combo
 
     async def _enum():
@@ -38,30 +54,29 @@ def _set_gvw_page(*, combo_count, options):
 
 @pytest.mark.asyncio
 async def test_set_gvw_skips_when_combo_absent():
-    """VIN-decoded GVW shows as static read-only text (no combo). Skip — never
-    resolve against a partial catalog, never HALT."""
+    """No combo element → VIN-decoded static text. Skip, never HALT."""
     page, selected = _set_gvw_page(combo_count=0, options=[])
-    await page._set_gvw("9,000 lbs")  # must not raise
+    await page._set_gvw("9,000 lbs")
     assert "label" not in selected
     assert any("gross vehicle weight" in w for w in page.warnings)
 
 
 @pytest.mark.asyncio
-async def test_set_gvw_skips_when_combo_present_but_no_live_options():
-    """Regression: a combo element present but exposing NO selectable options
-    is the VIN-decoded static display in a transient state. It must SKIP — not
-    fall back to the partial seeded catalog and FALSE-HALT a light pickup."""
-    page, selected = _set_gvw_page(combo_count=1, options=[])
-    await page._set_gvw("9,000 lbs")  # must not raise (this was the live bug)
+async def test_set_gvw_skips_when_combo_already_has_value():
+    """A VIN-decoded pickup shows its GVW as the combo value ('6,001 to
+    10,000') — leave it. The reliable discriminator is the value, not whether
+    options enumerate (which races)."""
+    page, selected = _set_gvw_page(combo_count=1, options=[], value="6,001 to 10,000")
+    await page._set_gvw("9,000 lbs")  # must not raise, must not select
     assert "label" not in selected
-    assert any("no live options" in w for w in page.warnings)
+    assert any("already set" in w for w in page.warnings)
 
 
 @pytest.mark.asyncio
-async def test_set_gvw_selects_when_combo_present_with_options():
-    """Genuine interactive combo with real options → bucket + select."""
+async def test_set_gvw_selects_when_empty_with_options():
+    """Empty combo (e.g. dump truck) with real options → bucket + select."""
     page, selected = _set_gvw_page(
-        combo_count=1,
+        combo_count=1, value="",
         options=["10,000 lbs or less", "10,001 - 26,000 lbs", "26,001 lbs or greater"],
     )
     await page._set_gvw("51.000 LBS")
@@ -69,9 +84,20 @@ async def test_set_gvw_selects_when_combo_present_with_options():
 
 
 @pytest.mark.asyncio
+async def test_set_gvw_empty_no_options_falls_back_to_catalog():
+    """Regression (REPUBLIC dump truck): an EMPTY required combo whose dropdown
+    won't enumerate must NOT be skipped — fall back to the seeded gvw catalog
+    (heavy ranges) so 51,000 lbs still resolves to '45,001 or more' and the
+    page can Continue."""
+    page, selected = _set_gvw_page(combo_count=1, value="", options=[])
+    await page._set_gvw("51.000 LBS")
+    assert selected["label"] == "45,001 or more"
+
+
+@pytest.mark.asyncio
 async def test_set_gvw_halts_when_real_options_dont_fit():
-    """Fail-loud preserved: when live options are real but the value fits none
-    of them (and no default matches), HALT instead of guessing."""
-    page, _ = _set_gvw_page(combo_count=1, options=["33,001 to 45,000", "45,001 or more"])
+    """Fail-loud preserved: empty combo, real options that fit neither the
+    value nor the default → HALT instead of guessing."""
+    page, _ = _set_gvw_page(combo_count=1, value="", options=["10,000 lbs or less"])
     with pytest.raises(UnmappableValueError):
-        await page._set_gvw("9,000 lbs")
+        await page._set_gvw("51.000 LBS")

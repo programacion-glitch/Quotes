@@ -492,24 +492,21 @@ class AddVehiclePage(BasePage):
             return []
 
     async def _set_gvw(self, gvw_raw) -> None:
-        """Set the GVW — but only when a genuinely interactive combo with real
-        options is present.
+        """Set the GVW only when the combo is present AND empty.
 
-        For many VINs Progressive auto-decodes the gross vehicle weight and
-        renders it as static read-only text (e.g. a 2024 RAM 2500 shows
-        '6,001 to 10,000'). Two non-actionable shapes occur, sometimes for the
-        same VIN depending on render timing:
+        The reliable discriminator is the combo's CURRENT VALUE, not whether it
+        enumerates options (which races):
 
-          1. No combo element at all (count == 0) — clearly static text.
-          2. A combo element is present but exposes NO selectable options when
-             opened — the decoded static display in a transient render state,
-             not a real dropdown.
+          1. No combo element (count == 0) — VIN-decoded static text, skip.
+          2. Combo present with a value already (e.g. a 2024 RAM 2500 shows
+             '6,001 to 10,000') — auto-decoded from the VIN, leave it, skip.
+          3. Combo present and EMPTY (e.g. a dump truck) — a REQUIRED selection.
+             Enumerate options (with a retry so a slow dropdown render doesn't
+             make us skip a required field); fall back to the seeded gvw catalog
+             only here, where the vehicle is genuinely awaiting a weight bucket.
 
-        In BOTH cases the value shown on the page is authoritative and we leave
-        it untouched. We bucket + select ONLY when live enumeration returns real
-        options. Crucially we never fall back to the seeded gvw catalog here: it
-        is intentionally PARTIAL (heavy ranges only), so resolving a light
-        9,000-lb pickup against it produced an intermittent FALSE HALT.
+        (Deciding skip from 'enumeration returned []' was wrong: it skipped the
+        required GVW on dump trucks when the dropdown raced, blocking Continue.)
         """
         combo = await self.find_combo("What is the gross vehicle weight?")
         if await combo.count() == 0:
@@ -518,13 +515,24 @@ class AddVehiclePage(BasePage):
                 "auto-decoded from VIN (static text) — nothing to select",
             )
             return
-        options = await self._enumerate_gvw_options()
-        if not options:
+        try:
+            current = (await combo.first.input_value() or "").strip()
+        except Exception:
+            current = ""
+        if current:
             self._log_skipped(
                 "gross vehicle weight",
-                "combo present but no live options — VIN-decoded value stands",
+                f"already set by VIN decode ({current!r}) — leaving as-is",
             )
             return
+        # Empty combo -> required. Enumerate with one retry for a slow render.
+        options = await self._enumerate_gvw_options()
+        if not options:
+            await self.page.wait_for_timeout(700)
+            options = await self._enumerate_gvw_options()
+        if not options:
+            from modules.progressive.catalogs import load_catalog
+            options = list(load_catalog("gvw").options)
         screenshot = await self.screenshot("gvw_unmapped")
         gvw_label = resolve_gvw(gvw_raw, options, screenshot_path=screenshot)
         await self.safe_select_combo(combo, gvw_label)
