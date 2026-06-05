@@ -491,25 +491,25 @@ class AddVehiclePage(BasePage):
         except Exception:
             return []
 
-    async def resolve_gvw_label(self, gvw_raw) -> str:
-        """Resolve the raw Blue-Quote GVW to a live combo option (or HALT)."""
-        options = await self._enumerate_gvw_options()
-        if not options:
-            from modules.progressive.catalogs import load_catalog
-            options = list(load_catalog("gvw").options)
-        screenshot = await self.screenshot("gvw_unmapped")
-        return resolve_gvw(gvw_raw, options, screenshot_path=screenshot)
-
     async def _set_gvw(self, gvw_raw) -> None:
-        """Set the GVW — but only when an editable combo is actually present.
+        """Set the GVW — but only when a genuinely interactive combo with real
+        options is present.
 
         For many VINs Progressive auto-decodes the gross vehicle weight and
         renders it as static read-only text (e.g. a 2024 RAM 2500 shows
-        '6,001 to 10,000' with no dropdown). In that case the displayed value
-        is authoritative and there is nothing to select — resolving the raw
-        Blue-Quote value against the (partial) seeded catalog would only
-        produce a false HALT. Treat an absent combo as already-resolved and
-        skip it, exactly like every other CONDITIONAL field.
+        '6,001 to 10,000'). Two non-actionable shapes occur, sometimes for the
+        same VIN depending on render timing:
+
+          1. No combo element at all (count == 0) — clearly static text.
+          2. A combo element is present but exposes NO selectable options when
+             opened — the decoded static display in a transient render state,
+             not a real dropdown.
+
+        In BOTH cases the value shown on the page is authoritative and we leave
+        it untouched. We bucket + select ONLY when live enumeration returns real
+        options. Crucially we never fall back to the seeded gvw catalog here: it
+        is intentionally PARTIAL (heavy ranges only), so resolving a light
+        9,000-lb pickup against it produced an intermittent FALSE HALT.
         """
         combo = await self.find_combo("What is the gross vehicle weight?")
         if await combo.count() == 0:
@@ -518,7 +518,15 @@ class AddVehiclePage(BasePage):
                 "auto-decoded from VIN (static text) — nothing to select",
             )
             return
-        gvw_label = await self.resolve_gvw_label(gvw_raw)
+        options = await self._enumerate_gvw_options()
+        if not options:
+            self._log_skipped(
+                "gross vehicle weight",
+                "combo present but no live options — VIN-decoded value stands",
+            )
+            return
+        screenshot = await self.screenshot("gvw_unmapped")
+        gvw_label = resolve_gvw(gvw_raw, options, screenshot_path=screenshot)
         await self.safe_select_combo(combo, gvw_label)
         print(f"    [Progressive] GVW: {gvw_raw!r} -> {gvw_label!r}")
 
