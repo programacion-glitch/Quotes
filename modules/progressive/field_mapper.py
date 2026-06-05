@@ -272,7 +272,9 @@ def map_profile_to_fields(
         )
 
     return MappedFields(
-        usdot=profile.applicant.usdot or None,
+        # Strip: a trailing space ('4518340 ') makes Progressive reject the
+        # lookup as "not a valid USDOT number". Defensive across extraction paths.
+        usdot=(profile.applicant.usdot or "").strip() or None,
         business_name=biz_name or None,
         effective_date=effective_date,
         entity_type=entity,

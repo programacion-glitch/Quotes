@@ -129,6 +129,21 @@ def test_empty_string_vin_with_normal_make_is_not_non_owned():
     assert fields.coverages.non_owned_trailer_phys_damage_limit is None
 
 
+def test_usdot_trailing_space_is_stripped():
+    """Live (SHALOM WAY): usdot extracted as '4518340 ' (trailing space) made
+    Progressive reject the lookup as 'not a valid USDOT number'. It must be
+    stripped before use."""
+    profile = QuoteProfile(
+        applicant=ApplicantProfile(business_name="X", owner_name="O", usdot="4518340 "),
+        units=UnitsProfile(count=1, vehicles=[
+            VehicleProfile(vin="1ABCDEFGHJKLMNPRS", year=2024, make="KW", model="T680", is_trailer=False),
+        ]),
+        coverages_detail=CoveragesProfile(),
+    )
+    fields = map_profile_to_fields(profile, effective_date="06/15/2026")
+    assert fields.usdot == "4518340"
+
+
 def test_missing_commodity_with_usdot_defaults_to_trucker():
     """A PDF that omits commodity but provides a USDOT must default to
     'Trucker' so Progressive's required Business Type combobox is filled."""

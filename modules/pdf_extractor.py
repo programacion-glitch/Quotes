@@ -88,7 +88,13 @@ class BlueQuotePDFExtractor:
                     break
         
         if isinstance(val, list):
-            return val[0] if val else None
+            val = val[0] if val else None
+        # Strip surrounding whitespace from form-field values: Blue Quote PDFs
+        # routinely pad cells (e.g. usdot '4518340 ', make ' FREIGHTLINER ').
+        # A trailing space breaks format-sensitive lookups (USDOT) and muddies
+        # matching. A whitespace-only value becomes '' (treated as absent).
+        if isinstance(val, str):
+            val = val.strip()
         return val
     
     @staticmethod
