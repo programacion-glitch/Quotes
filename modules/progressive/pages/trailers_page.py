@@ -376,25 +376,62 @@ class AddTrailerPage(BasePage):
         print(f"    [Progressive] WARN: Trailer Make {make!r} (->{resolved!r}) not matched in combo")
         self.warnings.append(f"add_trailer: make {make!r} not matched in combo")
 
+    async def _enumerate_combo_options(self) -> list:
+        """Read the visible ExtJS dropdown option labels (boundlist first, then
+        role=option as a fallback)."""
+        try:
+            opts = await self.page.evaluate(
+                """() => {
+                    const out = [];
+                    document.querySelectorAll('li.x-boundlist-item').forEach(el => {
+                        if (el.offsetParent !== null) {
+                            const t = (el.innerText || '').trim();
+                            if (t) out.push(t);
+                        }
+                    });
+                    return out;
+                }"""
+            )
+        except Exception:
+            opts = []
+        if not opts:
+            try:
+                raw = await self.page.get_by_role("option").all_inner_texts()
+                opts = [o.strip() for o in raw if o.strip()]
+            except Exception:
+                opts = []
+        return [" ".join(o.split()) for o in opts if o.strip()]
+
     async def _select_make_by_prefix(self, combo, make: str) -> Optional[str]:
         """Filter the Make list by typing the make's leading letters, then pick
-        the option whose compacted text begins with the make's first token.
-        Returns the chosen option label, or None if nothing confident matched."""
+        the best option (prefix match, else AI over the filtered list). A prior
+        failed direct attempt can leave the dropdown open, so we close + reopen +
+        clear before typing (typing into a toggled-closed combo returned 0
+        options for 'HEIL')."""
         import re
         tokens = re.findall(r"[A-Za-z]+", make.upper())
         if not tokens:
             return None
-        first = tokens[0]                    # e.g. "BIGT"
-        prefix = first[:3]                   # e.g. "BIG" — broad enough to filter
+        first = tokens[0]                    # e.g. "HEIL"
+        prefix = first[:3]                   # e.g. "HEI"
         try:
+            # Clean state: close any open dropdown, focus fresh, clear residual.
+            await self.blur_active_element()
+            await self.page.wait_for_timeout(200)
             await combo.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(300)
-            await self.page.keyboard.type(prefix, delay=40)
-            await self.page.wait_for_timeout(800)
-            raw = await self.page.get_by_role("option").all_inner_texts()
-            opts = [o.strip() for o in raw if o.strip()]
+            await self.page.wait_for_timeout(250)
+            try:
+                await self.page.keyboard.press("Control+A")
+                await self.page.keyboard.press("Delete")
+            except Exception:
+                pass
+            await self.page.keyboard.type(prefix, delay=60)
+            await self.page.wait_for_timeout(900)
+            opts = await self._enumerate_combo_options()
             print(f"    [DIAG] Make options for prefix {prefix!r} "
                   f"({len(opts)}): {opts[:40]}")
+            if not opts:
+                return None
 
             def compact(s: str) -> str:
                 return re.sub(r"[^A-Z0-9]", "", s.upper())
@@ -407,15 +444,23 @@ class AddTrailerPage(BasePage):
                     best = o
                     break
             if best is None:
-                # second chance: option contains the whole first token
                 for o in opts:
                     if cf in compact(o):
                         best = o
                         break
+            if best is None:
+                # Last resort: let the AI map the abbreviation to one of the
+                # filtered makes (e.g. 'HEIL' -> 'Heil').
+                ai = ai_pick_from_options(make, opts)
+                if ai and ai in opts:
+                    best = ai
             if best is not None:
-                await self.page.get_by_role(
-                    "option", name=best, exact=True
-                ).first.click(timeout=5_000)
+                opt = self.page.get_by_role("option", name=best, exact=True).first
+                if await opt.count() == 0:
+                    opt = self.page.locator(
+                        f"li.x-boundlist-item:has-text({best!r})"
+                    ).first
+                await opt.click(timeout=5_000)
                 await self.page.wait_for_timeout(500)
                 return best
         except Exception as e:
