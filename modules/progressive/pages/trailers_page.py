@@ -373,8 +373,50 @@ class AddTrailerPage(BasePage):
         if matched:
             print(f"    [Progressive] Trailer Make = {matched!r} (typeahead from {make!r})")
             return
+        # 3) The make isn't a listed manufacturer at all (e.g. 'Heil' has no
+        #    option — typing 'HEI' returns 0). Fall back to a generic 'Other'
+        #    make if the combo offers one, so the required field is satisfied.
+        other = await self._select_other_make(combo)
+        if other:
+            print(f"    [Progressive] Trailer Make = {other!r} (no listed make for {make!r})")
+            self.warnings.append(f"add_trailer: make {make!r} not listed; used {other!r}")
+            return
         print(f"    [Progressive] WARN: Trailer Make {make!r} (->{resolved!r}) not matched in combo")
         self.warnings.append(f"add_trailer: make {make!r} not matched in combo")
+
+    async def _select_other_make(self, combo) -> Optional[str]:
+        """Select a generic 'Other'/'Not Listed'/'Misc' option in the Make combo
+        for makes Progressive doesn't list. Returns the chosen label or None."""
+        import re
+        try:
+            await self.blur_active_element()
+            await self.page.wait_for_timeout(200)
+            await combo.first.click(timeout=5_000)
+            await self.page.wait_for_timeout(400)
+            try:
+                await self.page.keyboard.press("Control+A")
+                await self.page.keyboard.press("Delete")
+            except Exception:
+                pass
+            await self.page.keyboard.type("Other", delay=60)
+            await self.page.wait_for_timeout(700)
+            opts = await self._enumerate_combo_options()
+            cand = next(
+                (o for o in opts if re.search(r"other|not listed|misc", o, re.I)),
+                None,
+            )
+            if cand:
+                opt = self.page.get_by_role("option", name=cand, exact=True).first
+                if await opt.count() == 0:
+                    opt = self.page.locator(
+                        f"li.x-boundlist-item:has-text({cand!r})"
+                    ).first
+                await opt.click(timeout=5_000)
+                await self.page.wait_for_timeout(400)
+                return cand
+        except Exception as e:
+            print(f"    [DIAG] other-make select failed: {e}")
+        return None
 
     async def _enumerate_combo_options(self) -> list:
         """Read the visible ExtJS dropdown option labels (boundlist first, then
