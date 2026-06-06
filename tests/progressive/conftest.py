@@ -16,6 +16,9 @@ import pytest
 # test suite so offline runs stay deterministic and fast — tests that exercise
 # the AI branch inject a fake classifier explicitly (which bypasses this guard).
 os.environ.setdefault("PROGRESSIVE_AI_COMMODITY", "0")
+# Disable the learned-mappings Excel cache for the suite (tests that exercise it
+# pass an explicit temp `store`, which bypasses this guard).
+os.environ.setdefault("PROGRESSIVE_LEARNED_CACHE", "0")
 
 
 @pytest.fixture

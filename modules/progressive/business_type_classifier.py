@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from modules.progressive.mappings import map_commodity
+from modules.progressive.learned_mappings import learned_lookup, learned_remember
 
 _SUBSET_PATH = Path(__file__).parent / "catalogs" / "business_types_trucking.json"
 
@@ -107,22 +108,28 @@ def _enrich_commodity(commodity: Optional[str], unit_hints=None) -> str:
 
 
 def resolve_commodity_to_business_type(
-    commodity: Optional[str], *, unit_hints=None, classifier=None
+    commodity: Optional[str], *, unit_hints=None, classifier=None, store=None
 ) -> Tuple[Optional[str], str]:
     """Return (Progressive Business-Type label | None, note).
 
+    Order: keyword table -> learned cache -> AI (remember the result) -> HALT.
     note is one of: 'mapping' (specific table hit), 'generic' (general-freight /
-    Trucker sentinel), 'ai' (AI classifier), 'unmapped' (caller HALTs).
-    `unit_hints` are vehicle/trailer type strings that enrich the AI input.
-    `classifier` is injectable for tests.
+    Trucker sentinel), 'learned' (cache hit — no AI call), 'ai' (AI classifier),
+    'unmapped' (caller HALTs). `unit_hints` enrich the AI input. `classifier`
+    and `store` (cache file) are injectable for tests.
     """
     opt, is_generic = map_commodity(commodity)
     if opt is not None:
         return opt, ("generic" if is_generic else "mapping")
 
+    cached = learned_lookup("business_type", commodity or "", store=store)
+    if cached:
+        return cached, "learned"
+
     enriched = _enrich_commodity(commodity, unit_hints)
     ai_opt = classify_business_type_ai(enriched, classifier=classifier)
     if ai_opt:
+        learned_remember("business_type", commodity or "", ai_opt, store=store)
         return ai_opt, "ai"
 
     return None, "unmapped"
