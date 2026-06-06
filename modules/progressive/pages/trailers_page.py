@@ -25,6 +25,7 @@ from modules.progressive.choice_resolver import resolve_choice, Resolution
 from modules.progressive.field_mapper import MappedVehicle
 from modules.progressive.mappings import TRAILER_TILE_MAP
 from modules.progressive.business_type_classifier import ai_pick_from_options
+from modules.progressive.vehicle_amounts import resolve_vehicle_value
 from modules.progressive.pages._exceptions import UnmappableValueError
 from modules.progressive.pages.base_page import BasePage
 
@@ -61,7 +62,11 @@ class MostCommonTrailersPage(BasePage):
             )
             if not isinstance(result, list):
                 return fallback
-            return [t for t in result if t.lower() not in self._NON_TILE_LABELS]
+            # Collapse internal whitespace: a two-line tile label like
+            # 'Refrigerated\nDry Freight' must read as 'Refrigerated Dry Freight'
+            # so it matches TRAILER_TILE_MAP and the live combo option.
+            norm = [' '.join(t.split()) for t in result]
+            return [t for t in norm if t and t.lower() not in self._NON_TILE_LABELS]
         except Exception:
             return fallback
 
@@ -243,12 +248,16 @@ class AddTrailerPage(BasePage):
             await self.page.wait_for_timeout(800)
 
             if wants_apd:
-                # TODO(Task 10): confirm checkbox + value textbox labels for
-                # trailer form. May be identical to AddVehicle ("Vehicle Value"
-                # + "Vehicle has no equipment") or trailer-specific
-                # ("Trailer Value" + "Trailer has no equipment").
                 await self._tick_no_equipment_checkbox()
-                await self._fill_vehicle_value(default=trailer.value)
+                # Normalize the raw Blue-Quote value (US/latino) before filling,
+                # like AddVehiclePage: '$14.000' is $14,000, not $14 — filling
+                # the raw string makes ExtJS read '$14' (< the $100 floor) and
+                # Progressive rejects the form.
+                screenshot = await self.screenshot("trailer_value")
+                val = resolve_vehicle_value(trailer.value, screenshot_path=screenshot)
+                await self._fill_vehicle_value(
+                    default=str(int(val)) if val else "25000"
+                )
             else:
                 print(
                     "    [Progressive] Trailer APD = No (Blue Quote has no "

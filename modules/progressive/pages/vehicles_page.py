@@ -400,7 +400,9 @@ class MostCommonVehiclesPage(BasePage):
             )
             if not isinstance(result, list):
                 return fallback
-            return [t for t in result if t.lower() not in self._NON_TILE_LABELS]
+            # Collapse internal whitespace so two-line tile labels match.
+            norm = [' '.join(t.split()) for t in result]
+            return [t for t in norm if t and t.lower() not in self._NON_TILE_LABELS]
         except Exception:
             return fallback
 
