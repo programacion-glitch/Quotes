@@ -387,8 +387,48 @@ class AddTrailerPage(BasePage):
             print(f"    [Progressive] Trailer Make = {other!r} (no listed make for {make!r})")
             self.warnings.append(f"add_trailer: make {make!r} not listed; used {other!r}")
             return
+        # 5) Last resort: pick the first available make so the REQUIRED field is
+        #    satisfied and the quote can complete. The make barely affects the
+        #    premium (value/type/radius drive it); warn loudly so the operator
+        #    can correct the substitute.
+        default = await self._select_any_make(combo)
+        if default:
+            print(f"    [Progressive] Trailer Make = {default!r} (DEFAULT substitute — "
+                  f"{make!r} not selectable in Progressive's list)")
+            self.warnings.append(
+                f"add_trailer: make {make!r} not in Progressive's list; "
+                f"used default {default!r} — VERIFY/CORRECT"
+            )
+            return
         print(f"    [Progressive] WARN: Trailer Make {make!r} (->{resolved!r}) not matched in combo")
         self.warnings.append(f"add_trailer: make {make!r} not matched in combo")
+
+    async def _select_any_make(self, combo) -> Optional[str]:
+        """Open the Make combo (no filter) and pick the first real option, so the
+        required field is satisfied when the true make isn't listed."""
+        try:
+            await self.blur_active_element()
+            await self.page.wait_for_timeout(200)
+            await combo.first.click(timeout=5_000)
+            await self.page.wait_for_timeout(500)
+            opts = await self._enumerate_combo_options()
+            skip = {"", "make", "select a make", "please select", "select make"}
+            cand = next(
+                (o for o in opts if o.strip() and o.strip().lower() not in skip),
+                None,
+            )
+            if cand:
+                opt = self.page.get_by_role("option", name=cand, exact=True).first
+                if await opt.count() == 0:
+                    opt = self.page.locator(
+                        f"li.x-boundlist-item:has-text({cand!r})"
+                    ).first
+                await opt.click(timeout=5_000)
+                await self.page.wait_for_timeout(400)
+                return cand
+        except Exception as e:
+            print(f"    [DIAG] default-make select failed: {e}")
+        return None
 
     async def _commit_make_freetext(self, combo, make: str) -> Optional[str]:
         """Type `make` and commit it with Enter. Works when the combo accepts
