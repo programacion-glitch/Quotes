@@ -74,19 +74,43 @@ class HomePage(BasePage):
         # the DOM before it is actually visible — wait for visibility and scroll
         # it into view to avoid a flaky "element is not visible" click timeout.
         select_btn = self.page.locator("#selectProductButton")
-        await select_btn.wait_for(state="visible", timeout=15_000)
-        try:
-            await select_btn.scroll_into_view_if_needed(timeout=3_000)
-        except Exception:
-            pass
-        # Dashboard button — NOT a wizard Continue.
-        await select_btn.click(force=True, timeout=10_000)
-        # Deliberate animation wait: product flyout popup needs time to render.
-        await self.page.wait_for_timeout(500)
-
-        # Wait for the product flyout popup to appear
         popup = self.page.locator(".pp-popup-box")
-        await popup.wait_for(state="visible", timeout=10_000)
+
+        # The button is rendered by the state dropdown's onchange
+        # (BuildProductSelector) and INTERMITTENTLY stays hidden, so a plain
+        # wait-for-visible times out (seen repeatedly across the live sweep).
+        # Open the flyout robustly: try the normal visible-click; on failure
+        # re-fire the dropdown change AND call showFlyOut() directly (the button
+        # carries onclick="showFlyOut()"), then confirm the popup appeared. Retry.
+        opened = False
+        for attempt in range(4):
+            try:
+                await select_btn.wait_for(state="visible", timeout=5_000)
+                await select_btn.scroll_into_view_if_needed(timeout=2_000)
+                await select_btn.click(force=True, timeout=6_000)  # dashboard btn, not a wizard Continue
+            except Exception:
+                print(f"    [Progressive] 'Select Product(s)' hidden; "
+                      f"re-triggering product selector (attempt {attempt + 1}/4)")
+                try:
+                    await self.page.evaluate(
+                        """() => {
+                            const sel = document.querySelector('#QuoteStateList');
+                            if (sel) sel.dispatchEvent(new Event('change', {bubbles: true}));
+                            if (typeof showFlyOut === 'function') showFlyOut();
+                        }"""
+                    )
+                except Exception:
+                    pass
+            await self.page.wait_for_timeout(700)
+            try:
+                await popup.wait_for(state="visible", timeout=4_000)
+                opened = True
+                break
+            except Exception:
+                continue
+        if not opened:
+            # Let the wait raise a clear error if every attempt failed.
+            await popup.wait_for(state="visible", timeout=8_000)
 
         # Click Commercial Auto - data-pp-id="CV" is stable. NOT a wizard Continue.
         await self.page.locator('[data-pp-id="CV"]').first.click(force=True, timeout=10_000)
