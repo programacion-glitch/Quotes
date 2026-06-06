@@ -81,10 +81,10 @@ def _parse_us_address(addr: str) -> Tuple[Optional[str], Optional[str], Optional
     s = _re.sub(r"\s+,", ",", s)
 
     # Step 2: strict — comma immediately before state code
-    m = _re.search(r"^(.*?),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$", s, _re.IGNORECASE)
+    m = _re.search(r"^(.*?),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?[-\s]*$", s, _re.IGNORECASE)
     if not m:
         # Step 3: lenient — just whitespace before state code
-        m = _re.search(r"^(.*?)\s+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$", s, _re.IGNORECASE)
+        m = _re.search(r"^(.*?)\s+([A-Z]{2})\s+(\d{5})(?:-\d{4})?[-\s]*$", s, _re.IGNORECASE)
     if not m:
         return (None, None, None, None)
 
