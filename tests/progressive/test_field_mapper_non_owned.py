@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from modules.quote_profile import (
     QuoteProfile, ApplicantProfile, VehicleProfile, UnitsProfile, CoveragesProfile,
+    DriverProfile,
 )
 from modules.progressive.field_mapper import map_profile_to_fields
 
@@ -127,6 +128,32 @@ def test_empty_string_vin_with_normal_make_is_not_non_owned():
     fields = map_profile_to_fields(profile, effective_date="06/15/2026")
     assert len(fields.vehicles) == 1
     assert fields.coverages.non_owned_trailer_phys_damage_limit is None
+
+
+def test_owner_dob_sourced_from_driver_despite_middle_name_mismatch():
+    """Live (JOSE DELGADO, Sole Proprietor): owner 'JOSE ANDRES DELGADO' vs
+    driver 'JOSE A DELGADO'. The owner DOB (required by Progressive's START
+    page) comes from the matching driver — an exact-name match missed it and
+    left DOB blank. First+last token match must still identify the owner driver.
+    """
+    profile = QuoteProfile(
+        applicant=ApplicantProfile(
+            business_name="JOSE A DELGADO", owner_name="JOSE ANDRES DELGADO",
+            usdot="2896210",
+        ),
+        units=UnitsProfile(count=1, vehicles=[
+            VehicleProfile(vin="1FUJGLDR8LSLT1234", year=2018, make="FRHT",
+                           model="DUMP", is_trailer=False),
+        ]),
+        drivers=[
+            DriverProfile(name="JOSE A DELGADO", date_of_birth="03/07/1969",
+                          license_number="X", license_state="Texas"),
+        ],
+        coverages_detail=CoveragesProfile(),
+    )
+    fields = map_profile_to_fields(profile, effective_date="06/15/2026")
+    assert fields.owner_dob == "03/07/1969"
+    assert fields.drivers[0].is_policyholder is True
 
 
 def test_usdot_trailing_space_is_stripped():

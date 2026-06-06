@@ -162,13 +162,28 @@ def _map_vehicle(v: VehicleProfile, fallback_zip: Optional[str], fallback_type: 
     )
 
 
+def _same_person(a: Optional[str], b: Optional[str]) -> bool:
+    """True if two names denote the same person, tolerant of middle-name vs
+    initial differences. The owner section and the driver row often disagree on
+    the middle name ('JOSE ANDRES DELGADO' vs 'JOSE A DELGADO'); an exact match
+    then misses, so the owner's DOB (sourced from the matching driver) is left
+    blank and Progressive rejects the START page. We match on first + last
+    token, which handles middle-name/initial/absent variants.
+    """
+    if not a or not b:
+        return False
+    ta = a.strip().upper().split()
+    tb = b.strip().upper().split()
+    if not ta or not tb:
+        return False
+    if ta == tb:
+        return True
+    return ta[0] == tb[0] and ta[-1] == tb[-1]
+
+
 def _map_driver(d: DriverProfile, owner_name: Optional[str]) -> MappedDriver:
     """Map a DriverProfile to MappedDriver."""
-    is_owner = bool(
-        owner_name
-        and d.name
-        and owner_name.strip().upper() == d.name.strip().upper()
-    )
+    is_owner = _same_person(owner_name, d.name)
     return MappedDriver(
         name=d.name,
         license_state=d.license_state or "Texas",
