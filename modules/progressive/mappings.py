@@ -46,6 +46,8 @@ MAKE_ALIASES = {
     "UTIL": "Utility",
     "BIGT": "Big Tex",
     "WAB": "Wabash",
+    "WANC": "Wabash",
+    "WAN": "Wabash",
     "STOU": "Stoughton",
     "DORS": "Dorsey",
     "FONT": "Fontaine",
