@@ -63,9 +63,22 @@ class MoreBusinessPage(BasePage):
 
     async def _answer_currently_insured(self, is_insured: bool) -> None:
         answer = "Yes" if is_insured else "No"
-        print(f"    [Progressive] Currently insured: {answer}")
         group = await self.find_radiogroup("Is the customer currently insured?")
-        await self.safe_radio(group, answer)
+        # Progressive sometimes RESOLVES this from the customer's prior-policy
+        # records and renders it as static text (no interactive radio) — e.g.
+        # JOSE DELGADO showed 'Yes' locked. Accept Progressive's value instead
+        # of forcing our default and HALTing (its records are authoritative).
+        if not await self.field_exists(group, wait_ms=2000):
+            self._log_skipped("currently_insured", "pre-resolved by Progressive (static)")
+            return
+        print(f"    [Progressive] Currently insured: {answer}")
+        try:
+            await self.safe_radio(group, answer)
+        except Exception as e:
+            self._log_skipped(
+                "currently_insured",
+                f"radio locked to resolved value ({e.__class__.__name__})",
+            )
 
     async def _answer_other_coverages(self, choice: str) -> None:
         print(f"    [Progressive] Other coverages: {choice}")

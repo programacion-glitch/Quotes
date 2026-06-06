@@ -68,6 +68,50 @@ async def test_eld_skipped_when_radio_not_present(mock_page, mock_locator):
 
 
 @pytest.mark.asyncio
+async def test_currently_insured_skipped_when_preresolved(mock_page, mock_locator):
+    """Live (JOSE DELGADO): Progressive resolved 'currently insured' to a static
+    'Yes' (no interactive radio). The bot must accept it and skip, not HALT
+    trying to force its own 'No'."""
+    insured_group = AsyncMock()
+    insured_group.count = AsyncMock(return_value=0)
+    insured_group.wait_for = AsyncMock(side_effect=TimeoutError("not visible"))
+    insured_group.first = insured_group
+
+    absent = AsyncMock()
+    absent.count = AsyncMock(return_value=0)
+    absent.wait_for = AsyncMock(side_effect=TimeoutError("not visible"))
+    absent.first = absent
+
+    none_checkbox = AsyncMock()
+    none_checkbox.is_checked = AsyncMock(return_value=True)
+    none_checkbox.click = AsyncMock()
+
+    def get_by_role(role, **kwargs):
+        n = (kwargs.get("name") or "").lower()
+        if "currently insured" in n:
+            return insured_group
+        if role == "checkbox":
+            return none_checkbox
+        return absent
+
+    mock_page.get_by_role = MagicMock(side_effect=get_by_role)
+
+    urls = iter([
+        "https://x.com/?pageName=MoreAboutBusiness",
+        "https://x.com/?pageName=Rates",
+    ])
+    type(mock_page).url = property(lambda self: next(urls, "https://x.com/?pageName=Rates"))
+
+    page_obj = MoreBusinessPage(mock_page)
+    page_obj.warnings = []
+
+    await page_obj.fill_and_submit(currently_insured=False, other_coverages="None")
+
+    assert any("currently_insured" in w.lower() and "skip" in w.lower() for w in page_obj.warnings), \
+        f"Expected currently_insured-skipped warning, got: {page_obj.warnings}"
+
+
+@pytest.mark.asyncio
 async def test_snapshot_proview_skipped_when_radio_not_present(mock_page, mock_locator):
     """When the Snapshot ProView radiogroup is absent, fill_and_submit must NOT raise."""
     proview_locator = AsyncMock()
