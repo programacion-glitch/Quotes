@@ -92,21 +92,49 @@ def classify_business_type_ai(
     return ai_pick_from_options(commodity, opts, classifier=classifier)
 
 
+def _enrich_commodity(commodity: Optional[str], unit_hints=None) -> str:
+    """Append the quote's vehicle/trailer types to the commodity text so the AI
+    can weigh how the goods are actually hauled. E.g. 'FRESH PRODUCE 100%' with
+    a Refrigerated Trailer should classify as refrigerated hauling, not generic
+    farm-produce hauling (whose tiles then lack a refrigerated trailer)."""
+    text = (commodity or "").strip()
+    if not unit_hints:
+        return text
+    hints = ", ".join(dict.fromkeys(
+        h.strip() for h in unit_hints if h and h.strip()
+    ))
+    return f"{text} (transported with: {hints})" if hints else text
+
+
 def resolve_commodity_to_business_type(
-    commodity: Optional[str], *, classifier=None
+    commodity: Optional[str], *, unit_hints=None, classifier=None
 ) -> Tuple[Optional[str], str]:
     """Return (Progressive Business-Type label | None, note).
 
     note is one of: 'mapping' (specific table hit), 'generic' (general-freight /
     Trucker sentinel), 'ai' (AI classifier), 'unmapped' (caller HALTs).
+    `unit_hints` are vehicle/trailer type strings that enrich the AI input.
     `classifier` is injectable for tests.
     """
     opt, is_generic = map_commodity(commodity)
     if opt is not None:
         return opt, ("generic" if is_generic else "mapping")
 
-    ai_opt = classify_business_type_ai(commodity, classifier=classifier)
+    enriched = _enrich_commodity(commodity, unit_hints)
+    ai_opt = classify_business_type_ai(enriched, classifier=classifier)
     if ai_opt:
         return ai_opt, "ai"
 
     return None, "unmapped"
+
+
+def unit_type_hints(vehicles) -> list:
+    """Distinct, order-preserving vehicle/trailer type strings from a list of
+    objects exposing `.trailer_type` (MappedVehicle). Used to enrich commodity
+    classification with how the goods are hauled."""
+    hints = []
+    for v in (vehicles or []):
+        t = (getattr(v, "trailer_type", None) or "").strip()
+        if t and t not in hints:
+            hints.append(t)
+    return hints

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from modules.progressive.choice_resolver import resolve_choice, Resolution
+from modules.progressive.business_type_classifier import ai_pick_from_options
 from modules.progressive.field_mapper import MappedVehicle
 from modules.progressive.mappings import VEHICLE_TILE_MAP
 from modules.progressive.pages._exceptions import UnmappableValueError
@@ -405,24 +406,40 @@ class MostCommonVehiclesPage(BasePage):
 
     async def resolve_tile(self, trailer_type: str) -> Resolution:
         """Resolve the Blue-Quote vehicle string to a tile actually on screen.
-        Raises UnmappableValueError (HALT) instead of guessing a catch-all."""
+
+        Resolution order (mirrors the trailer tile picker): keyword map IF its
+        target is a live option -> tolerant exact/token match -> AI against the
+        LIVE options (handles e.g. 'CEMENT MIXER' when no cement tile exists) ->
+        HALT. Tiles are business-type dependent, so a static map target can be
+        absent from the live set."""
         options = await self._enumerate_tiles()
         t = (trailer_type or "").upper()
-        token = next((k for k in VEHICLE_TILE_MAP if k in t), None)
-        mapping = {trailer_type: VEHICLE_TILE_MAP[token]} if token else None
         screenshot = await self.screenshot("vehicle_tile_selection")
-        res = resolve_choice(
-            "Vehicle tile", trailer_type, options,
-            mapping=mapping, screenshot_path=screenshot,
-        )
-        if res.value not in options:
-            raise UnmappableValueError(
-                field="Vehicle tile",
-                source_value=trailer_type,
-                available_options=list(options),
-                screenshot_path=screenshot,
+
+        token = next((k for k in VEHICLE_TILE_MAP if k in t), None)
+        mapped = VEHICLE_TILE_MAP.get(token) if token else None
+        if mapped and mapped in options:
+            return Resolution("Vehicle tile", mapped, "MATCHED", trailer_type, "mapping")
+
+        try:
+            res = resolve_choice(
+                "Vehicle tile", trailer_type, options, screenshot_path=screenshot,
             )
-        return res
+            if res.value in options:
+                return res
+        except UnmappableValueError:
+            pass
+
+        ai_choice = ai_pick_from_options(trailer_type, options)
+        if ai_choice and ai_choice in options:
+            return Resolution("Vehicle tile", ai_choice, "MATCHED", trailer_type, "ai")
+
+        raise UnmappableValueError(
+            field="Vehicle tile",
+            source_value=trailer_type,
+            available_options=list(options),
+            screenshot_path=screenshot,
+        )
 
     async def select_vehicle_type(self, trailer_type: str) -> None:
         """Pick the most appropriate tile for the trailer string, or HALT."""

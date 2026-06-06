@@ -15,6 +15,7 @@ from modules.progressive.choice_resolver import Resolution
 from modules.progressive.mappings import VEHICLE_TILE_MAP
 from modules.progressive.business_type_classifier import (
     resolve_commodity_to_business_type,
+    unit_type_hints,
 )
 from modules.progressive.vehicle_amounts import resolve_vehicle_value
 from modules.progressive.amounts import parse_amount
@@ -43,7 +44,9 @@ def _check_commodity(mapped: MappedFields, rep: PreflightReport) -> None:
     commodity = (mapped.commodity or "").strip()
     if not commodity:
         return  # absence handled by field_mapper defaults (Trucker)
-    label, note = resolve_commodity_to_business_type(commodity)
+    label, note = resolve_commodity_to_business_type(
+        commodity, unit_hints=unit_type_hints(mapped.vehicles)
+    )
     if label is not None:
         # 'generic' (table catch-all) and 'ai' (LLM classification) are both
         # assumptions worth surfacing; a specific 'mapping' hit is silent.

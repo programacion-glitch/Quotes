@@ -15,6 +15,7 @@ from modules.progressive.choice_resolver import resolve_choice, Resolution
 from modules.progressive.mappings import map_commodity
 from modules.progressive.business_type_classifier import (
     resolve_commodity_to_business_type,
+    unit_type_hints,
 )
 from modules.progressive.catalogs import load_catalog
 from modules.progressive.pages._exceptions import (
@@ -107,6 +108,11 @@ class BusinessInfoPage(BasePage):
         """
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         await self.remove_overlays()
+
+        # Unit types (e.g. 'Refrigerated Trailer') enrich the commodity -> Business
+        # Type classification so the chosen business type yields a tile set that
+        # actually contains the quote's trailers (see resolve_business_type).
+        self._unit_hints = unit_type_hints(fields.vehicles)
 
         if fields.effective_date:
             await self._set_effective_date(fields.effective_date)
@@ -443,10 +449,13 @@ class BusinessInfoPage(BasePage):
         """Resolve commodity -> Business type option, or HALT (no silent Trucker).
 
         table hit -> MATCHED ('mapping'/'generic'). table miss -> AI classifier
-        against Progressive's live trucking taxonomy ('ai'). still nothing ->
-        UnmappableValueError (fail-loud). See business_type_classifier.
+        against Progressive's live trucking taxonomy ('ai'), enriched with the
+        quote's unit types. still nothing -> UnmappableValueError (fail-loud).
+        See business_type_classifier.
         """
-        label, note = resolve_commodity_to_business_type(commodity)
+        label, note = resolve_commodity_to_business_type(
+            commodity, unit_hints=getattr(self, "_unit_hints", None)
+        )
         if label is not None:
             return Resolution("Business type", label, "MATCHED", commodity, note)
         cat = load_catalog("business_type")

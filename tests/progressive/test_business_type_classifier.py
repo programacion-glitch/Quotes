@@ -76,6 +76,46 @@ def test_classify_ai_handles_classifier_exception():
     ) is None
 
 
+def test_unit_hints_enrich_ai_input():
+    """Option B: the AI sees how goods are hauled. 'FRESH PRODUCE' alone might
+    classify as Farm Produce Hauling (no refrigerated tile), but with a
+    'Refrigerated Trailer' hint the enriched text must reach the classifier so
+    it can pick a refrigerated class."""
+    fake = _FakeClassifier(answer="Refrigerated Goods Hauling/Trucking")
+    label, note = resolve_commodity_to_business_type(
+        "FRESH PRODUCE 100%",
+        unit_hints=["Tractor Truck", "Refrigerated Trailer"],
+        classifier=fake,
+    )
+    assert label == "Refrigerated Goods Hauling/Trucking"
+    assert note == "ai"
+    sent_text, _ = fake.calls[0]
+    assert "FRESH PRODUCE" in sent_text
+    assert "Refrigerated Trailer" in sent_text  # hint reached the model
+
+
+def test_table_hit_ignores_unit_hints():
+    """A specific table match short-circuits — unit hints never reach the AI."""
+    fake = _FakeClassifier(answer="SHOULD NOT BE USED")
+    label, note = resolve_commodity_to_business_type(
+        "SAND & GRAVEL 100%", unit_hints=["Refrigerated Trailer"], classifier=fake,
+    )
+    assert label == "Dirt Sand & Gravel (For A Fee)"
+    assert note == "mapping"
+    assert fake.calls == []
+
+
+def test_unit_type_hints_dedups_and_skips_blanks():
+    from modules.progressive.business_type_classifier import unit_type_hints
+
+    class _V:
+        def __init__(self, t):
+            self.trailer_type = t
+    hints = unit_type_hints([_V("Tractor Truck"), _V("Refrigerated Trailer"),
+                             _V("Tractor Truck"), _V(""), _V(None)])
+    assert hints == ["Tractor Truck", "Refrigerated Trailer"]
+
+
 def test_ai_pick_from_options_generic_for_mtc():
     """ai_pick_from_options is reused for the MTC cargo category/commodity
     pickers — map a free-text commodity to one of an arbitrary option list."""
