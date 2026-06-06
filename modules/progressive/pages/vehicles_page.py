@@ -517,15 +517,32 @@ class AddVehiclePage(BasePage):
         self.warnings.append(msg)
 
     async def _enumerate_gvw_options(self) -> list:
-        """Open the GVW combo and read its real option labels."""
+        """Open the GVW combo and read its real option labels. Enumerates the
+        ExtJS boundlist (li.x-boundlist-item) first — get_by_role('option')
+        intermittently returns 0 for these combos, which dropped a light Box
+        Truck (25,100 lbs) to the partial seeded catalog and a false HALT."""
         combo = await self.find_combo("What is the gross vehicle weight?")
         if await combo.count() == 0:
             return []
         try:
             await combo.click(timeout=5_000)
-            await self.page.wait_for_timeout(300)
-            raw = await self.page.get_by_role("option").all_inner_texts()
-            return [o.strip() for o in raw if o.strip()]
+            await self.page.wait_for_timeout(400)
+            opts = await self.page.evaluate(
+                """() => {
+                    const out = [];
+                    document.querySelectorAll('li.x-boundlist-item').forEach(el => {
+                        if (el.offsetParent !== null) {
+                            const t = (el.innerText || '').trim();
+                            if (t) out.push(t);
+                        }
+                    });
+                    return out;
+                }"""
+            )
+            if not opts:
+                raw = await self.page.get_by_role("option").all_inner_texts()
+                opts = [o.strip() for o in raw if o.strip()]
+            return [" ".join(o.split()) for o in opts if o.strip()]
         except Exception:
             return []
 
