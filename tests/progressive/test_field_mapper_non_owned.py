@@ -156,6 +156,52 @@ def test_owner_dob_sourced_from_driver_despite_middle_name_mismatch():
     assert fields.drivers[0].is_policyholder is True
 
 
+def test_owner_dob_matches_two_surname_hispanic_name():
+    """Live (KATYLAND): owner 'JERSSON MEDINA' (one surname) vs driver
+    'JERSSON STIVEN MEDINA ROBAYO' (two surnames). First+last token match
+    misses (MEDINA != ROBAYO); first-name + shared-surname must still match so
+    the owner DOB is sourced from the driver."""
+    profile = QuoteProfile(
+        applicant=ApplicantProfile(
+            business_name="KATYLAND TRANSPORT INC",
+            owner_name="JERSSON MEDINA", usdot="4576096",
+        ),
+        units=UnitsProfile(count=1, vehicles=[
+            VehicleProfile(vin="1FUJGLDR8LSLT1234", year=2020, make="FRHT",
+                           model="CASCADIA", is_trailer=False),
+        ]),
+        drivers=[
+            DriverProfile(name="JERSSON STIVEN MEDINA ROBAYO",
+                          date_of_birth="12/11/1992", license_number="X",
+                          license_state="Texas"),
+        ],
+        coverages_detail=CoveragesProfile(),
+    )
+    fields = map_profile_to_fields(profile, effective_date="06/15/2026")
+    assert fields.owner_dob == "12/11/1992"
+    assert fields.drivers[0].is_policyholder is True
+
+
+def test_different_people_same_first_name_not_matched():
+    """Two different people who share only a first name must NOT match (the
+    surname-overlap guard prevents a wrong policyholder/DOB)."""
+    profile = QuoteProfile(
+        applicant=ApplicantProfile(business_name="X", owner_name="JUAN GARCIA",
+                                   usdot="1"),
+        units=UnitsProfile(count=1, vehicles=[
+            VehicleProfile(vin="1FUJGLDR8LSLT1234", year=2020, make="X",
+                           model="Y", is_trailer=False),
+        ]),
+        drivers=[
+            DriverProfile(name="JUAN LOPEZ", date_of_birth="01/01/1980",
+                          license_number="X", license_state="Texas"),
+        ],
+        coverages_detail=CoveragesProfile(),
+    )
+    fields = map_profile_to_fields(profile, effective_date="06/15/2026")
+    assert fields.drivers[0].is_policyholder is False
+
+
 def test_usdot_trailing_space_is_stripped():
     """Live (SHALOM WAY): usdot extracted as '4518340 ' (trailing space) made
     Progressive reject the lookup as 'not a valid USDOT number'. It must be

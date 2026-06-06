@@ -163,12 +163,14 @@ def _map_vehicle(v: VehicleProfile, fallback_zip: Optional[str], fallback_type: 
 
 
 def _same_person(a: Optional[str], b: Optional[str]) -> bool:
-    """True if two names denote the same person, tolerant of middle-name vs
-    initial differences. The owner section and the driver row often disagree on
-    the middle name ('JOSE ANDRES DELGADO' vs 'JOSE A DELGADO'); an exact match
-    then misses, so the owner's DOB (sourced from the matching driver) is left
-    blank and Progressive rejects the START page. We match on first + last
-    token, which handles middle-name/initial/absent variants.
+    """True if two names denote the same person, tolerant of the variants the
+    owner section and the driver row disagree on (the owner's DOB is sourced
+    from the matching driver; a miss leaves DOB blank and Progressive rejects
+    the START page). Match = same FIRST name AND at least one shared surname
+    token. This covers:
+      - middle name vs initial:   'JOSE ANDRES DELGADO' ~ 'JOSE A DELGADO'
+      - one vs two surnames:      'JERSSON MEDINA' ~ 'JERSSON STIVEN MEDINA ROBAYO'
+      - extra/absent middle name: 'JUAN ROJAS' ~ 'JUAN QUEVEDO ROJAS'
     """
     if not a or not b:
         return False
@@ -178,7 +180,10 @@ def _same_person(a: Optional[str], b: Optional[str]) -> bool:
         return False
     if ta == tb:
         return True
-    return ta[0] == tb[0] and ta[-1] == tb[-1]
+    if ta[0] != tb[0]:
+        return False
+    # Beyond the first name, require at least one shared surname/middle token.
+    return bool(set(ta[1:]) & set(tb[1:]))
 
 
 def _map_driver(d: DriverProfile, owner_name: Optional[str]) -> MappedDriver:
