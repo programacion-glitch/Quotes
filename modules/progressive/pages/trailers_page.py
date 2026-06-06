@@ -373,9 +373,15 @@ class AddTrailerPage(BasePage):
         if matched:
             print(f"    [Progressive] Trailer Make = {matched!r} (typeahead from {make!r})")
             return
-        # 3) The make isn't a listed manufacturer at all (e.g. 'Heil' has no
-        #    option — typing 'HEI' returns 0). Fall back to a generic 'Other'
-        #    make if the combo offers one, so the required field is satisfied.
+        # 3) Free-text commit: many ExtJS make combos accept a typed value not in
+        #    the list (forceSelection=false). 'Heil' has no list option, so type
+        #    it and commit with Enter.
+        freetext = await self._commit_make_freetext(combo, resolved)
+        if freetext:
+            print(f"    [Progressive] Trailer Make = {freetext!r} (free text from {make!r})")
+            return
+        # 4) The make isn't a listed manufacturer at all. Fall back to a generic
+        #    'Other' make if the combo offers one, so the required field is set.
         other = await self._select_other_make(combo)
         if other:
             print(f"    [Progressive] Trailer Make = {other!r} (no listed make for {make!r})")
@@ -383,6 +389,33 @@ class AddTrailerPage(BasePage):
             return
         print(f"    [Progressive] WARN: Trailer Make {make!r} (->{resolved!r}) not matched in combo")
         self.warnings.append(f"add_trailer: make {make!r} not matched in combo")
+
+    async def _commit_make_freetext(self, combo, make: str) -> Optional[str]:
+        """Type `make` and commit it with Enter. Works when the combo accepts
+        free text (forceSelection=false). Verifies the value stuck. Returns the
+        committed value or None."""
+        try:
+            await self.blur_active_element()
+            await self.page.wait_for_timeout(200)
+            await combo.first.click(timeout=5_000)
+            await self.page.wait_for_timeout(250)
+            try:
+                await self.page.keyboard.press("Control+A")
+                await self.page.keyboard.press("Delete")
+            except Exception:
+                pass
+            await self.page.keyboard.type(make, delay=50)
+            await self.page.wait_for_timeout(400)
+            await self.page.keyboard.press("Enter")
+            await self.page.wait_for_timeout(400)
+            await self.blur_active_element()
+            val = await self._combo_current_value(combo)
+            token = make.strip().split()[0].upper() if make.strip() else ""
+            if val and token and token[:3] in val.upper():
+                return val
+        except Exception as e:
+            print(f"    [DIAG] make free-text commit failed: {e}")
+        return None
 
     async def _select_other_make(self, combo) -> Optional[str]:
         """Select a generic 'Other'/'Not Listed'/'Misc' option in the Make combo
