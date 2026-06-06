@@ -42,6 +42,49 @@ async def test_resolve_trailer_tile_halts_when_absent():
 
 
 @pytest.mark.asyncio
+async def test_select_expands_other_not_listed_for_refrigerated():
+    """Live (A&H): the common 'Most common trailers' tiles lack a refrigerated
+    option, but 'Other / Not Listed' expands to the full taxonomy where
+    'Refrigerated Dry Freight' lives. select_trailer_type must click the
+    expander, re-enumerate, then select the real tile."""
+    common = ["Bottom Dump", "Flatbed Trailer", "Bulk Commodity",
+              "Dump Body Trailer", "Dry Freight Trailer", "Other / Not Listed"]
+    full = common[:-1] + ["Gooseneck Trailer", "Refrigerated Dry Freight",
+                          "Tank Trailer", "Horse Trailer", "Other / Not Listed"]
+
+    page = MostCommonTrailersPage.__new__(MostCommonTrailersPage)
+    calls = {"enum": 0}
+
+    async def _enum():
+        calls["enum"] += 1
+        return common if calls["enum"] == 1 else full
+    page._enumerate_tiles = _enum
+
+    clicked = []
+
+    async def _click(label):
+        clicked.append(label)
+    page._click_tile = _click
+
+    async def _idle(*a, **k):
+        return None
+    page.wait_for_extjs_idle = _idle
+
+    class _Pg:
+        async def wait_for_timeout(self, ms):
+            return None
+    page.page = _Pg()
+
+    async def _shot(name):
+        return None
+    page.screenshot = _shot
+
+    await page.select_trailer_type("REFRIGERATED TRAILER")
+
+    assert clicked == ["Other / Not Listed", "Refrigerated Dry Freight"], clicked
+
+
+@pytest.mark.asyncio
 async def test_enumerate_trailer_tiles_filters_nav_tabs():
     obj = MostCommonTrailersPage.__new__(MostCommonTrailersPage)
 

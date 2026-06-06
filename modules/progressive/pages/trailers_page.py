@@ -65,54 +65,70 @@ class MostCommonTrailersPage(BasePage):
         except Exception:
             return fallback
 
-    async def resolve_tile(self, trailer_type: str) -> Resolution:
-        """Resolve the Blue-Quote trailer string to a tile actually on screen.
+    # "Other / Not Listed" is NOT a destination tile — it's an EXPANDER that
+    # reveals the FULL trailer taxonomy (Refrigerated Dry Freight, Tank, Horse,
+    # Low-Boy, ...). The "Most common trailers" screen shows a business-type
+    # curated subset; the real tile is often behind this expander.
+    _OTHER_NOT_LISTED = "Other / Not Listed"
 
-        The trailer tiles are BUSINESS-TYPE dependent (Farm Produce Hauling
-        shows Bottom Dump / Bulk Commodity / Dump Body / Dry Freight / ..., NOT
-        a Refrigerated tile), so a static map target can be absent from the live
-        set. Resolution order:
-          1. keyword map (TRAILER_TILE_MAP) IF its target is a live option
-          2. tolerant exact/token match against the live options
-          3. AI classification against the LIVE options (handles e.g.
-             'REFRIGERATED TRAILER' when no refrigerated tile exists)
-          4. HALT (fail-loud) — never a silent wrong tile.
-        """
-        options = await self._enumerate_tiles()
+    def _strict_tile_match(self, trailer_type: str, options: list):
+        """Keyword/exact/token match against `options` (excluding the expander).
+        No AI, no raise — returns a Resolution or None."""
+        selectable = [o for o in options if o != self._OTHER_NOT_LISTED]
         t = (trailer_type or "").upper()
-        screenshot = await self.screenshot("trailer_tile_unmapped")
-
         token = next((k for k in TRAILER_TILE_MAP if k in t), None)
         mapped = TRAILER_TILE_MAP.get(token) if token else None
-        if mapped and mapped in options:
+        if mapped and mapped in selectable:
             return Resolution("Trailer tile", mapped, "MATCHED", trailer_type, "mapping")
-
         try:
-            res = resolve_choice(
-                "Trailer tile", trailer_type, options, screenshot_path=screenshot,
-            )
-            if res.value in options:
+            res = resolve_choice("Trailer tile", trailer_type, selectable)
+            if res.value in selectable:
                 return res
         except UnmappableValueError:
             pass
+        return None
 
-        ai_choice = ai_pick_from_options(trailer_type, options)
-        if ai_choice and ai_choice in options:
+    async def resolve_tile(self, trailer_type: str) -> Resolution:
+        """Resolve against the CURRENTLY visible tiles: strict match, then AI
+        against the live options (excluding the expander), else HALT."""
+        options = await self._enumerate_tiles()
+        res = self._strict_tile_match(trailer_type, options)
+        if res is not None:
+            return res
+        selectable = [o for o in options if o != self._OTHER_NOT_LISTED]
+        ai_choice = ai_pick_from_options(trailer_type, selectable)
+        if ai_choice and ai_choice in selectable:
             return Resolution("Trailer tile", ai_choice, "MATCHED", trailer_type, "ai")
-
+        screenshot = await self.screenshot("trailer_tile_unmapped")
         raise UnmappableValueError(
             field="Trailer tile",
             source_value=trailer_type,
-            available_options=list(options),
+            available_options=list(selectable),
             screenshot_path=screenshot,
         )
 
-    async def select_trailer_type(self, trailer_type: str) -> None:
-        """Pick the most appropriate tile for the trailer string, or HALT."""
-        res = await self.resolve_tile(trailer_type)
-        print(f"    [Progressive] Selecting trailer type: {res.value} ({res.note})")
-        tile = self.page.get_by_text(res.value, exact=True).first
+    async def _click_tile(self, label: str) -> None:
+        tile = self.page.get_by_text(label, exact=True).first
         await tile.click(force=True)
+
+    async def select_trailer_type(self, trailer_type: str) -> None:
+        """Pick the tile for the trailer string. Strict match on the common
+        tiles first; if not there, expand 'Other / Not Listed' to the full
+        taxonomy and resolve again (strict + AI) before clicking. HALT if the
+        full list still has no match."""
+        options = await self._enumerate_tiles()
+        res = self._strict_tile_match(trailer_type, options)
+        if res is None and self._OTHER_NOT_LISTED in options:
+            print(f"    [Progressive] '{trailer_type}' not a common trailer; "
+                  f"expanding '{self._OTHER_NOT_LISTED}'")
+            await self._click_tile(self._OTHER_NOT_LISTED)
+            await self.wait_for_extjs_idle()
+            await self.page.wait_for_timeout(600)
+            res = await self.resolve_tile(trailer_type)   # full list; raises if absent
+        elif res is None:
+            res = await self.resolve_tile(trailer_type)   # no expander; AI/HALT on common
+        print(f"    [Progressive] Selecting trailer type: {res.value} ({res.note})")
+        await self._click_tile(res.value)
         await self.wait_for_extjs_idle()
 
 
