@@ -6,9 +6,17 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # The learned-mappings cache (AI decisions: commodity/MTC/tiles/makes) is
+    # written to /app/data/learned_mappings.xlsx — on the ./data volume below, so
+    # it PERSISTS across image rebuilds (it is NOT baked into the image). It is
+    # auto-seeded from the bundled baseline on first run, then grows. To share it
+    # across machines, point ./data (or PROGRESSIVE_LEARNED_BT_PATH) at a synced
+    # Drive folder (Google Drive Desktop / OneDrive / network drive).
+    # environment:
+    #   - PROGRESSIVE_LEARNED_BT_PATH=/app/data/learned_mappings.xlsx
     volumes:
       - ./config:/app/config:ro
-      - ./data:/app/data
+      - ./data:/app/data            # persistent: learned cache + input/output
       - ./logs:/app/logs
     healthcheck:
       test: ["CMD", "pgrep", "-f", "workflow_orchestrator.py"]

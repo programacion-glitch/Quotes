@@ -78,3 +78,6 @@ htmlcov/
 config/*.json
 data/credentials.json
 data/token.json
+
+# Learned-mappings runtime cache (persists on the data volume / Drive, not in git)
+data/learned_mappings.xlsx

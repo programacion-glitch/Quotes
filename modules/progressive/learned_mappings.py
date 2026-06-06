@@ -18,11 +18,19 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-_DEFAULT_PATH = Path(__file__).parent / "catalogs" / "learned_mappings.xlsx"
+# The bundled, version-controlled BASELINE (ships inside the Docker image,
+# read-only). The ACTIVE file that grows at runtime lives OUTSIDE the image on a
+# persistent volume / shared Drive, so learning survives image rebuilds and is
+# shared across runs/machines. docker-compose mounts ./data -> /app/data, and the
+# default active path resolves to <repo>/data, i.e. that volume. Point the volume
+# (or PROGRESSIVE_LEARNED_BT_PATH) at a synced Drive folder to share it.
+_SEED_PATH = Path(__file__).parent / "catalogs" / "learned_mappings.xlsx"
+_ACTIVE_DEFAULT = Path(__file__).resolve().parents[2] / "data" / "learned_mappings.xlsx"
 _SHEET = "mappings"
 _HEADERS = ["decision_type", "input", "output", "source", "date"]
 
@@ -36,8 +44,22 @@ def _enabled() -> bool:
     return os.getenv("PROGRESSIVE_LEARNED_CACHE", "1") != "0"
 
 
-def _default_path() -> Path:
-    return Path(os.getenv("PROGRESSIVE_LEARNED_BT_PATH", str(_DEFAULT_PATH)))
+def _active_path() -> Path:
+    """The persistent, writable cache file (volume / shared Drive). Overridable
+    with PROGRESSIVE_LEARNED_BT_PATH (e.g. a network drive or a synced folder)."""
+    return Path(os.getenv("PROGRESSIVE_LEARNED_BT_PATH", str(_ACTIVE_DEFAULT)))
+
+
+def _ensure_seeded(path: Path) -> None:
+    """Copy the bundled baseline to the active file on first use, so a fresh
+    volume/Drive starts with the known mappings instead of empty."""
+    try:
+        if (not path.exists() and _SEED_PATH.exists()
+                and path.resolve() != _SEED_PATH.resolve()):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(_SEED_PATH, path)
+    except Exception as e:
+        print(f"    [Progressive] learned cache seed failed: {e}")
 
 
 def _norm(s: Optional[str]) -> str:
@@ -73,7 +95,9 @@ def _load(store: Optional[Path]) -> dict:
         return _read_file(Path(store))
     global _cache
     if _cache is None:
-        _cache = _read_file(_default_path())
+        active = _active_path()
+        _ensure_seeded(active)
+        _cache = _read_file(active)
     return _cache
 
 
@@ -98,7 +122,7 @@ def learned_remember(
     if data.get((decision_type, nk)) == str(value).strip():
         return  # already known — don't duplicate
     data[(decision_type, nk)] = str(value).strip()  # update in-memory cache
-    _append_row(Path(store) if store is not None else _default_path(),
+    _append_row(Path(store) if store is not None else _active_path(),
                 decision_type, key, value, source)
 
 
