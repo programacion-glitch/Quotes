@@ -32,6 +32,44 @@ TRAILER_TILE_MAP = {
     "REFRIGERAT": "Refrigerated Dry Freight",
 }
 
+# Trailer/truck MAKE abbreviations -> full manufacturer name. Blue Quotes
+# abbreviate the make ('GD' = Great Dane, 'PTRB' = Peterbilt). Some are not a
+# prefix of the full name ('GD' -> 'Great Dane'), so neither safe_select_combo's
+# substring match nor the typeahead-by-prefix can find them — we expand here
+# first. Keyed by the make's FIRST token, uppercased. The combo match stays
+# tolerant, so an approximate full name ('Great Dane' vs 'Great Dane Trailers')
+# still resolves.
+MAKE_ALIASES = {
+    "GD": "Great Dane",
+    "GDAN": "Great Dane",
+    "GREATDANE": "Great Dane",
+    "UTIL": "Utility",
+    "BIGT": "Big Tex",
+    "WAB": "Wabash",
+    "STOU": "Stoughton",
+    "DORS": "Dorsey",
+    "FONT": "Fontaine",
+    "MANAC": "Manac",
+    "PTRB": "Peterbilt",
+    "PB": "Peterbilt",
+    "KW": "Kenworth",
+    "FRHT": "Freightliner",
+    "FRT": "Freightliner",
+    "INTL": "International",
+    "VNL": "Volvo",
+}
+
+
+def expand_make(make):
+    """Expand a Blue-Quote make abbreviation to its full manufacturer name via
+    MAKE_ALIASES (keyed by the first token). Returns the original string when no
+    alias applies."""
+    if not make:
+        return make
+    first = make.strip().upper().split()[0] if make.strip() else ""
+    return MAKE_ALIASES.get(first, make)
+
+
 # Commodity table: (synonym keys, Progressive Business-type option).
 _COMMODITY_TABLE = [
     (("FRACK", "FRACKING"), "Fracking Sand Hauling"),

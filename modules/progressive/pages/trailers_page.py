@@ -23,7 +23,7 @@ from typing import Optional
 
 from modules.progressive.choice_resolver import resolve_choice, Resolution
 from modules.progressive.field_mapper import MappedVehicle
-from modules.progressive.mappings import TRAILER_TILE_MAP
+from modules.progressive.mappings import TRAILER_TILE_MAP, expand_make
 from modules.progressive.business_type_classifier import ai_pick_from_options
 from modules.progressive.vehicle_amounts import resolve_vehicle_value
 from modules.progressive.pages._exceptions import UnmappableValueError
@@ -357,19 +357,23 @@ class AddTrailerPage(BasePage):
         if not make:
             self._log_skipped("make", "no value and combo empty")
             return
+        # Expand known abbreviations first ('GD' -> 'Great Dane'): some are not a
+        # prefix/substring of the full name so neither match strategy finds them.
+        resolved = expand_make(make)
         # 1) Direct tolerant match (exact/partial via safe_select_combo).
         try:
-            await self.safe_select_combo(combo, make)
-            print(f"    [Progressive] Trailer Make = {make!r}")
+            await self.safe_select_combo(combo, resolved)
+            print(f"    [Progressive] Trailer Make = {resolved!r}"
+                  f"{'' if resolved == make else f' (from {make!r})'}")
             return
         except Exception:
             pass
         # 2) Typeahead-filtered confident match.
-        matched = await self._select_make_by_prefix(combo, make)
+        matched = await self._select_make_by_prefix(combo, resolved)
         if matched:
             print(f"    [Progressive] Trailer Make = {matched!r} (typeahead from {make!r})")
             return
-        print(f"    [Progressive] WARN: Trailer Make {make!r} not matched in combo")
+        print(f"    [Progressive] WARN: Trailer Make {make!r} (->{resolved!r}) not matched in combo")
         self.warnings.append(f"add_trailer: make {make!r} not matched in combo")
 
     async def _select_make_by_prefix(self, combo, make: str) -> Optional[str]:
