@@ -866,7 +866,8 @@ class CoveragesRatesPage(BasePage):
         # (1) AI-first: map the Blue-Quote commodity to the best real option.
         if commodity and visible_options:
             from modules.progressive.business_type_classifier import ai_pick_from_options
-            ai_choice = ai_pick_from_options(commodity, visible_options)
+            dtype = "mtc_" + label.strip().lower().replace(" ", "_")  # mtc_commodity_type / mtc_commodity
+            ai_choice = ai_pick_from_options(commodity, visible_options, decision_type=dtype)
             if ai_choice and await self._click_boundlist_option(ai_choice, label=f"{label} (ai)"):
                 return ai_choice
 

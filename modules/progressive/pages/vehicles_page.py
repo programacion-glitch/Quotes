@@ -435,7 +435,7 @@ class MostCommonVehiclesPage(BasePage):
         if res is not None:
             return res
         selectable = [o for o in options if o != self._OTHER_NOT_LISTED]
-        ai_choice = ai_pick_from_options(trailer_type, selectable)
+        ai_choice = ai_pick_from_options(trailer_type, selectable, decision_type="vehicle_tile")
         if ai_choice and ai_choice in selectable:
             return Resolution("Vehicle tile", ai_choice, "MATCHED", trailer_type, "ai")
         screenshot = await self.screenshot("vehicle_tile_selection")

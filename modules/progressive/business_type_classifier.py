@@ -49,16 +49,27 @@ def ai_pick_from_options(
     options: List[str],
     *,
     classifier=None,
+    decision_type: Optional[str] = None,
+    store=None,
 ) -> Optional[str]:
-    """Map a free-text commodity to exactly ONE of `options` via the project's
-    AI classifier. Generic — used for the Progressive Business Type AND the MTC
-    cargo category/commodity cascading pickers. Returns the chosen option (must
-    be in `options`) or None. Defensive: any failure (no config, network,
-    off-list answer) returns None so the caller can fall back / HALT."""
+    """Map a free-text value to exactly ONE of `options` via the project's AI
+    classifier. Generic — used for the MTC cargo category/commodity pickers, the
+    vehicle/trailer tile fallback, and the trailer-make fallback. Returns the
+    chosen option (must be in `options`) or None.
+
+    When `decision_type` is given, the result is cached in the learned-mappings
+    Excel (so a repeated input is served without an AI call) AND a cache hit is
+    reused only if it's still a current option. (Business Type caches separately
+    in resolve_commodity_to_business_type, so it passes no decision_type here.)
+    """
     text = (commodity or "").strip()
     opts = [o for o in (options or []) if o and o.strip()]
     if not text or not opts:
         return None
+    if decision_type:
+        cached = learned_lookup(decision_type, text, store=store)
+        if cached and cached in opts:
+            return cached
     if classifier is None:
         # Opt-out switch for offline/test runs (the real classifier hits a
         # network proxy). Default on. An explicitly injected classifier always
@@ -77,6 +88,8 @@ def ai_pick_from_options(
         print(f"    [Progressive] AI commodity classify failed: {e}")
         return None
     if result and result in opts:
+        if decision_type:
+            learned_remember(decision_type, text, result, store=store)
         return result
     return None
 

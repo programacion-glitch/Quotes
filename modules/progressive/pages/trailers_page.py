@@ -101,7 +101,7 @@ class MostCommonTrailersPage(BasePage):
         if res is not None:
             return res
         selectable = [o for o in options if o != self._OTHER_NOT_LISTED]
-        ai_choice = ai_pick_from_options(trailer_type, selectable)
+        ai_choice = ai_pick_from_options(trailer_type, selectable, decision_type="trailer_tile")
         if ai_choice and ai_choice in selectable:
             return Resolution("Trailer tile", ai_choice, "MATCHED", trailer_type, "ai")
         screenshot = await self.screenshot("trailer_tile_unmapped")
@@ -566,7 +566,7 @@ class AddTrailerPage(BasePage):
             if best is None:
                 # Last resort: let the AI map the abbreviation to one of the
                 # filtered makes (e.g. 'HEIL' -> 'Heil').
-                ai = ai_pick_from_options(make, opts)
+                ai = ai_pick_from_options(make, opts, decision_type="trailer_make")
                 if ai and ai in opts:
                     best = ai
             if best is not None:

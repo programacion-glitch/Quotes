@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 
 from modules.progressive.learned_mappings import learned_lookup, learned_remember
-from modules.progressive.business_type_classifier import resolve_commodity_to_business_type
+from modules.progressive.business_type_classifier import (
+    resolve_commodity_to_business_type,
+    ai_pick_from_options,
+)
 
 
 @pytest.fixture
@@ -76,6 +79,47 @@ def test_resolve_remembers_ai_result(store):
         "MYSTERY GOODS 100%", classifier=fake2, store=store)
     assert (label2, note2) == ("General Freight Hauler", "learned")
     assert fake2.calls == []
+
+
+def test_ai_pick_caches_tile_and_mtc_decisions(store):
+    """The generic matcher (tiles, MTC, makes) caches by decision_type and
+    serves a repeat input without the AI — but only if the cached value is still
+    a current option."""
+    fake = _FakeClassifier(answer="Refrigerated Dry Freight")
+    tiles = ["Dry Freight Trailer", "Refrigerated Dry Freight", "Other / Not Listed"]
+    got = ai_pick_from_options("REFRIGERATED TRAILER", tiles, classifier=fake,
+                               decision_type="trailer_tile", store=store)
+    assert got == "Refrigerated Dry Freight"
+    assert len(fake.calls) == 1
+
+    # Repeat -> served from cache, no AI call.
+    fake2 = _FakeClassifier(answer="X")
+    got2 = ai_pick_from_options("Refrigerated Trailer", tiles, classifier=fake2,
+                                decision_type="trailer_tile", store=store)
+    assert got2 == "Refrigerated Dry Freight"
+    assert fake2.calls == []
+
+
+def test_ai_pick_cache_ignored_when_value_not_in_current_options(store):
+    """A cached label that isn't among the current options must NOT be returned
+    (option lists are business-type dependent); fall through to the AI."""
+    learned_remember("trailer_tile", "REFRIGERATED TRAILER",
+                     "Refrigerated Dry Freight", store=store)
+    fake = _FakeClassifier(answer="Dry Freight Trailer")
+    # Current options lack the cached 'Refrigerated Dry Freight'.
+    got = ai_pick_from_options("REFRIGERATED TRAILER",
+                               ["Dry Freight Trailer", "Flatbed Trailer"],
+                               classifier=fake, decision_type="trailer_tile", store=store)
+    assert got == "Dry Freight Trailer"
+    assert len(fake.calls) == 1
+
+
+def test_ai_pick_without_decision_type_does_not_cache(store):
+    """Business Type calls ai_pick without a decision_type (it caches at a higher
+    layer) — so no row is written here."""
+    fake = _FakeClassifier(answer="A")
+    ai_pick_from_options("X", ["A", "B"], classifier=fake, store=store)
+    assert not store.exists()
 
 
 def test_table_hit_skips_cache_and_ai(store):
