@@ -226,14 +226,20 @@ class DocumentAIExtractor:
 
     def __init__(self):
         config = get_config()
-        self.client = openai.OpenAI(
-            base_url=config.openai_base_url,
-            api_key=config.openai_api_key
-        )
         self.model = config.get("ai_extraction.model", "gpt-4o")
         self.timeout = config.get("ai_extraction.timeout_seconds", 60)
         self.max_retries = config.get("ai_extraction.max_retries", 3)
         self.retry_delay = config.get("ai_extraction.retry_delay_seconds", 5)
+        # timeout was configured but never wired to the client, so the
+        # library default (600s, 2 internal retries) applied — a hung proxy
+        # request could stall a quote for ~30 min (LQZ 2026-06-10).
+        # max_retries=0: retrying is this class's own loop's job.
+        self.client = openai.OpenAI(
+            base_url=config.openai_base_url,
+            api_key=config.openai_api_key,
+            timeout=self.timeout,
+            max_retries=0,
+        )
         self.min_text_threshold = config.get("ai_extraction.min_text_threshold", 50)
         self.validator = AttachmentValidator()
 

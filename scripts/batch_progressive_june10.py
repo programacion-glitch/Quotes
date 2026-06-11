@@ -84,6 +84,17 @@ def main() -> int:
             stderr = (e.stderr or "") if isinstance(e.stderr, str) else ""
             returncode = -1
             status = "TIMEOUT"
+            # Killing the python child ORPHANS its headless Chromium — the
+            # zombie keeps the Progressive session alive and wedges later
+            # quotes (observed live 2026-06-10: 35 zombies accumulated).
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "headless_shell.exe", "/T"],
+                capture_output=True,
+            )
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "chrome.exe", "/T"],
+                capture_output=True,
+            )
 
         elapsed = round(time.time() - t0, 1)
         log_path.write_text(

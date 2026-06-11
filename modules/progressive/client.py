@@ -131,6 +131,12 @@ async def _run_with_browser(config: ProgressiveConfig, fields) -> QuoteResult:
                 ),
                 storage_state=storage_state,
             )
+            # Bound EVERY protocol call (keyboard.press etc. are otherwise
+            # infinite): ExtJS can wedge the renderer in a JS loop and an
+            # unbounded call then hangs the quote forever (live IMT3/ALPHA
+            # 2026-06-10, renderer at 100% CPU). Explicit per-call timeouts
+            # still override this default.
+            context.set_default_timeout(30_000)
             page = await context.new_page()
 
             # OTP is read over the Gmail REST API (HTTPS/443). IMAP/993 is
@@ -148,7 +154,23 @@ async def _run_with_browser(config: ProgressiveConfig, fields) -> QuoteResult:
                 dry_run=config.dry_run,
             )
 
-            last_result = await flow.run(fields)
+            # Hard per-attempt budget: a wedged renderer survives even
+            # bounded protocol calls (each one times out but the flow keeps
+            # poking a dead page for ages). Largest legit quote today was
+            # 556s (KATYLAND, 8 units) — 700s covers it with margin while
+            # still aborting a wedge well before the batch runner's 900s cap.
+            try:
+                last_result = await asyncio.wait_for(flow.run(fields), timeout=700)
+            except asyncio.TimeoutError:
+                print(
+                    "    [Progressive] HARD BUDGET (700s) exceeded — renderer "
+                    "wedge suspected; aborting this attempt"
+                )
+                last_result = QuoteResult(
+                    success=False,
+                    error="Attempt exceeded 700s hard budget (renderer wedge suspected)",
+                    step_reached="",
+                )
 
             # Persist cookies whenever we got past LOGIN, so the next quote
             # reuses the authenticated session instead of burning an OTP.

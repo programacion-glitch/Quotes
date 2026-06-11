@@ -17,10 +17,16 @@ class AICommodityClassifier:
         self.base_url = self.config.openai_base_url
         self.api_key = self.config.openai_api_key
         
-        # Initialize OpenAI client pointing to the proxy
+        # Initialize OpenAI client pointing to the proxy.
+        # timeout/max_retries: the library defaults are 600s + 2 retries — a
+        # single hung proxy request stalled a live quote until the 900s batch
+        # kill (LQZ 2026-06-10). Classification answers are short: fail fast
+        # and let the table/learned-cache fallback take over.
         self.client = openai.OpenAI(
             base_url=self.base_url,
-            api_key=self.api_key
+            api_key=self.api_key,
+            timeout=45,
+            max_retries=1,
         )
         
     def classify_commodity(self, commodity_text: str, business_types: List[str]) -> Optional[str]:
