@@ -79,6 +79,16 @@ async def test_select_expands_other_not_listed_for_refrigerated():
         return None
     page.screenshot = _shot
 
+    # Post-click verification stubs: the AddTrailer form (Year combo)
+    # "opens" on the first tile click.
+    async def _find_combo(name, **kw):
+        return object()
+    page.find_combo = _find_combo
+
+    async def _field_exists(loc, **kw):
+        return True
+    page.field_exists = _field_exists
+
     await page.select_trailer_type("REFRIGERATED TRAILER")
 
     assert clicked == ["Other / Not Listed", "Refrigerated Dry Freight"], clicked

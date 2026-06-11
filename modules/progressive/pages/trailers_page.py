@@ -113,8 +113,20 @@ class MostCommonTrailersPage(BasePage):
         )
 
     async def _click_tile(self, label: str) -> None:
-        tile = self.page.get_by_text(label, exact=True).first
-        await tile.click(force=True)
+        # Prefer the VISIBLE match: after the 'Other / Not Listed' expansion
+        # the same label can exist twice in the DOM (hidden common-grid copy
+        # + visible full-grid tile); .first + force=True clicked the hidden
+        # one with no effect (live CMC + Mauricio 2026-06-10, deterministic).
+        tile = self.page.get_by_text(label, exact=True)
+        target = tile.first
+        try:
+            for i in range(await tile.count()):
+                if await tile.nth(i).is_visible():
+                    target = tile.nth(i)
+                    break
+        except Exception:
+            pass
+        await target.click(force=True)
 
     async def select_trailer_type(self, trailer_type: str) -> None:
         """Pick the tile for the trailer string. Strict match on the common
@@ -133,8 +145,31 @@ class MostCommonTrailersPage(BasePage):
         elif res is None:
             res = await self.resolve_tile(trailer_type)   # no expander; AI/HALT on common
         print(f"    [Progressive] Selecting trailer type: {res.value} ({res.note})")
-        await self._click_tile(res.value)
-        await self.wait_for_extjs_idle()
+        # force=True clicks can silently no-op on a tile that is still
+        # repainting after the 'Other / Not Listed' expansion (live CMC
+        # 2026-06-10: picker never left, VIN fill then timed out with a
+        # confusing error). Verify the AddTrailer form actually opened —
+        # it has a 'Year' combobox; the tile picker has none.
+        for attempt in range(3):
+            await self._click_tile(res.value)
+            try:
+                await self.wait_for_extjs_idle()
+            except Exception:
+                pass
+            year_combo = await self.find_combo("Year")
+            if await self.field_exists(year_combo, wait_ms=3_000):
+                return
+            print(
+                f"    [Progressive] Trailer tile click did not open the "
+                f"form; retry {attempt + 1}/2"
+            )
+            await self.page.wait_for_timeout(700)
+        screenshot = await self.screenshot("trailer_tile_click_stuck")
+        raise RuntimeError(
+            f"Trailer tile {res.value!r} clicked 3x but the AddTrailer form "
+            f"never opened (still on the tile picker). "
+            f"Screenshot: {screenshot}"
+        )
 
 
 class AddTrailerPage(BasePage):
@@ -237,9 +272,24 @@ class AddTrailerPage(BasePage):
         if trailer.has_loan == "No":
             wants_apd = bool(trailer.value)
             apd_answer = "Yes" if wants_apd else "No"
-            await self._set_radio(
-                "Does the customer need Comprehensive or Collision coverage",
-                apd_answer,
+            # Comp/Coll is REVEALED by loan=No and is REQUIRED once rendered.
+            # On multi-trailer quotes the reveal can outlast _set_radio's 2.5s
+            # window (live LEZAMA trailer 3/4 2026-06-10: skipped silently ->
+            # Continue blocked on the unanswered radio). Poll longer and fail
+            # loud — skipping just moves the failure to Continue w/o context.
+            compcoll = await self.find_radiogroup(
+                "Does the customer need Comprehensive or Collision coverage"
+            )
+            if not await self.field_exists(compcoll, wait_ms=10_000):
+                await self.screenshot("trailer_compcoll_not_revealed")
+                raise RuntimeError(
+                    "AddTrailer Comp/Coll radio (revealed by loan=No) did not "
+                    "appear within 10s — required field would block Continue"
+                )
+            await self.safe_radio(compcoll, apd_answer)
+            print(
+                f"    [Progressive] _set_radio: 'Does the customer need "
+                f"Comprehensive or Collision coverage' = '{apd_answer}'"
             )
             try:
                 await self.wait_for_extjs_idle(timeout_ms=5_000)
