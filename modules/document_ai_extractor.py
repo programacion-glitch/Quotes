@@ -241,7 +241,7 @@ class DocumentAIExtractor:
 
     def classify_attachment(self, filename: str, data: bytes) -> Optional[str]:
         """
-        Determine document type by FILENAME only. No AI fallback.
+        Determine document type by FILENAME, with one narrow content fallback.
 
         Returns one of DOC_TYPES or None.
         """
@@ -254,6 +254,33 @@ class DocumentAIExtractor:
             return "NEW VENTURE APP"
         if self.validator._matches_app_general(filename):
             return "NEW VENTURE APP"
+
+        # Content fallback: agents sometimes name the sheet 'QUOTE - X'
+        # without 'BLUE' (live M&S SERVICES 2026-06-10: 59 filled form fields
+        # silently dropped). If the filename says QUOTE and page 1 carries the
+        # H2O template header, it IS a Blue Quote.
+        if "QUOTE" in filename.upper() and filename.lower().endswith(".pdf"):
+            try:
+                import io
+                from pypdf import PdfReader
+
+                reader = PdfReader(io.BytesIO(data))
+                first = (reader.pages[0].extract_text() or "") if reader.pages else ""
+                if "Commercial Auto Quote Sheet" in first:
+                    # ASCII-only + print isolated from the return: a
+                    # UnicodeEncodeError on a cp1252 console was being
+                    # swallowed by this except and turned a positive match
+                    # into None (live 2026-06-10).
+                    try:
+                        print(
+                            f"    Classified by content: {filename} -> "
+                            f"BLUE QUOTE (template header on page 1)"
+                        )
+                    except Exception:
+                        pass
+                    return "BLUE QUOTE"
+            except Exception:
+                pass
 
         return None
 
@@ -785,15 +812,13 @@ class DocumentAIExtractor:
 
         for att in attachments:
             filename = att["filename"]
-            matched_type: Optional[str] = None
-            for doc_type in DOC_TYPES:
-                if self.validator._matches_document(filename, doc_type):
-                    matched_type = doc_type
-                    break
-            if matched_type is None:
-                # Check APP variants
-                if self.validator._matches_app_invo(filename) or self.validator._matches_app_general(filename):
-                    matched_type = "NEW VENTURE APP"
+            # Single classification path — classify_attachment owns the
+            # filename matching AND the content fallback for quote sheets
+            # named 'QUOTE' without 'BLUE' (this loop used to duplicate the
+            # filename logic inline, silently bypassing the fallback).
+            matched_type: Optional[str] = self.classify_attachment(
+                filename, att["data"]
+            )
 
             if matched_type is None:
                 unclassified.append(filename)

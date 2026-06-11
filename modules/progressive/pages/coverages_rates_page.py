@@ -128,20 +128,26 @@ class CoveragesRatesPage(BasePage):
         For policy-wide defaults we set the first instance of each combobox; the others
         inherit unless explicitly overridden per vehicle (not currently supported).
         """
-        # Comprehensive deductible
+        # Comprehensive deductible. skip_not_selected: a column showing
+        # "Not selected" is a unit we deliberately quoted liability-only
+        # (e.g. trailer with no Value in the Blue Quote). Forcing a deductible
+        # there makes Progressive require Equipment/Trailer Value and the
+        # premium never materializes (live DIBOLL 2026-06-10).
         if coverages.comp_deductible:
             await self._set_combobox_all(
                 "Comprehensive",
                 coverages.comp_deductible,
                 expected_default="$500 Deductible",
+                skip_not_selected=True,
             )
 
-        # Collision deductible
+        # Collision deductible (same liability-only guard as Comprehensive)
         if coverages.coll_deductible:
             await self._set_combobox_all(
                 "Collision",
                 coverages.coll_deductible,
                 expected_default="$500 Deductible",
+                skip_not_selected=True,
             )
 
         # Medical Payments (per vehicle)
@@ -174,8 +180,14 @@ class CoveragesRatesPage(BasePage):
         label: str,
         option_text: str,
         expected_default: Optional[str] = None,
+        skip_not_selected: bool = False,
     ) -> None:
-        """Set EVERY occurrence of a combobox with the given label (one per vehicle)."""
+        """Set EVERY occurrence of a combobox with the given label (one per vehicle).
+
+        skip_not_selected: leave alone any column currently at "Not selected" —
+        that unit was deliberately quoted without this coverage and selecting a
+        value would trigger new required fields (Equipment/Trailer Value).
+        """
         combo_loc = await self.find_combo(label, exact=False)
         count = await combo_loc.count()
         if count == 0:
@@ -184,6 +196,18 @@ class CoveragesRatesPage(BasePage):
         print(f"    [Progressive] Setting {count}x '{label}' = '{option_text}'")
         for i in range(count):
             try:
+                if skip_not_selected:
+                    current = ""
+                    try:
+                        current = (await combo_loc.nth(i).input_value()) or ""
+                    except Exception:
+                        pass
+                    if not current.strip() or "not selected" in current.lower():
+                        print(
+                            f"    [Progressive] '{label}'[{i}] is 'Not selected' "
+                            f"(liability-only unit); leaving as-is"
+                        )
+                        continue
                 await self.safe_select_combo(combo_loc.nth(i), option_text)
             except Exception as e:
                 print(f"    [Progressive] WARN: '{label}'[{i}] = '{option_text}' failed: {e}")
