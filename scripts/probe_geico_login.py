@@ -8,7 +8,10 @@ prove the next quote would skip login/OTP entirely.
 
 NO quote is started — this never leaves the gateway dashboard.
 
-Usage: python scripts/probe_geico_login.py
+Usage:
+    python scripts/probe_geico_login.py                # full: login + reuse check
+    python scripts/probe_geico_login.py --reuse-only   # no fresh login/OTP: only
+                                                       # verify the saved session
 """
 
 import asyncio
@@ -59,35 +62,47 @@ async def main() -> int:
             "other machine or run scripts/gmail_oauth_bootstrap.py"
         )
 
+    reuse_only = "--reuse-only" in sys.argv
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=config.headless)
 
-        # ---- Pass 1: login (reusing prior session if one exists) ----
-        storage = str(_SESSION_STATE) if _SESSION_STATE.exists() else None
-        print(f"[probe] prior session state: {'YES' if storage else 'no'}")
-        ctx = await browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            storage_state=storage,
-        )
-        ctx.set_default_timeout(30_000)
-        page = await ctx.new_page()
+        if not reuse_only:
+            # ---- Pass 1: login (reusing prior session if one exists) ----
+            storage = str(_SESSION_STATE) if _SESSION_STATE.exists() else None
+            print(f"[probe] prior session state: {'YES' if storage else 'no'}")
+            ctx = await browser.new_context(
+                viewport={"width": 1280, "height": 900},
+                storage_state=storage,
+            )
+            ctx.set_default_timeout(30_000)
+            page = await ctx.new_page()
 
-        ok = await LoginPage(page, reader, config.login_url).login(
-            config.username, config.password
-        )
-        if not ok:
-            print("[probe] LOGIN FAILED — see logs/geico_login_*.png")
+            ok = await LoginPage(page, reader, config.login_url).login(
+                config.username, config.password
+            )
+            if not ok:
+                print("[probe] LOGIN FAILED — see logs/geico_login_*.png")
+                await browser.close()
+                return 1
+
+            try:
+                await ctx.storage_state(path=str(_SESSION_STATE))
+                print(f"[probe] session saved -> {_SESSION_STATE}")
+            except Exception as e:
+                print(f"[probe] WARN: could not save session state: {e}")
+            await ctx.close()
+        elif not _SESSION_STATE.exists():
+            print(f"[probe] --reuse-only but no session at {_SESSION_STATE}")
             await browser.close()
             return 1
 
-        try:
-            await ctx.storage_state(path=str(_SESSION_STATE))
-            print(f"[probe] session saved -> {_SESSION_STATE}")
-        except Exception as e:
-            print(f"[probe] WARN: could not save session state: {e}")
-        await ctx.close()
-
         # ---- Pass 2: prove the saved session skips login ----
+        # Navigate like a real quote would: entry point first (gateway ->
+        # ecams bounce decides authenticated-or-not), then the /quote
+        # dashboard. The success signal is the Commercial Auto eligibility
+        # widget actually RENDERING — host checks alone are fooled by
+        # gateway.geico.com/sessionexpireddashboard (single-session-per-agent
+        # symptom, see project memory).
         print("[probe] verifying session reuse in a fresh context...")
         ctx2 = await browser.new_context(
             viewport={"width": 1280, "height": 900},
@@ -96,20 +111,43 @@ async def main() -> int:
         ctx2.set_default_timeout(30_000)
         page2 = await ctx2.new_page()
         await page2.goto(
+            config.login_url, wait_until="networkidle", timeout=45_000
+        )
+        bounced_to_login = (
+            await page2.get_by_role("textbox", name="Username").count() > 0
+        )
+        if bounced_to_login:
+            print(f"[probe] SESSION REUSE FAILED: bounced to sign-in form "
+                  f"({page2.url}) — next quote will need OTP")
+            await browser.close()
+            return 1
+
+        await page2.goto(
             "https://gateway.geico.com/quote",
             wait_until="networkidle",
             timeout=45_000,
         )
-        login_form = page2.get_by_role("textbox", name="Username")
-        bounced_to_login = await login_form.count() > 0
-        on_gateway = _host_is_gateway(page2.url)
-        if on_gateway and not bounced_to_login:
-            print(f"[probe] SESSION REUSE OK -> {page2.url}")
+        expired = "sessionexpired" in page2.url.lower()
+        widget = page2.locator("#labelForCommercialAuto")
+        try:
+            await widget.wait_for(state="visible", timeout=15_000)
+            widget_ok = True
+        except Exception:
+            widget_ok = False
+
+        if _host_is_gateway(page2.url) and widget_ok and not expired:
+            print(f"[probe] SESSION REUSE OK (Commercial Auto widget rendered) "
+                  f"-> {page2.url}")
             result = 0
         else:
+            await page2.screenshot(
+                path=str(ROOT / "logs" / "geico_probe_reuse_failed.png"),
+                full_page=True,
+            )
             print(
                 f"[probe] SESSION REUSE FAILED (url={page2.url}, "
-                f"login_form={bounced_to_login}) — next quote will need OTP"
+                f"expired={expired}, widget={widget_ok}) — next quote will "
+                f"need OTP; screenshot: logs/geico_probe_reuse_failed.png"
             )
             result = 1
         await browser.close()
