@@ -121,6 +121,11 @@ class CoveragesRatesPage(BasePage):
                 count=getattr(coverages, "non_owned_trailer_count", 0) or 1,
             )
 
+        if getattr(coverages, "trailer_interchange_limit", None):
+            await self._configure_trailer_interchange(
+                coverages.trailer_interchange_limit
+            )
+
         # Recalculate if any change was made
         await self._recalculate_if_needed()
 
@@ -310,6 +315,38 @@ class CoveragesRatesPage(BasePage):
             await self.safe_select_combo(combo.first, option_text)
         except Exception as e:
             print(f"    [Progressive] WARN: combobox '{label}' = '{option_text}' failed: {e}")
+            # Learn the REAL option list on failure (e.g. BI '$500,000 CSL'
+            # kept falling back to '$1 million CSL' on DDH 2026-06-11 and we
+            # still don't know what the dropdown actually offers).
+            try:
+                await combo.first.click(timeout=2_000)
+                await self.wait_for_options_open()
+                opts = await self._visible_boundlist_options()
+                print(f"    [Progressive]   '{label}' options visible: {opts[:30]}")
+                await self._close_open_boundlist()
+            except Exception:
+                pass
+            self.warnings.append(
+                f"rates: combobox '{label}' = '{option_text}' failed (kept prior value)"
+            )
+
+    async def _visible_boundlist_options(self) -> list:
+        """Texts of the currently open ExtJS boundlist's visible options."""
+        try:
+            return await self.page.evaluate(
+                """() => {
+                    const out = [];
+                    document.querySelectorAll('li.x-boundlist-item').forEach(el => {
+                        if (el.offsetParent !== null) {
+                            const t = (el.innerText || '').trim();
+                            if (t) out.push(t);
+                        }
+                    });
+                    return out;
+                }"""
+            )
+        except Exception:
+            return []
 
     async def _set_radio(self, group_label: str, value: str) -> None:
         """Click a radio inside a named radiogroup."""
@@ -1214,6 +1251,165 @@ class CoveragesRatesPage(BasePage):
             print(f"    [Progressive] {label} VISIBLE TEXTS: {info.get('visibleTexts', [])}")
         except Exception as e:
             print(f"    [Progressive] {label} dump failed: {e}")
+
+    async def _configure_trailer_interchange(self, limit: str) -> None:
+        """Fill the Trailer Interchange subform.
+
+        First live mapping 2026-06-11 (BQ field 159: LEZAMA '$20.000',
+        WHITE CASTLE '$50.000'). The subform shape is still being learned —
+        dump it on every run until the limit control is confirmed; if its
+        options use the '$Xk with a $Y Deductible' tier format, snap UP to
+        the covering tier like the MTC limit.
+        """
+        print(f"    [Progressive] Configuring Trailer Interchange: {limit}")
+        expanded = await self._expand_coverage("Trailer Interchange")
+        if not expanded:
+            msg = "could not expand Trailer Interchange section"
+            print(f"    [Progressive] WARN: {msg}")
+            self.warnings.append(f"rates: {msg}")
+            return
+
+        # Cascading gate questions (live LEZAMA 2026-06-11): Yes on 'Does the
+        # customer have an interchange agreement…' reveals 'Does the customer
+        # agree to furnish a copy…', which reveals the trailer count. EACH
+        # reveal is a DCT SERVER round-trip that settle_extjs cannot see —
+        # poll for the next control instead of checking once (the furnish
+        # gate was missed by a single check on the 4th LEZAMA run).
+        group = await self.find_radiogroup(
+            "interchange agreement requiring", exact=False
+        )
+        if await group.count() > 0:
+            try:
+                await self.safe_radio(group, "Yes")
+                print("    [Progressive] Trailer Interchange agreement: Yes")
+            except Exception as e:
+                msg = f"Trailer Interchange agreement radio failed: {e}"
+                print(f"    [Progressive] WARN: {msg}")
+                self.warnings.append(f"rates: {msg}")
+                return
+
+        furnish = await self._poll_until_found(
+            lambda: self.find_radiogroup("furnish a copy", exact=False)
+        )
+        if furnish is not None:
+            try:
+                await self.safe_radio(furnish, "Yes")
+                print("    [Progressive] Trailer Interchange furnish copy: Yes")
+            except Exception as e:
+                msg = f"Trailer Interchange 'furnish copy' radio failed: {e}"
+                print(f"    [Progressive] WARN: {msg}")
+                self.warnings.append(f"rates: {msg}")
+                return
+        else:
+            print(
+                "    [Progressive] Trailer Interchange: 'furnish copy' gate "
+                "did not appear within poll window — continuing"
+            )
+
+        # Post-gates the section asks 'Number of Non-Owned Trailers' (how
+        # many non-owned trailers are interchanged — live LEZAMA 2026-06-11).
+        # The Blue Quote only carries the TI LIMIT, not this count: default
+        # to 1 (the minimum that activates the coverage) and surface it for
+        # human review. NOTE: the Non-Owned Trailer Phys Damage section has
+        # an identically-labeled field; TI renders EARLIER in the DOM, and
+        # that section is configured while TI is still collapsed, so .first
+        # resolves correctly in both directions.
+        count_combo = await self._poll_until_found(
+            lambda: self.find_combo("Number of Non-Owned Trailers", exact=False)
+        )
+        if count_combo is not None:
+            try:
+                await self.safe_select_combo(count_combo.first, "1")
+                msg = (
+                    "Trailer Interchange: number of interchanged trailers "
+                    "defaulted to 1 (not in the Blue Quote) — review if the "
+                    "customer interchanges more"
+                )
+                print(f"    [Progressive] {msg}")
+                self.warnings.append(f"rates: {msg}")
+            except Exception as e:
+                msg = f"Trailer Interchange trailer count failed: {e}"
+                print(f"    [Progressive] WARN: {msg}")
+                self.warnings.append(f"rates: {msg}")
+                return
+            await self.settle_extjs()
+
+        # Learning dump: capture what the section contains at this point.
+        await self._dump_section_labels("Trailer Interchange")
+
+        # The limit combo is revealed by the count's own DCT round-trip.
+        combo = await self._poll_until_found(
+            lambda: self.find_combo("Trailer Interchange", exact=False)
+        )
+        if combo is None:
+            msg = "Trailer Interchange limit control not found (see DIAG labels)"
+            print(f"    [Progressive] WARN: {msg}")
+            self.warnings.append(f"rates: {msg}")
+            await self.screenshot("trailer_interchange_section")
+            return
+
+        try:
+            await combo.first.click(timeout=3_000)
+        except Exception as e:
+            print(f"    [Progressive] WARN: Trailer Interchange combo click failed: {e}")
+            return
+        await self.wait_for_options_open()
+        opts = await self._visible_boundlist_options()
+        print(f"    [Progressive] Trailer Interchange options visible: {opts[:30]}")
+
+        amount = self._parse_dollar_amount(limit)
+        chosen = self._choose_mtc_limit_option(opts, amount) if amount else None
+        if not chosen:
+            await self._close_open_boundlist()
+            msg = (
+                f"Trailer Interchange limit {limit!r} could not be matched "
+                f"against the live options (logged above)"
+            )
+            print(f"    [Progressive] WARN: {msg}")
+            self.warnings.append(f"rates: {msg}")
+            return
+
+        chosen_text, chosen_value = chosen
+        if amount and chosen_value != amount:
+            msg = (
+                f"Trailer Interchange limit ${amount:,} not offered — "
+                f"snapped to {chosen_text!r}"
+            )
+            print(f"    [Progressive] {msg}")
+            self.warnings.append(f"rates: {msg}")
+        try:
+            opt = self.page.locator(
+                f"li.x-boundlist-item:has-text({chosen_text!r})"
+            ).first
+            await opt.click(timeout=3_000)
+            print(f"    [Progressive] Trailer Interchange limit selected: {chosen_text!r}")
+        except Exception as e:
+            print(f"    [Progressive] WARN: Trailer Interchange option click failed: {e}")
+            return
+        await self.settle_extjs()
+
+        done = self.page.get_by_role("button", name="Done with this coverage")
+        if await done.count() > 0:
+            await done.first.click(timeout=5_000)
+            await self.wait_for_extjs_idle()
+
+    async def _poll_until_found(self, finder, *, timeout_ms: int = 8_000):
+        """Poll an async locator finder until it has matches, else None.
+
+        Duck Creek reveals follow-up controls via SERVER round-trips that
+        Ext.Ajax-based waits cannot observe — a single existence check after
+        settle_extjs races the reveal (live TI 'furnish copy' gate,
+        2026-06-11). 500ms cadence, same budget shape as _expand_coverage.
+        """
+        elapsed = 0
+        while True:
+            loc = await finder()
+            if await loc.count() > 0:
+                return loc
+            if elapsed >= timeout_ms:
+                return None
+            await self.page.wait_for_timeout(500)
+            elapsed += 500
 
     async def _dump_section_labels(self, fragment: str) -> None:
         """DIAG: print visible form labels + texts containing `fragment`.

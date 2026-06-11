@@ -580,6 +580,9 @@ class DocumentAIExtractor:
             cargo_limit = _str_or_none(cov_data.get("cargo_limit_other")) or cargo_limit
         if cargo_limit:
             cov_kwargs["motor_truck_cargo_limit"] = cargo_limit
+        ti_limit = _str_or_none(cov_data.get("trailer_interchange_limit"))
+        if ti_limit:
+            cov_kwargs["trailer_interchange_limit"] = ti_limit
         coverages_detail = CoveragesProfile(**cov_kwargs)
 
         # Units

@@ -68,6 +68,13 @@ class MockLocator:
         "Please take a look",
         "This field is required",
         "invalid",
+        # Login-rejected phrases polled by _wait_login_outcome — none are
+        # present in a successful login.
+        "incorrect",
+        "locked",
+        "does not match",
+        "unable to log",
+        "try again",
         # VehicleSummary presence check — absence means we DID advance
         "Here are the vehicles on the quote",
     )
@@ -106,6 +113,11 @@ class MockLocator:
         _t(f"FILL {self.path} = {value!r}")
 
     async def click(self, **_):
+        # Clicking 'Log In' authenticates the mock session: the User ID form
+        # disappears, which is exactly how _wait_login_outcome detects 'home'
+        # (a successful login keeps the ?Welcome= query, so URL is no signal).
+        if "role=button" in self.path and "Log In" in self.path:
+            self.page._logged_in = True
         # Clicking a NAMED dropdown option commits that option's text as the
         # combo's value. Combobox clicks (role=combobox) only open the dropdown
         # and must NOT change the value. An unnamed option query leaves it as-is.
@@ -168,6 +180,8 @@ class MockLocator:
 
     async def is_visible(self) -> bool:
         """Return True for any locator not in NOT_FOUND_MARKERS."""
+        if "user id" in self.path.lower() and getattr(self.page, "_logged_in", False):
+            return False  # login form gone after authentication
         for marker in self.NOT_FOUND_MARKERS:
             if marker.lower() in self.path.lower():
                 return False
@@ -208,6 +222,8 @@ class MockLocator:
     async def count(self) -> int:
         if self._explicit_count is not None:
             return self._explicit_count
+        if "user id" in self.path.lower() and getattr(self.page, "_logged_in", False):
+            return 0  # login form gone after authentication
         for marker in self.NOT_FOUND_MARKERS:
             if marker.lower() in self.path.lower():
                 return 0
@@ -226,6 +242,7 @@ class MockPage:
         self.url = url
         self.keyboard = MockKeyboard()
         self._title = title
+        self._logged_in = False
 
     async def goto(self, url, **_):
         _t(f"GOTO {url}")

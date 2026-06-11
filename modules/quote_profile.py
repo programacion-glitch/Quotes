@@ -148,6 +148,9 @@ class CoveragesProfile:
     # Progressive's subform asks for the COUNT, not a limit (live 2026-06-11).
     non_owned_trailer_count: int = 0
 
+    # Trailer Interchange (BQ field 159, e.g. "$20.000" handwritten)
+    trailer_interchange_limit: Optional[str] = None
+
     # Hired Auto Liability (see imagenesprogressive/image.png)
     hired_auto: bool = False
     hired_auto_spent_last_year: str = "$5,000 or less"   # "$5,000 or less" | "More than $5,000"
