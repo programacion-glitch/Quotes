@@ -563,7 +563,10 @@ class BusinessInfoPage(BasePage):
         group = await self.find_radiogroup(
             "Do any listed vehicles or the load require a hazardous material placard?"
         )
-        if not await self.field_exists(group, wait_ms=1_500):
+        # 4s window: the question renders AFTER the Type-of-Trucker repaint and
+        # intermittently outlasted the old 1.5s check (live LQZ re-run
+        # 2026-06-10: silent skip -> START blocked on the unanswered group).
+        if not await self.field_exists(group, wait_ms=4_000):
             return  # Question didn't appear (not all types trigger it)
 
         answer = "Yes" if has_placard else "No"
@@ -585,8 +588,18 @@ class BusinessInfoPage(BasePage):
         print(f"    [Progressive] Setting owner: {owner_name}")
 
         parts = owner_name.strip().split()
+        # Generational suffixes go in Progressive's separate Suffix combo, and
+        # the trailing period in 'SR.' fails the Last Name charset validation
+        # (letters/numbers/hyphen/apostrophe only — live ALPHA 2026-06-10).
+        # Dropping the suffix is safe: it isn't material to rating.
+        _SUFFIXES = {"SR", "JR", "II", "III", "IV", "V"}
+        while len(parts) > 2 and parts[-1].rstrip(".").upper() in _SUFFIXES:
+            parts = parts[:-1]
         first_name = parts[0] if parts else ""
         last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
+        # Progressive's charset validation also rejects stray periods
+        # (e.g. middle initials like 'E.').
+        last_name = last_name.replace(".", "").strip()
 
         await self._fill_owner_name_field("First Name", first_name)
         await self._fill_owner_name_field("Last Name", last_name)
@@ -816,6 +829,32 @@ class BusinessInfoPage(BasePage):
                 if attempt == 2:
                     break  # give up
                 print(f"    [Progressive] Start quote did not advance; retry click {attempt + 1}/2")
+                # If the page is complaining the USDOT was never verified, the
+                # original Verify click didn't take effect (live CMC
+                # 2026-06-10: the 'belongs to customer' skip masked it as
+                # auto-confirmed). Redo Verify before retrying the submit.
+                try:
+                    complaint = self.page.get_by_text(
+                        "Verify USDOT button", exact=False
+                    )
+                    if (
+                        await complaint.count() > 0
+                        and await complaint.first.is_visible()
+                    ):
+                        print(
+                            "    [Progressive] START page demands USDOT "
+                            "verification — re-clicking Verify"
+                        )
+                        await self._click_verify_usdot()
+                except Exception:
+                    pass
+                # Idempotent re-answer of the late-rendering hazmat group —
+                # the only required radio we default that can outlast its
+                # fill window (live LQZ re-run 2026-06-10).
+                try:
+                    await self._answer_hazmat_placard(False)
+                except Exception:
+                    pass
                 await self.page.wait_for_timeout(3000)
                 try:
                     await btn.first.click(timeout=10_000, force=True)
@@ -853,6 +892,7 @@ class BusinessInfoPage(BasePage):
                         if (!isReallyVisible(e)) return;
                         const t = (e.textContent || '').trim();
                         if (t === 'This field is required' ||
+                            t === 'You must select one item in this group' ||
                             t.startsWith('Please take a look at the')) {
                             // Try to attach the field label sitting next to
                             // the error message for context.
