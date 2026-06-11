@@ -238,14 +238,19 @@ class QuoteFlow:
             return result
 
         except RuntimeError as e:
-            result.error = str(e)
+            result.error = await self._enrich_if_server_error(
+                str(e), result.step_reached
+            )
             result.screenshot_path = await self._take_error_screenshot(
                 result.step_reached
             )
             return result
 
         except Exception as e:
-            result.error = f"Unexpected error at step '{result.step_reached}': {e}"
+            result.error = await self._enrich_if_server_error(
+                f"Unexpected error at step '{result.step_reached}': {e}",
+                result.step_reached,
+            )
             result.screenshot_path = await self._take_error_screenshot(
                 result.step_reached
             )
@@ -342,6 +347,29 @@ class QuoteFlow:
 
         # Sub-page 3: summary -> Looks Good -> advance to Step 5.
         await DriverSummaryPage(wizard_page).click_looks_good()
+
+    async def _enrich_if_server_error(self, err_text: str, step: str) -> str:
+        """When the wizard died on GEICO's hard server-error page ('There was
+        a problem while processing... Start Over'), name it in the error so
+        the batch report distinguishes a TRANSIENT server failure (re-run the
+        quote later) from a selector/logic bug. Live HUMBERTO 2026-06-11: the
+        Add Driver submit landed here and the raw error misleadingly read
+        \"Could not click button 'Looks Good'\"."""
+        try:
+            page = getattr(self, "_active_page", None) or self.page
+            n = await page.get_by_text(
+                "There was a problem while processing", exact=False
+            ).count()
+            if n > 0:
+                return (
+                    f"GEICO transient server error page at step '{step}' "
+                    f"('There was a problem while processing the information "
+                    f"you submitted') — re-run this quote later. "
+                    f"Original: {err_text}"
+                )
+        except Exception:
+            pass
+        return err_text
 
     async def _take_error_screenshot(self, step: str) -> Optional[str]:
         try:
