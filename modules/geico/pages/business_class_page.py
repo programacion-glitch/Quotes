@@ -19,10 +19,35 @@ All selectors validated live during the mapping session against USDOT
 2033673 (HUMBERTO).
 """
 
+import json
+from pathlib import Path
+
 from playwright.async_api import Page
 
+from modules.geico.business_class_resolver import resolve_business_class
 from modules.geico.field_mapper import MappedFields
 from modules.geico.pages.base_page import BasePage
+
+
+# Catalog of the 1,596 Business Class options, dumped once from the live
+# Select2's underlying native <select> and reused offline by the resolver.
+_CATALOG_PATH = (
+    Path(__file__).resolve().parents[3] / "data" / "geico_business_classes.json"
+)
+
+# Read every option text from the page's LARGEST <select> — the business
+# class one dwarfs the rest (1,596 options vs <60 anywhere else).
+_JS_DUMP_LARGEST_SELECT = """
+    () => {
+        let best = null;
+        for (const s of document.querySelectorAll('select')) {
+            if (!best || s.options.length > best.options.length) best = s;
+        }
+        if (!best) return [];
+        return Array.from(best.options)
+            .map(o => (o.text || '').trim()).filter(t => t.length > 0);
+    }
+"""
 
 
 class BusinessClassPage(BasePage):
@@ -140,15 +165,17 @@ class BusinessClassPage(BasePage):
 
     async def _select_business_class(self, business_class) -> None:
         """
-        Pick the business class from the ~1,599-option list.
+        Pick the business class from the ~1,596-option list.
 
         The field is a **Select2** widget (jQuery): a hidden native <select>
         plus a `[role=combobox]` overlay. Setting the native <select> via JS
         does NOT satisfy the widget's validation ("Please make a selection"
         persists) — only driving the overlay works. Verified live 2026-05-28.
 
-        Flow: click the combobox -> type into the `[role=searchbox]` to filter
-        -> click the matching `[role=option]` in the listbox.
+        When the mapped/raw value matches nothing, the resolver kicks in:
+        catalog (dumped once from the native select) -> learned cache -> AI
+        over prefiltered candidates (decision remembered in
+        data/learned_mappings.xlsx). Only if THAT fails does the quote HALT.
         """
         if not business_class:
             await self.screenshot("step1_business_class_missing")
@@ -159,42 +186,32 @@ class BusinessClassPage(BasePage):
 
         print(f"    [GEICO] Step 1: Selecting business class {business_class!r}")
         try:
-            combo = self.page.locator('[role="combobox"]').first
-            await combo.wait_for(state="visible", timeout=10_000)
-            await combo.click(timeout=5_000)
-            await self.page.wait_for_timeout(400)
+            if await self._select2_pick(business_class):
+                return
 
-            search = self.page.locator('input[role="searchbox"]').first
-            await search.wait_for(state="visible", timeout=5_000)
-            # Real keystrokes so Select2's keyup filter fires.
-            await search.fill(business_class)
-            await self.page.wait_for_timeout(700)
-
-            options = self.page.locator('[role="listbox"] [role="option"]')
-            count = await options.count()
-            if count == 0:
-                # The full string (with "& ( )") may over-filter; retry with
-                # a shorter distinctive prefix.
-                prefix = business_class.split("(")[0].strip()[:18]
-                await search.fill(prefix)
-                await self.page.wait_for_timeout(700)
-                options = self.page.locator('[role="listbox"] [role="option"]')
-                count = await options.count()
-
-            # Prefer the exact-text option; else take the first remaining.
-            exact = self.page.locator(
-                '[role="listbox"] [role="option"]', has_text=business_class
-            )
-            target = exact.first if await exact.count() > 0 else options.first
-            if count == 0:
+            # No match: resolve via catalog + learned cache + AI.
+            catalog = await self._ensure_catalog()
+            resolved, source = resolve_business_class(business_class, catalog)
+            if not resolved:
                 await self.screenshot("step1_business_class_no_match")
                 raise RuntimeError(
                     f"Business class {business_class!r} produced no matching "
-                    f"options in the Select2 list"
+                    f"options in the Select2 list and could not be resolved "
+                    f"(catalog={len(catalog)} opts, learned cache + AI miss). "
+                    f"Add a correction to data/learned_mappings.xlsx "
+                    f"(decision_type=geico_business_class)."
                 )
-            await target.click(timeout=10_000)
-            # The hazmat sub-question may render after this; give it a tick.
-            await self.page.wait_for_timeout(800)
+            print(
+                f"    [GEICO] Step 1: business class resolved via {source}: "
+                f"{business_class!r} -> {resolved!r}"
+            )
+            if not await self._select2_pick(resolved):
+                await self.screenshot("step1_business_class_resolved_no_match")
+                raise RuntimeError(
+                    f"Resolved business class {resolved!r} (via {source}) "
+                    f"still produced no Select2 match — catalog may be stale; "
+                    f"delete data/geico_business_classes.json to re-dump."
+                )
         except RuntimeError:
             raise
         except Exception as e:
@@ -202,6 +219,71 @@ class BusinessClassPage(BasePage):
             raise RuntimeError(
                 f"Business class {business_class!r} selection failed: {e}"
             ) from e
+
+    async def _select2_pick(self, label: str) -> bool:
+        """Drive the Select2 overlay: open -> type -> click the option.
+        Returns False when the filter yields no options (caller resolves)."""
+        combo = self.page.locator('[role="combobox"]').first
+        await combo.wait_for(state="visible", timeout=10_000)
+        await combo.click(timeout=5_000)
+        await self.page.wait_for_timeout(400)
+
+        search = self.page.locator('input[role="searchbox"]').first
+        await search.wait_for(state="visible", timeout=5_000)
+        # Real keystrokes so Select2's keyup filter fires.
+        await search.fill(label)
+        await self.page.wait_for_timeout(700)
+
+        options = self.page.locator('[role="listbox"] [role="option"]')
+        count = await options.count()
+        if count == 0:
+            # The full string (with "& ( )") may over-filter; retry with a
+            # shorter distinctive prefix.
+            prefix = label.split("(")[0].strip()[:18]
+            await search.fill(prefix)
+            await self.page.wait_for_timeout(700)
+            options = self.page.locator('[role="listbox"] [role="option"]')
+            count = await options.count()
+
+        if count == 0:
+            # Close the dropdown so a retry starts clean.
+            await self.page.keyboard.press("Escape")
+            return False
+
+        # Prefer the exact-text option; else take the first remaining.
+        exact = self.page.locator(
+            '[role="listbox"] [role="option"]', has_text=label
+        )
+        target = exact.first if await exact.count() > 0 else options.first
+        await target.click(timeout=10_000)
+        # The hazmat sub-question may render after this; give it a tick.
+        await self.page.wait_for_timeout(800)
+        return True
+
+    async def _ensure_catalog(self) -> list:
+        """Load the business-class catalog; dump it from the live page's
+        largest native <select> on first use (learning instrumentation —
+        the next quote resolves offline)."""
+        if _CATALOG_PATH.exists():
+            try:
+                return json.loads(_CATALOG_PATH.read_text(encoding="utf-8"))
+            except Exception as e:
+                self.note_warning(f"business-class catalog unreadable: {e}")
+        options = await self.page.evaluate(_JS_DUMP_LARGEST_SELECT)
+        if isinstance(options, list) and len(options) > 400:
+            try:
+                _CATALOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+                _CATALOG_PATH.write_text(
+                    json.dumps(options, indent=1, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                print(
+                    f"    [GEICO] Step 1: business-class catalog dumped "
+                    f"({len(options)} opts) -> {_CATALOG_PATH.name}"
+                )
+            except Exception as e:
+                self.note_warning(f"business-class catalog write failed: {e}")
+        return options if isinstance(options, list) else []
 
     async def _answer_hazmat_placard(self, has_hazmat: bool) -> None:
         """

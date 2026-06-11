@@ -8,9 +8,15 @@ get_attribute) and page.inner_text / page.title.
 
 from __future__ import annotations
 
+import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+# The business-class resolver falls back to the network AI proxy when a
+# commodity isn't resolvable offline. Disable that path for the whole suite
+# (tests that exercise the AI branch inject a FakeClassifier explicitly).
+os.environ.setdefault("GEICO_AI_BUSINESS_CLASS", "0")
 
 
 @pytest.fixture
