@@ -13,12 +13,14 @@ may do a login/OTP and the rest reuse it — do NOT run anything else against
 the GEICO portal while a batch is running (single session per agent).
 
 Usage:
-    python scripts/batch_geico.py [folder] [effective_date|-] [limit]
+    python scripts/batch_geico.py [folder] [effective_date|-] [limit] [offset]
 
 Defaults:
     folder         = "data/input 10 Junio"
     effective_date = (use '-' or omit -> GEICO default, tomorrow)
     limit          = all PDFs (pass e.g. 4 for a validation mini-batch)
+    offset         = 0 (skip the first N PDFs — avoid re-quoting the same
+                     clients more than ~3x/day)
 """
 
 import json
@@ -66,14 +68,18 @@ def main() -> int:
     if effective == "-":
         effective = None
     limit = int(sys.argv[3]) if len(sys.argv) > 3 else None
+    offset = int(sys.argv[4]) if len(sys.argv) > 4 else 0
 
     pdfs = sorted(folder.glob("*.pdf"))
     if not pdfs:
         print(f"[batch] no PDFs in {folder}")
         return 1
+    if offset:
+        print(f"[batch] OFFSET {offset}: skipping the first {offset} PDFs")
+        pdfs = pdfs[offset:]
     if limit:
         print(f"[batch] LIMIT {limit}: validation mini-batch "
-              f"({len(pdfs)} PDFs available)")
+              f"({len(pdfs)} PDFs after offset)")
         pdfs = pdfs[:limit]
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)

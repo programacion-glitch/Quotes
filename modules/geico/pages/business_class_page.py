@@ -65,6 +65,18 @@ class BusinessClassPage(BasePage):
         """
         print("    [GEICO] Step 1: Business Class & USDOT")
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
+        # The wizard backend can sit on the 'Please wait...' spinner well past
+        # networkidle (live DIBOLL 2026-06-11: title stuck at 'GEICO Gateway'
+        # >10s) — gate on the Step 1 title before touching any field.
+        try:
+            await self.wait_for_any_title(
+                ["Business Class & USDOT"], timeout_ms=60_000
+            )
+        except TimeoutError as e:
+            await self.screenshot("step1_never_mounted")
+            raise RuntimeError(
+                f"Step 1 wizard never mounted (still on spinner/gateway): {e}"
+            ) from e
         await self.remove_overlays()
         # The Dashboard drawer auto-opens when the FMCSA data lands and the
         # form reflows under it — collapse it before touching any control.

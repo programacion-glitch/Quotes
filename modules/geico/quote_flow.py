@@ -88,6 +88,13 @@ class QuoteFlow:
     async def run(self, fields: MappedFields) -> QuoteResult:
         """Execute the full quote flow up to FINAL QUOTE DETAILS (no payment)."""
         result = QuoteResult()
+        # Per-quote slug so batch screenshots don't overwrite each other
+        # (geico_error_vehicles.png held ON THE GO's form while debugging
+        # DIBOLL's failure, 2026-06-11).
+        import re as _re
+        self._slug = _re.sub(
+            r"[^A-Za-z0-9]+", "_", (fields.business_name or "quote")
+        ).strip("_")[:24]
 
         try:
             # ----- Step 1: Login + MFA -----
@@ -377,6 +384,24 @@ class QuoteFlow:
             # there); fall back to the gateway tab for earlier failures.
             page = getattr(self, "_active_page", None) or self.page
             base = BasePage(page)
-            return await base.screenshot(f"error_{step}")
+            # Learning instrumentation: every failure teaches the real DOM
+            # (visible questions/selects/buttons) so the next fix is
+            # surgical, not guessed.
+            slug = getattr(self, "_slug", "quote")
+            try:
+                ctx = await base.dump_debug_context(f"error_{step}_{slug}")
+                print(f"    [GEICO] DEBUG CONTEXT at '{step}': "
+                      f"title={ctx.get('title')!r}")
+                for q in ctx.get("visible_questions", []):
+                    print(f"      question: {q!r}")
+                for s in ctx.get("visible_selects", []):
+                    print(f"      select: id={s.get('id')!r} "
+                          f"value={s.get('value')!r} "
+                          f"first_options={s.get('first_options')}")
+                for b in ctx.get("visible_buttons", [])[:10]:
+                    print(f"      button: {b!r}")
+            except Exception:
+                pass
+            return await base.screenshot(f"error_{step}_{slug}")
         except Exception:
             return None
