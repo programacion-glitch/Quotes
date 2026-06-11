@@ -1,16 +1,19 @@
 """
 Surgical diagnostic for the Step 1 'Is this the customer's business?' radio.
 
-The 2026-06-11 HUMBERTO run failed with RadioStuckError: clicks landed
-without exception but the radio never read as checked (screenshot confirms
-both cards unchecked). This script reuses the saved session, drives to
-Step 1, and in ONE session:
+The 2026-06-11 HUMBERTO runs failed with RadioStuckError: clicks landed
+without exception but the radio never read as checked. This script reuses
+the saved session (full re-login fallback), drives to Step 1, and in ONE
+session:
 
   1. Dumps the real DOM of every gds-radio-button-group (light DOM +
      each gds-radio-button's attributes + shadowRoot innerHTML).
   2. Tries click strategies in order on the customer's-business 'Yes'
-     radio, reading the full checked-state (aria-checked, attrs, shadow
+     radio, reading the full checked-state (checked attr, aria, shadow
      input.checked) after each, and reports WHICH one commits.
+
+Lesson already encoded: match groups by textContent, NOT innerText — the
+question text lives in light DOM that innerText (rendered text) misses.
 
 Output: logs/diag_step1_radios.json + console summary. No Next click —
 the quote is abandoned afterwards.
@@ -43,6 +46,7 @@ from modules.gmail_api_otp_reader import GmailAPIOTPReader
 
 USDOT = "2033673"
 ZIP = "77705"
+_VIEWPORT = {"width": 1920, "height": 1080}
 
 JS_DUMP_GROUPS = """
 () => {
@@ -50,7 +54,7 @@ JS_DUMP_GROUPS = """
     return Array.from(document.querySelectorAll('gds-radio-button-group'))
         .filter(vis)
         .map(g => ({
-            question: (g.innerText || '').trim().split('\\n')[0].slice(0, 90),
+            question: (g.textContent || '').trim().split('\\n')[0].slice(0, 90),
             attrs: Object.fromEntries(
                 Array.from(g.attributes).map(a => [a.name, a.value])
             ),
@@ -58,7 +62,7 @@ JS_DUMP_GROUPS = """
                 attrs: Object.fromEntries(
                     Array.from(b.attributes).map(a => [a.name, a.value])
                 ),
-                text: (b.innerText || '').trim().slice(0, 40),
+                text: (b.textContent || '').trim().slice(0, 40),
                 ariaChecked: b.getAttribute('aria-checked'),
                 shadowHTML: b.shadowRoot
                     ? b.shadowRoot.innerHTML.slice(0, 600)
@@ -73,19 +77,20 @@ JS_DUMP_GROUPS = """
 }
 """
 
+# textContent + apostrophe-agnostic anchor ('business?') — innerText missed
+# the question text entirely on the first diag run.
 JS_READ_STATE = """
-(args) => {
+() => {
     const groups = Array.from(
         document.querySelectorAll('gds-radio-button-group')
-    ).filter(g => (g.innerText || '').toLowerCase()
-        .includes(args.q.toLowerCase()));
+    ).filter(g => (g.textContent || '').includes('business?'));
     if (!groups.length) return {error: 'group-not-found'};
-    const g = groups[0];
+    const g = groups[groups.length - 1];
     return Array.from(g.querySelectorAll('gds-radio-button')).map(b => {
         const i = b.shadowRoot
             && b.shadowRoot.querySelector('input[type=radio]');
         return {
-            text: (b.innerText || '').trim().slice(0, 20),
+            text: (b.textContent || '').trim().slice(0, 20),
             value: b.getAttribute('value'),
             checked_attr: b.hasAttribute('checked'),
             aria: b.getAttribute('aria-checked'),
@@ -95,11 +100,9 @@ JS_READ_STATE = """
 }
 """
 
-Q = "customer's business"
-
 
 async def read_state(page):
-    return await page.evaluate(JS_READ_STATE, {"q": "customer’s business"})
+    return await page.evaluate(JS_READ_STATE)
 
 
 async def main() -> int:
@@ -111,7 +114,7 @@ async def main() -> int:
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=config.headless)
         ctx = await browser.new_context(
-            viewport={"width": 1280, "height": 900},
+            viewport=_VIEWPORT,
             storage_state=str(_SESSION_STATE),
         )
         ctx.set_default_timeout(30_000)
@@ -178,12 +181,13 @@ async def main() -> int:
                         """() => {
                             const gs = Array.from(document.querySelectorAll(
                                 'gds-radio-button-group'
-                            )).filter(g => (g.innerText||'')
+                            )).filter(g => (g.textContent||'')
                                 .includes('business?'));
                             if (!gs.length) return 'no-group';
                             const b = Array.from(
-                                gs[0].querySelectorAll('gds-radio-button')
-                            ).find(x => (x.innerText||'').trim() === 'Yes');
+                                gs[gs.length - 1]
+                                    .querySelectorAll('gds-radio-button')
+                            ).find(x => (x.textContent||'').trim() === 'Yes');
                             if (!b) return 'no-button';
                             const sh = b.shadowRoot;
                             const input = sh && sh.querySelector(

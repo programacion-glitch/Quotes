@@ -38,6 +38,10 @@ from modules.geico.client import GEICOConfig, _SESSION_STATE
 from modules.geico.pages.login_page import LoginPage, _host_is_gateway
 from modules.gmail_api_otp_reader import GmailAPIOTPReader
 
+# 1920px wide: the wizard's right-hand Dashboard sidebar DOCKS at desktop
+# width; at 1280px it floats as a drawer OVER the form (2026-06-11).
+_VIEWPORT = {"width": 1920, "height": 1080}
+
 
 async def main() -> int:
     config = GEICOConfig.from_env()
@@ -71,7 +75,7 @@ async def main() -> int:
             storage = str(_SESSION_STATE) if _SESSION_STATE.exists() else None
             print(f"[probe] prior session state: {'YES' if storage else 'no'}")
             ctx = await browser.new_context(
-                viewport={"width": 1280, "height": 900},
+                viewport=_VIEWPORT,
                 storage_state=storage,
             )
             ctx.set_default_timeout(30_000)
@@ -105,7 +109,7 @@ async def main() -> int:
         # symptom, see project memory).
         print("[probe] verifying session reuse in a fresh context...")
         ctx2 = await browser.new_context(
-            viewport={"width": 1280, "height": 900},
+            viewport=_VIEWPORT,
             storage_state=str(_SESSION_STATE),
         )
         ctx2.set_default_timeout(30_000)

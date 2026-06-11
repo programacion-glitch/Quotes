@@ -37,6 +37,14 @@ def _host_is_gateway(url: str) -> bool:
     return host == "gateway.geico.com" or host.endswith(".gateway.geico.com")
 
 
+def _is_live_gateway(url: str) -> bool:
+    """Authenticated AND alive: gateway host, but NOT the session-expired
+    page. GEICO enforces a single session per agent — when another browser
+    takes it, the gateway serves /sessionexpireddashboard with no login
+    form, which fooled the host-only check (live 2026-06-11)."""
+    return _host_is_gateway(url) and "sessionexpired" not in url.lower()
+
+
 class LoginPage(BasePage):
     """GEICO Azure B2C login + email-MFA flow."""
 
@@ -69,12 +77,24 @@ class LoginPage(BasePage):
             try:
                 await username_box.wait_for(state="visible", timeout=30_000)
             except Exception:
-                # No sign-in form. If we're genuinely on the gateway with the
-                # dashboard rendered, accept it; otherwise re-raise.
-                if _host_is_gateway(self.page.url):
+                # No sign-in form. Accept only a LIVE gateway (the
+                # session-expired page also has no form — false positive).
+                if _is_live_gateway(self.page.url):
                     print(f"    [GEICO] Already authenticated -> {self.page.url}")
                     return True
-                raise
+                if "sessionexpired" in self.page.url.lower():
+                    # Stale cookies (another browser took the single agent
+                    # session). Force a fresh ecams -> b2c bounce and log in
+                    # with credentials.
+                    print("    [GEICO] Session expired page — forcing re-login...")
+                    await self.page.goto(
+                        "https://gateway.geico.com/dashboard",
+                        wait_until="networkidle",
+                        timeout=45_000,
+                    )
+                    await username_box.wait_for(state="visible", timeout=30_000)
+                else:
+                    raise
 
             print("    [GEICO] Entering credentials...")
             await username_box.fill(username)
@@ -96,7 +116,7 @@ class LoginPage(BasePage):
         mfa_radio = self.page.locator("#extension_mfaByPhoneOrEmail_email")
         mfa_needed = False
         for _ in range(60):  # up to ~30s (60 * 500ms)
-            if _host_is_gateway(self.page.url):
+            if _is_live_gateway(self.page.url):
                 print(f"    [GEICO] Logged in without MFA -> {self.page.url}")
                 return True
             try:
@@ -110,7 +130,7 @@ class LoginPage(BasePage):
         if not mfa_needed:
             # Neither gateway nor MFA selector within the window. One last
             # gateway check in case the redirect landed during the final tick.
-            if _host_is_gateway(self.page.url):
+            if _is_live_gateway(self.page.url):
                 print(f"    [GEICO] Logged in without MFA -> {self.page.url}")
                 return True
             print("    [GEICO] Neither gateway nor MFA selector appeared")
@@ -182,7 +202,7 @@ class LoginPage(BasePage):
         # Wait for redirect to GEICO Gateway (host-checked, not substring).
         try:
             await self.page.wait_for_url(
-                lambda url: _host_is_gateway(url), timeout=30_000
+                lambda url: _is_live_gateway(url), timeout=30_000
             )
             print(f"    [GEICO] Login successful -> {self.page.url}")
             return True

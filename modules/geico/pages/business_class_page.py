@@ -41,6 +41,9 @@ class BusinessClassPage(BasePage):
         print("    [GEICO] Step 1: Business Class & USDOT")
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         await self.remove_overlays()
+        # The Dashboard drawer auto-opens when the FMCSA data lands and the
+        # form reflows under it — collapse it before touching any control.
+        await self.collapse_dashboard_drawer()
 
         try:
             await self._confirm_zip(fields.zip_code)

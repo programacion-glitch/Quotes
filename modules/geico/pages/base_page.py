@@ -44,7 +44,7 @@ def _flex_text_regex(substring: str) -> "re.Pattern":
     # Swap apostrophes for a private-use placeholder BEFORE re.escape (which
     # would turn ' into \' and break a naive post-escape replace), then
     # substitute the apostrophe character class back in.
-    _APOS = ""
+    _APOS = chr(0xE000)  # private-use placeholder, EXPLICIT escape: an inline
     norm = substring.strip().replace("'", _APOS).replace("’", _APOS)
     parts = re.split(r"\s+", norm)
     escaped = r"\s+".join(re.escape(p) for p in parts)
@@ -142,18 +142,73 @@ _JS_GROUP_RADIO_STATE = """
 # (e.g. the FMCSA address preview) are visible before their custom elements
 # upgrade — a click during that window is a silent no-op (live HUMBERTO
 # 2026-06-11: 3 click rounds landed on a pre-hydration host).
+# textContent, NOT innerText: the question text is in the group's light DOM
+# but innerText (rendered text) misses it — diag JS using innerText reported
+# 'group-not-found' while Playwright's has_text (textContent) matched.
 _JS_GDS_GROUP_READY = """
     (src) => {
         let re;
         try { re = new RegExp(src, 'i'); } catch (e) { return true; }
         const gs = Array.from(
             document.querySelectorAll('gds-radio-button-group')
-        ).filter(g => re.test(g.innerText || ''));
+        ).filter(g => re.test(g.textContent || ''));
         if (!gs.length) return false;
         const btns = Array.from(gs[0].querySelectorAll('gds-radio-button'));
         return btns.length > 0 && btns.every(
             b => b.shadowRoot && b.shadowRoot.querySelector('input')
         );
+    }
+"""
+
+# Collapse the wizard's right-hand Dashboard drawer when expanded. It
+# auto-opens as the FMCSA lookup populates it and the form REFLOWS while it
+# animates — click targets shift mid-flight (user-observed live 2026-06-11;
+# bisect hit-test: the Yes card moved x=551 -> 668 on collapse).
+_JS_COLLAPSE_DRAWER = """
+    () => {
+        const panel = Array.from(document.querySelectorAll('div.panel'))
+            .find(p => p.offsetParent !== null
+                && (p.textContent || '').includes('Rated State')
+                && p.getBoundingClientRect().x > window.innerWidth * 0.6);
+        if (!panel) return 'absent';
+        const toggle = Array.from(document.querySelectorAll(
+            'span.geico-icon, [class*="toggle" i], [class*="collapse" i], '
+            + '[class*="chevron" i]'
+        )).filter(el => {
+            const r = el.getBoundingClientRect();
+            return el.offsetParent !== null
+                && r.x > window.innerWidth * 0.6
+                && r.width > 0 && r.width < 80 && r.y < 200;
+        })[0];
+        if (!toggle) return 'no-toggle';
+        toggle.click();
+        return 'collapsed';
+    }
+"""
+
+# Click the answer radio's shadow LABEL (or input) directly — dispatches the
+# event inside the shadow DOM, immune to host-element retargeting quirks.
+# This is the strategy that committed the FMCSA-preview Yes in the live diag.
+_JS_SHADOW_RADIO_CLICK = """
+    (args) => {
+        let re;
+        try { re = new RegExp(args.src, 'i'); } catch (e) { return 'bad-regex'; }
+        const gs = Array.from(
+            document.querySelectorAll('gds-radio-button-group')
+        ).filter(g => re.test(g.textContent || ''));
+        if (!gs.length) return 'no-group';
+        const want = (args.answer || '').trim().toLowerCase();
+        const btns = Array.from(gs[0].querySelectorAll('gds-radio-button'));
+        const b = btns.find(x =>
+                ((x.getAttribute('value') || '').trim().toLowerCase() === want))
+            || btns.find(x =>
+                ((x.textContent || '').trim().toLowerCase() === want));
+        if (!b) return 'no-button';
+        const sh = b.shadowRoot;
+        const label = sh && sh.querySelector('label');
+        const input = sh && sh.querySelector('input[type=radio]');
+        (label || input || b).click();
+        return 'clicked';
     }
 """
 
@@ -599,48 +654,58 @@ class BasePage:
         if await self._radio_checked_state(gds_group, answer) is True:
             return
 
-        attempts_locators = []
-        # 1. value attribute match (Yes/No and most labels).
-        attempts_locators.append(
-            gds_group.locator(f'gds-radio-button[value="{answer}"]')
-        )
-        # 2. gds-radio-button whose trimmed text is exactly the answer.
+        # Click strategies. A "successful" Playwright click can still be a
+        # silent no-op on these custom elements (live HUMBERTO 2026-06-11:
+        # the host click never committed but a deeper strategy did), so each
+        # strategy is VERIFIED and, on an unchecked read, the NEXT strategy
+        # runs — never re-hammer the one that just failed.
         answer_re = re.compile(rf"^\s*{re.escape(answer)}\s*$")
-        attempts_locators.append(
-            gds_group.locator("gds-radio-button").filter(has_text=answer_re)
-        )
-        # 3. accessible radio role within the group.
-        attempts_locators.append(
-            gds_group.get_by_role("radio", name=answer, exact=True)
-        )
-        # 4. exact answer label text within the group.
-        attempts_locators.append(gds_group.get_by_text(answer, exact=True))
-        # 5. generic fallback: role=group + text-anchor.
         grp = self.page.get_by_role("group").filter(has_text=q_re)
-        attempts_locators.append(grp.get_by_role("radio", name=answer, exact=True))
+        strategies = [
+            # 1. value attribute match (Yes/No and most labels).
+            gds_group.locator(f'gds-radio-button[value="{answer}"]'),
+            # 2. gds-radio-button whose trimmed text is exactly the answer.
+            gds_group.locator("gds-radio-button").filter(has_text=answer_re),
+            # 3. accessible radio role within the group.
+            gds_group.get_by_role("radio", name=answer, exact=True),
+            # 4. exact answer label text within the group.
+            gds_group.get_by_text(answer, exact=True),
+            # 5. generic fallback: role=group + text-anchor.
+            grp.get_by_role("radio", name=answer, exact=True),
+            # 6. JS click on the shadow label/input (committed the
+            #    FMCSA-preview Yes in the live diag).
+            "js-shadow",
+        ]
 
         last_err = None
         total_rounds = 0
         for round_idx in range(retries + 1):
             total_rounds = round_idx + 1
-            clicked = False
-            for loc in attempts_locators:
+            for strat in strategies:
+                clicked = False
                 try:
-                    if await loc.count() == 0:
-                        continue
-                    el = loc.first
-                    try:
-                        await el.scroll_into_view_if_needed(timeout=3_000)
-                    except Exception:
-                        pass
-                    await el.click(timeout=timeout)
-                    clicked = True
-                    break
+                    if strat == "js-shadow":
+                        outcome = await self.page.evaluate(
+                            _JS_SHADOW_RADIO_CLICK,
+                            {"src": q_re.pattern, "answer": answer},
+                        )
+                        clicked = outcome == "clicked"
+                    else:
+                        if await strat.count() == 0:
+                            continue
+                        el = strat.first
+                        try:
+                            await el.scroll_into_view_if_needed(timeout=3_000)
+                        except Exception:
+                            pass
+                        await el.click(timeout=timeout)
+                        clicked = True
                 except Exception as e:  # noqa: PERF203
                     last_err = e
                     continue
+                if not clicked:
+                    continue
 
-            if clicked:
                 state = await self._poll_radio_checked(gds_group, answer)
                 if state is True:
                     return
@@ -650,7 +715,7 @@ class BasePage:
                         f"checked-state unreadable (shadow DOM) — click unverified"
                     )
                     return
-                # state is False -> the click did not commit; retry.
+                # state is False -> this strategy didn't commit; try the next.
 
             if round_idx < retries:
                 await self.page.wait_for_timeout(400 * (round_idx + 1))
@@ -705,7 +770,10 @@ class BasePage:
             pass
         try:
             radio = gds_group.get_by_role("radio", name=answer, exact=True).first
-            return bool(await radio.is_checked())
+            # Explicit short timeout: this runs inside a poll loop; the
+            # context default (30s) would turn 4 poll reads into 2 minutes
+            # when the role isn't resolvable.
+            return bool(await radio.is_checked(timeout=2_000))
         except Exception:
             return None
 
@@ -714,7 +782,7 @@ class BasePage:
         gds_group: Locator,
         answer: str,
         *,
-        attempts: int = 8,
+        attempts: int = 4,
         interval_ms: int = 200,
     ) -> Optional[bool]:
         """Poll the checked state after a click — the design system commits
@@ -773,6 +841,22 @@ class BasePage:
                     .forEach(el => el.remove());
             }
         """)
+
+    async def collapse_dashboard_drawer(self) -> None:
+        """Collapse the wizard's right-hand Dashboard drawer if expanded.
+
+        It auto-opens when the FMCSA lookup populates it; while it animates
+        the form reflows and click targets shift mid-flight (user-observed
+        interference, live 2026-06-11). Collapsing once at step entry
+        stabilizes the layout for the whole wizard. Soft no-op when the
+        drawer is absent or already collapsed."""
+        try:
+            result = await self.page.evaluate(_JS_COLLAPSE_DRAWER)
+            if result == "collapsed":
+                print("    [GEICO] Dashboard drawer collapsed (layout stabilized)")
+                await self.page.wait_for_timeout(600)  # let the reflow settle
+        except Exception:
+            pass
 
     # ============================================================
     # Familia C — Esperas por condición

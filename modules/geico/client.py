@@ -182,8 +182,12 @@ async def _run_with_browser(config: GEICOConfig, fields) -> QuoteResult:
             storage_state = (
                 str(_SESSION_STATE) if _SESSION_STATE.exists() else None
             )
+            # 1920px wide: the wizard's right-hand Dashboard sidebar DOCKS at
+            # desktop width; at 1280px it floats as a drawer OVER the form
+            # right when the FMCSA preview loads (user-observed interference,
+            # 2026-06-11).
             context = await browser.new_context(
-                viewport={"width": 1280, "height": 900},
+                viewport={"width": 1920, "height": 1080},
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36"

@@ -526,9 +526,11 @@ def map_profile_to_fields(
     has_current_ins = bool(applicant.current_carrier)
 
     return MappedFields(
-        usdot=applicant.usdot or None,
+        # Extractor values can carry stray whitespace ('2033673 ') — strip
+        # identifiers before they reach fills/lookups (Progressive fa4005a).
+        usdot=(applicant.usdot or "").strip() or None,
         business_name=biz_name or None,
-        zip_code=applicant.zip_code,
+        zip_code=(applicant.zip_code or "").strip() or None,
         effective_date=effective_date,
         owner_first_name=owner_first or None,
         owner_last_name=owner_last or None,
