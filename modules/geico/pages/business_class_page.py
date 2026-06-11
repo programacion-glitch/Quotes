@@ -49,6 +49,51 @@ _JS_DUMP_LARGEST_SELECT = """
     }
 """
 
+# Visible radio groups with NO checked option — the business-class-dependent
+# conditionals GEICO reveals after the class commits (live NUNEZ 2026-06-11:
+# 'Package Delivery' revealed the food-TNC and Amazon questions and Next
+# refused to advance).
+_JS_UNANSWERED_GROUPS = """
+    () => Array.from(document.querySelectorAll('gds-radio-button-group'))
+        .filter(g => g.offsetParent !== null)
+        .filter(g => !Array.from(g.querySelectorAll('gds-radio-button'))
+            .some(b => {
+                const i = b.shadowRoot
+                    && b.shadowRoot.querySelector('input[type=radio]');
+                return i ? i.checked : b.hasAttribute('checked');
+            }))
+        .map(g => (g.textContent || '').trim()
+            .replace(/\\s+/g, ' ').slice(0, 160));
+"""
+
+# Defaults for the business-class-dependent conditionals. Keyed by a
+# distinctive question substring; value = (answer, soft). `soft=True` marks a
+# judgment-call default that must surface as a QuoteResult warning for human
+# review (the BlueQuote simply doesn't carry the answer). Catalog of hidden
+# groups observed live via MCP, 2026-06-11.
+_CONDITIONAL_DEFAULTS = (
+    ("food-based transportation network", ("No", False)),
+    ("deliver packages for amazon", ("No", True)),
+    ("seasonal or temporary workers", ("No", False)),
+    ("transport clients for a fee", ("No", False)),
+    ("team driving or slip seating", ("No", False)),
+    ("children to/from daycare", ("No", False)),
+    ("oil and gas fields", ("No", True)),
+    ("coiled steel", ("No", True)),
+    ("state or federal filing", ("Neither", False)),
+)
+
+
+def _match_conditional_default(question_text: str):
+    """Return (answer, soft) for a known Step-1 conditional question, or
+    (None, False) when the question is new — the caller HALTs loudly so the
+    unknown gets mapped instead of silently mis-answered."""
+    q = " ".join((question_text or "").lower().split())
+    for needle, (answer, soft) in _CONDITIONAL_DEFAULTS:
+        if needle in q:
+            return answer, soft
+    return None, False
+
 
 class BusinessClassPage(BasePage):
     """GEICO wizard - Step 1: Business Class & USDOT."""
@@ -89,6 +134,7 @@ class BusinessClassPage(BasePage):
             await self._answer_eld(fields.has_eld)
             await self._select_business_class(fields.business_class)
             await self._answer_hazmat_placard(fields.has_hazmat_placard)
+            await self._answer_revealed_conditionals()
             await self._click_next()
             await self._wait_for_step2()
         except RuntimeError:
@@ -326,6 +372,52 @@ class BusinessClassPage(BasePage):
         except Exception as e:
             await self.screenshot("step1_hazmat")
             raise RuntimeError(f"Hazmat placard radio click failed: {e}") from e
+
+    async def _answer_revealed_conditionals(self) -> None:
+        """Answer every business-class-dependent conditional GEICO revealed.
+
+        Cascade-aware: answering one can reveal another (Amazon Yes would
+        reveal the app picker), so loop until no unanswered group remains.
+        Unknown questions HALT loudly so they get mapped instead of silently
+        mis-answered; judgment-call defaults surface as warnings."""
+        for _ in range(6):
+            try:
+                unanswered = await self.page.evaluate(_JS_UNANSWERED_GROUPS)
+            except Exception:
+                return
+            if not isinstance(unanswered, list):
+                return
+            # Hazmat has its own field-mapped path; skip it here.
+            pending = [
+                q for q in unanswered
+                if "hazardous material" not in q.lower()
+            ]
+            if not pending:
+                return
+            for question in pending:
+                q_norm = " ".join(question.lower().split())
+                matched = next(
+                    ((n, a, s) for n, (a, s) in _CONDITIONAL_DEFAULTS
+                     if n in q_norm),
+                    None,
+                )
+                if matched is None:
+                    await self.screenshot("step1_unknown_conditional")
+                    raise RuntimeError(
+                        f"Step 1 revealed an UNMAPPED conditional question: "
+                        f"{question!r} — map it in _CONDITIONAL_DEFAULTS "
+                        f"(business_class_page)."
+                    )
+                needle, answer, soft = matched
+                if soft:
+                    self.note_warning(
+                        f"Step 1 conditional {needle!r} -> {answer} "
+                        f"(defaulted; BlueQuote carries no answer — review)"
+                    )
+                else:
+                    print(f"    [GEICO] Step 1 conditional "
+                          f"{needle!r} -> {answer}")
+                await self.click_question_radio(needle, answer)
 
     async def _click_next(self) -> None:
         """Click the bottom 'Next' button to advance to Step 2."""
