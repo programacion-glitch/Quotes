@@ -125,11 +125,36 @@ async def test_select_by_js_sets_and_verifies(mock_page):
 # click_question_radio (shadow-DOM verified)
 # ============================================================
 
-async def test_radio_returns_when_verified_checked(mock_page, mock_locator):
-    mock_locator.is_checked = AsyncMock(return_value=True)
+async def test_radio_skips_click_when_already_checked(mock_page, mock_locator):
+    # Pre-check: the JS probe reads checked=True before any click (the
+    # customer's-business Yes arrives pre-checked on some quotes). Radio
+    # clicks are idempotent but skipping avoids hydration races entirely.
+    mock_locator.evaluate = AsyncMock(return_value=True)
+    bp = BasePage(mock_page)
+    await bp.click_question_radio("Does the customer have an ELD", "No")
+    mock_locator.click.assert_not_awaited()
+
+
+async def test_radio_clicks_then_verifies_checked(mock_page, mock_locator):
+    # Pre-check False -> click -> post-check True.
+    mock_locator.evaluate = AsyncMock(side_effect=[False, True])
     bp = BasePage(mock_page)
     await bp.click_question_radio("Does the customer have an ELD", "No")
     mock_locator.click.assert_awaited()
+
+
+async def test_radio_waits_for_gds_hydration_before_clicking(mock_page, mock_locator):
+    # The group mounts AFTER a server round-trip (FMCSA preview) and a click
+    # on a not-yet-hydrated custom element is a silent no-op (live HUMBERTO
+    # 2026-06-11). The primitive must wait for every gds-radio-button in the
+    # group to have its shadow input before interacting.
+    mock_locator.evaluate = AsyncMock(side_effect=[False, True])
+    bp = BasePage(mock_page)
+    await bp.click_question_radio("Is this the customer's business", "Yes")
+    js_calls = [
+        args.args[0] for args in mock_page.wait_for_function.await_args_list
+    ]
+    assert any("shadowRoot" in js for js in js_calls)
 
 
 async def test_radio_raises_when_persistently_unchecked(mock_page, mock_locator):

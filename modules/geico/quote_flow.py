@@ -118,33 +118,47 @@ class QuoteFlow:
             # page the failure actually happened on.
             self._active_page = wizard_page
 
+            # Each page object accumulates fail-soft warnings in
+            # .warnings (BasePage.note_warning); harvest them into the
+            # result so the batch report shows what was skipped/defaulted.
+
             # ----- Step 3: Business Class & USDOT (wizard Step 1) -----
             result.step_reached = "business_class"
-            await BusinessClassPage(wizard_page).fill_and_submit(fields)
+            biz_class = BusinessClassPage(wizard_page)
+            await biz_class.fill_and_submit(fields)
+            result.warnings.extend(biz_class.warnings)
 
             # ----- Step 4: Business & Owner Info (wizard Step 2) -----
             result.step_reached = "business_owner"
-            await BusinessOwnerPage(wizard_page).fill_and_submit(fields)
+            biz_owner = BusinessOwnerPage(wizard_page)
+            await biz_owner.fill_and_submit(fields)
+            result.warnings.extend(biz_owner.warnings)
 
             # ----- Step 5: Vehicles (wizard Step 3) - loop + summary -----
             result.step_reached = "vehicles"
-            await self._add_all_vehicles(wizard_page, fields)
+            await self._add_all_vehicles(wizard_page, fields, result)
 
             # ----- Step 6: Drivers & Incidents (wizard Step 4) -----
             result.step_reached = "drivers"
-            await self._configure_drivers(wizard_page, fields)
+            await self._configure_drivers(wizard_page, fields, result)
 
             # ----- Step 7: Additional Business Info (wizard Step 5) -----
             result.step_reached = "additional_business"
-            await AdditionalBusinessPage(wizard_page).fill_and_submit(fields)
+            addl_biz = AdditionalBusinessPage(wizard_page)
+            await addl_biz.fill_and_submit(fields)
+            result.warnings.extend(addl_biz.warnings)
 
             # ----- Step 8: DriveEasy Pro (wizard Step 5b, dynamic) -----
             result.step_reached = "driveeasy"
-            await DriveEasyProPage(wizard_page).skip_to_coverages()
+            driveeasy = DriveEasyProPage(wizard_page)
+            await driveeasy.skip_to_coverages()
+            result.warnings.extend(driveeasy.warnings)
 
             # ----- Step 9: Quote & Coverages (wizard Step 6) — PRICE + PDF -----
             result.step_reached = "coverages"
-            price, pdf_url = await CoveragesPage(wizard_page).capture_and_advance()
+            coverages_page = CoveragesPage(wizard_page)
+            price, pdf_url = await coverages_page.capture_and_advance()
+            result.warnings.extend(coverages_page.warnings)
             result.price = price
 
             # Download the quote PDF using the authenticated browser session.
@@ -171,7 +185,9 @@ class QuoteFlow:
             # vehicle owner + owned/leased, but DOES NOT click the final Next
             # (that would trigger MVR/CLUE and PAYMENT — out of cotización scope).
             result.step_reached = "final_details"
-            await FinalDetailsPage(wizard_page).fill_and_stop(fields)
+            final_details = FinalDetailsPage(wizard_page)
+            await final_details.fill_and_stop(fields)
+            result.warnings.extend(final_details.warnings)
 
             # Take a confirmation screenshot of the filled final-details page.
             try:
@@ -237,7 +253,9 @@ class QuoteFlow:
 
     # ---- Sub-flows ----
 
-    async def _add_all_vehicles(self, wizard_page: Page, fields: MappedFields) -> None:
+    async def _add_all_vehicles(
+        self, wizard_page: Page, fields: MappedFields, result: QuoteResult
+    ) -> None:
         """Loop over fields.vehicles. For each: entry form → comp/coll sub-page.
         After the last one, click 'Looks Good' to advance to Drivers step.
 
@@ -252,16 +270,23 @@ class QuoteFlow:
 
         for i, vehicle in enumerate(fields.vehicles):
             print(f"    [GEICO] Vehicle {i + 1}/{len(fields.vehicles)}")
-            await VehicleEntryPage(wizard_page).fill_and_submit(vehicle)
-            await CompCollSubPage(wizard_page).answer(vehicle.has_comp_coll)
+            entry = VehicleEntryPage(wizard_page)
+            await entry.fill_and_submit(vehicle)
+            result.warnings.extend(entry.warnings)
+            comp_coll = CompCollSubPage(wizard_page)
+            await comp_coll.answer(vehicle.has_comp_coll)
+            result.warnings.extend(comp_coll.warnings)
             summary = VehicleSummaryPage(wizard_page)
             is_last = i == len(fields.vehicles) - 1
             if is_last:
                 await summary.click_looks_good()
             else:
                 await summary.add_another()
+            result.warnings.extend(summary.warnings)
 
-    async def _configure_drivers(self, wizard_page: Page, fields: MappedFields) -> None:
+    async def _configure_drivers(
+        self, wizard_page: Page, fields: MappedFields, result: QuoteResult
+    ) -> None:
         """Fill the owner placeholder (sub-page 1), then loop over non-excluded
         drivers via Add Driver (sub-page 2), then click Looks Good (sub-page 3)
         to advance to Step 5 'Additional Business Info'.
@@ -297,7 +322,9 @@ class QuoteFlow:
                 is_owner=True,
                 is_excluded=not fields.owner_is_driver,
             )
-        await DriverPlaceholderPage(wizard_page).fill_owner_placeholder(owner_record)
+        placeholder = DriverPlaceholderPage(wizard_page)
+        await placeholder.fill_owner_placeholder(owner_record)
+        result.warnings.extend(placeholder.warnings)
 
         # Sub-page 2: Add Driver for each non-excluded driver. The page lands
         # on the entry form for the first one; after Save and Continue it goes
@@ -309,7 +336,9 @@ class QuoteFlow:
             )
             if i > 0:
                 await DriverSummaryPage(wizard_page).add_another()
-            await AddDriverPage(wizard_page).fill_and_submit(driver)
+            add_form = AddDriverPage(wizard_page)
+            await add_form.fill_and_submit(driver)
+            result.warnings.extend(add_form.warnings)
 
         # Sub-page 3: summary -> Looks Good -> advance to Step 5.
         await DriverSummaryPage(wizard_page).click_looks_good()

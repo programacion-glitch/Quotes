@@ -96,7 +96,7 @@ class BusinessOwnerPage(BasePage):
             await self.page.keyboard.press("Tab")
             await self.page.wait_for_timeout(300)
         except Exception as e:
-            print(f"    [GEICO] WARN: failed to set Coverage Start Date: {e}")
+            self.note_warning(f"failed to set Coverage Start Date: {e}")
             await self.screenshot("step2_coverage_start_date_error")
 
     # ------------------------------------------------------------------
@@ -140,9 +140,9 @@ class BusinessOwnerPage(BasePage):
                     ["Single", "Widowed"], marital
                 )
             except Exception as e:
-                print(f"    [GEICO] WARN: marital status select failed: {e}")
+                self.note_warning(f"marital status select failed: {e}")
         except Exception as e:
-            print(f"    [GEICO] WARN: owner personal block failed: {e}")
+            self.note_warning(f"owner personal block failed: {e}")
             await self.screenshot("step2_owner_personal_error")
 
     # ------------------------------------------------------------------
@@ -164,7 +164,7 @@ class BusinessOwnerPage(BasePage):
                 if await box.count() > 0:
                     await box.first.fill(fields.owner_phone, timeout=5_000)
                 else:
-                    print("    [GEICO] WARN: owner phone textbox not found")
+                    self.note_warning("owner phone textbox not found")
 
             if fields.owner_email is not None:
                 print(f"    [GEICO] Step 2: Email -> {fields.owner_email}")
@@ -178,9 +178,9 @@ class BusinessOwnerPage(BasePage):
                 if await box.count() > 0:
                     await box.first.fill(fields.owner_email, timeout=5_000)
                 else:
-                    print("    [GEICO] WARN: email textbox not found")
+                    self.note_warning("email textbox not found")
         except Exception as e:
-            print(f"    [GEICO] WARN: owner contact block failed: {e}")
+            self.note_warning(f"owner contact block failed: {e}")
             await self.screenshot("step2_owner_contact_error")
 
     # ------------------------------------------------------------------
@@ -241,7 +241,7 @@ class BusinessOwnerPage(BasePage):
                         except Exception:
                             pass
                     if not selected:
-                        print("    [GEICO] WARN: no Places suggestion selected; "
+                        self.note_warning("no Places suggestion selected; "
                               "address may remain invalid")
                     await self.page.wait_for_timeout(600)
 
@@ -274,7 +274,7 @@ class BusinessOwnerPage(BasePage):
                                 "auto-pop, skipping"
                             )
                 except Exception as e:
-                    print(f"    [GEICO] WARN: ZIP overwrite failed: {e}")
+                    self.note_warning(f"ZIP overwrite failed: {e}")
 
             if fields.owner_city:
                 print(f"    [GEICO] Step 2: City -> {fields.owner_city}")
@@ -286,12 +286,12 @@ class BusinessOwnerPage(BasePage):
                     )
                 except Exception as e:
                     # Fall back to trusting auto-pop.
-                    print(
-                        f"    [GEICO] WARN: city select failed "
+                    self.note_warning(
+                        f"city select failed "
                         f"(trusting auto-pop): {e}"
                     )
         except Exception as e:
-            print(f"    [GEICO] WARN: business address block failed: {e}")
+            self.note_warning(f"business address block failed: {e}")
             await self.screenshot("step2_business_address_error")
 
     # ------------------------------------------------------------------
@@ -312,7 +312,7 @@ class BusinessOwnerPage(BasePage):
                         fields.business_ownership_type,
                     )
                 except Exception as e:
-                    print(f"    [GEICO] WARN: ownership-type select failed: {e}")
+                    self.note_warning(f"ownership-type select failed: {e}")
 
             if fields.business_name is not None:
                 print(
@@ -328,7 +328,7 @@ class BusinessOwnerPage(BasePage):
                 if await box.count() > 0:
                     await box.first.fill(fields.business_name, timeout=5_000)
                 else:
-                    print("    [GEICO] WARN: business name textbox not found")
+                    self.note_warning("business name textbox not found")
 
             if fields.owner_phone is not None:
                 print(
@@ -344,9 +344,9 @@ class BusinessOwnerPage(BasePage):
                 if await box.count() > 0:
                     await box.first.fill(fields.owner_phone, timeout=5_000)
                 else:
-                    print("    [GEICO] WARN: business phone textbox not found")
+                    self.note_warning("business phone textbox not found")
         except Exception as e:
-            print(f"    [GEICO] WARN: business info block failed: {e}")
+            self.note_warning(f"business info block failed: {e}")
             await self.screenshot("step2_business_info_error")
 
     # ------------------------------------------------------------------
@@ -364,7 +364,7 @@ class BusinessOwnerPage(BasePage):
                 "owner a driver on the policy", "No"
             )
         except Exception as e:
-            print(f"    [GEICO] WARN: owner-is-driver radio failed: {e}")
+            self.note_warning(f"owner-is-driver radio failed: {e}")
             await self.screenshot("step2_owner_is_driver_error")
 
     # ------------------------------------------------------------------

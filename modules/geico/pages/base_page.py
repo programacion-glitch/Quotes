@@ -113,17 +113,47 @@ _JS_NATIVE_SELECT = """
     }
 """
 
-# Probe the real checked state of a gds-radio-button whose input lives in
-# shadow DOM. Returns true/false, or null when the state is unreadable.
-_JS_RADIO_STATE = """
-    (el) => {
-        const input = el.shadowRoot
-            && el.shadowRoot.querySelector('input[type=radio]');
-        if (input) return input.checked;
-        const aria = el.getAttribute('aria-checked');
+# Probe the real checked state of the `answer` radio inside a
+# gds-radio-button-group (evaluated ON the group element). aria-checked does
+# NOT exist on gds radios — the truth is the shadow input.checked / the
+# host's 'checked' attribute (diag live 2026-06-11,
+# logs/diag_step1_radios.json). Returns true/false, null when unreadable.
+_JS_GROUP_RADIO_STATE = """
+    (g, answer) => {
+        const want = (answer || '').trim().toLowerCase();
+        const btns = Array.from(g.querySelectorAll('gds-radio-button'));
+        const b = btns.find(x =>
+                ((x.getAttribute('value') || '').trim().toLowerCase() === want))
+            || btns.find(x =>
+                ((x.innerText || '').trim().toLowerCase() === want));
+        if (!b) return null;
+        const i = b.shadowRoot
+            && b.shadowRoot.querySelector('input[type=radio]');
+        if (i) return i.checked;
+        if (b.hasAttribute('checked')) return true;
+        const aria = b.getAttribute('aria-checked');
         if (aria !== null) return aria === 'true';
-        if (el.hasAttribute('checked')) return true;
         return null;
+    }
+"""
+
+# True once every gds-radio-button of the question's group is HYDRATED
+# (shadowRoot with an input). Groups that mount after a server round-trip
+# (e.g. the FMCSA address preview) are visible before their custom elements
+# upgrade — a click during that window is a silent no-op (live HUMBERTO
+# 2026-06-11: 3 click rounds landed on a pre-hydration host).
+_JS_GDS_GROUP_READY = """
+    (src) => {
+        let re;
+        try { re = new RegExp(src, 'i'); } catch (e) { return true; }
+        const gs = Array.from(
+            document.querySelectorAll('gds-radio-button-group')
+        ).filter(g => re.test(g.innerText || ''));
+        if (!gs.length) return false;
+        const btns = Array.from(gs[0].querySelectorAll('gds-radio-button'));
+        return btns.length > 0 && btns.every(
+            b => b.shadowRoot && b.shadowRoot.querySelector('input')
+        );
     }
 """
 
@@ -560,6 +590,15 @@ class BasePage:
         except Exception:
             pass  # strategies below may still find it via role=group
 
+        # Visible != interactive: wait for the group's custom elements to
+        # hydrate (soft — non-gds fallback pages have no such elements).
+        await self.wait_for_gds_radios_ready(q_re, timeout_ms=8_000)
+
+        # Pre-check: some radios arrive already checked (USDOT 'Yes', the
+        # FMCSA-preview 'Yes' on some quotes). Skip the click entirely.
+        if await self._radio_checked_state(gds_group, answer) is True:
+            return
+
         attempts_locators = []
         # 1. value attribute match (Yes/No and most labels).
         attempts_locators.append(
@@ -602,7 +641,7 @@ class BasePage:
                     continue
 
             if clicked:
-                state = await self._radio_checked_state(gds_group, answer)
+                state = await self._poll_radio_checked(gds_group, answer)
                 if state is True:
                     return
                 if state is None:
@@ -629,35 +668,68 @@ class BasePage:
             debug_context=debug,
         )
 
+    async def wait_for_gds_radios_ready(
+        self, question_re: "re.Pattern", *, timeout_ms: int = 8_000
+    ) -> bool:
+        """Wait until every gds-radio-button of the question's group has its
+        shadow input (= hydrated and clickable). Soft: returns False on
+        timeout instead of raising — generic role=group fallback pages have
+        no gds elements at all."""
+        try:
+            await self.page.wait_for_function(
+                _JS_GDS_GROUP_READY,
+                arg=question_re.pattern,
+                timeout=timeout_ms,
+            )
+            return True
+        except Exception:
+            return False
+
     async def _radio_checked_state(
         self, gds_group: Locator, answer: str
     ) -> Optional[bool]:
         """Read the checked state of the `answer` radio inside the group.
 
-        Returns True/False when readable, None when no strategy could read
-        it (shadow DOM without a11y exposure). Polls briefly on the a11y
-        path because the design system commits state a beat after the click.
+        JS probe first — the truth is the shadow input.checked / host
+        'checked' attribute; aria-checked does not exist on gds radios
+        (diag live 2026-06-11). a11y is_checked as fallback. Returns None
+        when no strategy could read the state.
         """
-        readable: Optional[bool] = None
-        # Strategy 1: a11y role (Playwright pierces open shadow roots).
         try:
-            radio = gds_group.get_by_role("radio", name=answer, exact=True).first
-            for _ in range(6):
-                if await radio.is_checked():
-                    return True
-                readable = False
-                await self.page.wait_for_timeout(150)
-        except Exception:
-            pass
-        # Strategy 2: JS probe of the custom element's shadow input.
-        try:
-            el = gds_group.locator(f'gds-radio-button[value="{answer}"]').first
-            state = await el.evaluate(_JS_RADIO_STATE)
+            state = await gds_group.first.evaluate(
+                _JS_GROUP_RADIO_STATE, answer
+            )
             if isinstance(state, bool):
                 return state
         except Exception:
             pass
-        return readable
+        try:
+            radio = gds_group.get_by_role("radio", name=answer, exact=True).first
+            return bool(await radio.is_checked())
+        except Exception:
+            return None
+
+    async def _poll_radio_checked(
+        self,
+        gds_group: Locator,
+        answer: str,
+        *,
+        attempts: int = 8,
+        interval_ms: int = 200,
+    ) -> Optional[bool]:
+        """Poll the checked state after a click — the design system commits
+        a beat later. True as soon as seen; None (unreadable) immediately;
+        False after the budget."""
+        last: Optional[bool] = None
+        for i in range(attempts):
+            last = await self._radio_checked_state(gds_group, answer)
+            if last is True:
+                return True
+            if last is None:
+                return None
+            if i < attempts - 1:
+                await self.page.wait_for_timeout(interval_ms)
+        return last
 
     # ============================================================
     # DEPRECATED select helpers — unverified; do not use in new code.

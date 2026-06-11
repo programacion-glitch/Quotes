@@ -77,8 +77,8 @@ class VehicleEntryPage(BasePage):
                         _VEHICLE_TYPE_OPTIONS_SIGNATURE,
                         vehicle.vehicle_type,
                     )
-                except RuntimeError as e:
-                    print(f"    [GEICO] WARN: Vehicle Type select failed: {e}")
+                except Exception as e:
+                    self.note_warning(f"Vehicle Type select failed: {e}")
 
         # 4. Garaging address is auto-populated; leave it.
 
@@ -91,8 +91,8 @@ class VehicleEntryPage(BasePage):
                 _DISTANCE_OPTIONS_SIGNATURE,
                 vehicle.one_way_distance,
             )
-        except RuntimeError as e:
-            print(f"    [GEICO] WARN: distance select failed: {e}")
+        except Exception as e:
+            self.note_warning(f"distance select failed: {e}")
 
         # 6. Radio "Is this vehicle ever used for personal use?"
         await self.click_question_radio(
@@ -157,7 +157,7 @@ class CompCollSubPage(BasePage):
                 "Yes" if want_comp_coll else "No",
             )
         except Exception as e:
-            print(f"    [GEICO] WARN: comp/coll radio click failed: {e}")
+            self.note_warning(f"comp/coll radio click failed: {e}")
 
         await self.remove_overlays()
         next_btn = self.page.get_by_role("button", name="Next")

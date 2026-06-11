@@ -106,8 +106,8 @@ class DriverPlaceholderPage(BasePage):
                 timeout=20_000,
             )
         except Exception:
-            print(
-                "    [GEICO] WARN: owner-placeholder license-state select not "
+            self.note_warning(
+                "owner-placeholder license-state select not "
                 "detected within 20s; proceeding anyway"
             )
 
@@ -120,8 +120,8 @@ class DriverPlaceholderPage(BasePage):
                 _LICENSE_STATE_OPTIONS_SIGNATURE, state
             )
         except Exception as e:
-            print(
-                f"    [GEICO] WARN: owner placeholder license state "
+            self.note_warning(
+                f"owner placeholder license state "
                 f"select failed: {e}"
             )
             await self.screenshot("step4_placeholder_license_state_error")
@@ -147,7 +147,7 @@ class DriverPlaceholderPage(BasePage):
                 "does this driver have a CDL", "Yes" if answer else "No"
             )
         except Exception as e:
-            print(f"    [GEICO] WARN: owner placeholder CDL radio failed: {e}")
+            self.note_warning(f"owner placeholder CDL radio failed: {e}")
             await self.screenshot("step4_placeholder_cdl_error")
 
     async def _click_next(self) -> None:
@@ -197,7 +197,7 @@ class AddDriverPage(BasePage):
 
     async def _fill_first_name(self, driver: MappedDriver) -> None:
         if not driver.first_name:
-            print("    [GEICO] WARN: driver missing first_name, skipping field")
+            self.note_warning("driver missing first_name, skipping field")
             return
         try:
             print(f"    [GEICO] Step 4: First Name -> {driver.first_name}")
@@ -205,12 +205,12 @@ class AddDriverPage(BasePage):
             await box.first.wait_for(state="visible", timeout=10_000)
             await box.first.fill(driver.first_name, timeout=5_000)
         except Exception as e:
-            print(f"    [GEICO] WARN: First Name fill failed: {e}")
+            self.note_warning(f"First Name fill failed: {e}")
             await self.screenshot("step4_add_driver_first_name_error")
 
     async def _fill_last_name(self, driver: MappedDriver) -> None:
         if not driver.last_name:
-            print("    [GEICO] WARN: driver missing last_name, skipping field")
+            self.note_warning("driver missing last_name, skipping field")
             return
         try:
             print(f"    [GEICO] Step 4: Last Name -> {driver.last_name}")
@@ -218,7 +218,7 @@ class AddDriverPage(BasePage):
             await box.first.wait_for(state="visible", timeout=10_000)
             await box.first.fill(driver.last_name, timeout=5_000)
         except Exception as e:
-            print(f"    [GEICO] WARN: Last Name fill failed: {e}")
+            self.note_warning(f"Last Name fill failed: {e}")
             await self.screenshot("step4_add_driver_last_name_error")
 
     async def _select_suffix(self, driver: MappedDriver) -> None:
@@ -231,12 +231,12 @@ class AddDriverPage(BasePage):
                 _SUFFIX_OPTIONS_SIGNATURE, driver.suffix
             )
         except Exception as e:
-            print(f"    [GEICO] WARN: Suffix select failed: {e}")
+            self.note_warning(f"Suffix select failed: {e}")
             await self.screenshot("step4_add_driver_suffix_error")
 
     async def _fill_date_of_birth(self, driver: MappedDriver) -> None:
         if not driver.date_of_birth:
-            print("    [GEICO] WARN: driver missing date_of_birth")
+            self.note_warning("driver missing date_of_birth")
             return
         try:
             print(f"    [GEICO] Step 4: DOB -> {driver.date_of_birth}")
@@ -248,7 +248,7 @@ class AddDriverPage(BasePage):
             await self.page.keyboard.press("Tab")
             await self.page.wait_for_timeout(300)
         except Exception as e:
-            print(f"    [GEICO] WARN: DOB fill failed: {e}")
+            self.note_warning(f"DOB fill failed: {e}")
             await self.screenshot("step4_add_driver_dob_error")
 
     async def _select_license_state(self, driver: MappedDriver) -> None:
@@ -259,7 +259,7 @@ class AddDriverPage(BasePage):
                 _LICENSE_STATE_OPTIONS_SIGNATURE, state
             )
         except Exception as e:
-            print(f"    [GEICO] WARN: License State select failed: {e}")
+            self.note_warning(f"License State select failed: {e}")
             await self.screenshot("step4_add_driver_license_state_error")
 
     async def _answer_relationship(self, driver: MappedDriver) -> None:
@@ -277,7 +277,7 @@ class AddDriverPage(BasePage):
                 "what is their relationship to the business", relationship
             )
         except Exception as e:
-            print(f"    [GEICO] WARN: Relationship radio click failed: {e}")
+            self.note_warning(f"Relationship radio click failed: {e}")
             await self.screenshot("step4_add_driver_relationship_error")
 
     async def _answer_has_cdl(self, driver: MappedDriver) -> None:
@@ -290,7 +290,7 @@ class AddDriverPage(BasePage):
                 "does this driver have a CDL", "Yes" if answer else "No"
             )
         except Exception as e:
-            print(f"    [GEICO] WARN: CDL radio failed: {e}")
+            self.note_warning(f"CDL radio failed: {e}")
             await self.screenshot("step4_add_driver_cdl_error")
 
     async def _handle_incidents(self, driver: MappedDriver) -> None:
@@ -301,8 +301,8 @@ class AddDriverPage(BasePage):
         check on Step 8 will surface real violations regardless.
         """
         if driver.has_incidents:
-            print(
-                f"    [GEICO] WARN: driver "
+            self.note_warning(
+                f"driver "
                 f"{driver.first_name} {driver.last_name} has_incidents=True "
                 f"but incident entry is OUT OF SCOPE for Block 3 — leaving "
                 f"driving history blank (MVR on Step 8 will catch violations)"

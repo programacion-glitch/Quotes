@@ -107,7 +107,7 @@ class FinalDetailsPage(BasePage):
                 "worker's compensation coverage", label
             )
         except Exception as e:
-            print(f"    [GEICO] WARN: workers comp radio failed: {e}")
+            self.note_warning(f"workers comp radio failed: {e}")
             await self.screenshot("step7_workers_comp_error")
 
     # ------------------------------------------------------------------
@@ -130,7 +130,7 @@ class FinalDetailsPage(BasePage):
             if await box.count() == 0:
                 box = self.page.locator('input[id*="Email" i]').first
             if await box.count() == 0:
-                print("    [GEICO] WARN: email confirmation textbox not found")
+                self.note_warning("email confirmation textbox not found")
                 return
             current = ""
             try:
@@ -151,7 +151,7 @@ class FinalDetailsPage(BasePage):
             await self.page.keyboard.press("Tab")
             await self.page.wait_for_timeout(300)
         except Exception as e:
-            print(f"    [GEICO] WARN: email confirmation failed: {e}")
+            self.note_warning(f"email confirmation failed: {e}")
             await self.screenshot("step7_email_error")
 
     # ------------------------------------------------------------------
@@ -178,14 +178,14 @@ class FinalDetailsPage(BasePage):
                     'input[id*="OwnerPhone" i], input[id*="OwnersPhone" i]'
                 ).first
             if await box.count() == 0:
-                print("    [GEICO] WARN: owner phone textbox not found")
+                self.note_warning("owner phone textbox not found")
                 return
             print(f"    [GEICO] Step 7: owner phone -> {owner_phone}")
             await box.first.fill(owner_phone, timeout=5_000)
             await self.page.keyboard.press("Tab")
             await self.page.wait_for_timeout(300)
         except Exception as e:
-            print(f"    [GEICO] WARN: owner phone confirmation failed: {e}")
+            self.note_warning(f"owner phone confirmation failed: {e}")
             await self.screenshot("step7_owner_phone_error")
 
     # ------------------------------------------------------------------
@@ -249,8 +249,8 @@ class FinalDetailsPage(BasePage):
                 _LICENSE_STATE_OPTIONS_SIGNATURE, state, idx - 1
             )
         except Exception as e:
-            print(
-                f"    [GEICO] WARN: driver {idx} DL State select failed: {e}"
+            self.note_warning(
+                f"driver {idx} DL State select failed: {e}"
             )
             await self.screenshot(f"step7_driver_{idx}_dl_state_error")
 
@@ -321,8 +321,8 @@ class FinalDetailsPage(BasePage):
              "DLNumber" / "LicenseNumber", indexed by `idx-1`.
         """
         if driver.license_number is None:
-            print(
-                f"    [GEICO] WARN: driver {idx} ({driver.first_name}) has no "
+            self.note_warning(
+                f"driver {idx} ({driver.first_name}) has no "
                 f"license_number -- MVR/CLUE will fail downstream"
             )
             return
@@ -373,7 +373,7 @@ class FinalDetailsPage(BasePage):
             await self.page.keyboard.press("Tab")
             await self.page.wait_for_timeout(300)
         except Exception as e:
-            print(f"    [GEICO] WARN: driver {idx} DL Number fill failed: {e}")
+            self.note_warning(f"driver {idx} DL Number fill failed: {e}")
             await self.screenshot(f"step7_driver_{idx}_dl_error")
 
     # ------------------------------------------------------------------
@@ -417,12 +417,12 @@ class FinalDetailsPage(BasePage):
                     f"    [GEICO] Step 7: vehicle {idx} VIN confirmed -> {current}"
                 )
             else:
-                print(
-                    f"    [GEICO] WARN: vehicle {idx} VIN textbox empty "
+                self.note_warning(
+                    f"vehicle {idx} VIN textbox empty "
                     f"(expected auto-pop)"
                 )
         except Exception as e:
-            print(f"    [GEICO] WARN: vehicle {idx} VIN verify failed: {e}")
+            self.note_warning(f"vehicle {idx} VIN verify failed: {e}")
             await self.screenshot(f"step7_vehicle_{idx}_vin_error")
 
     async def _fill_registered_owner(
@@ -519,8 +519,8 @@ class FinalDetailsPage(BasePage):
                 # Fallback to options signature in case our id-pattern was wrong.
                 # The signature uses the owner full name appearing in the option
                 # list (which the live mapping confirmed).
-                print(
-                    f"    [GEICO] WARN: vehicle {idx} no registered-owner "
+                self.note_warning(
+                    f"vehicle {idx} no registered-owner "
                     f"<select> matched id-pattern; trying options signature"
                 )
                 if target_text:
@@ -542,8 +542,8 @@ class FinalDetailsPage(BasePage):
                     f"-> {result.get('chosen')!r} (select id={result.get('id')!r})"
                 )
         except Exception as e:
-            print(
-                f"    [GEICO] WARN: vehicle {idx} registered owner failed: {e}"
+            self.note_warning(
+                f"vehicle {idx} registered owner failed: {e}"
             )
             await self.screenshot(f"step7_vehicle_{idx}_owner_error")
 
@@ -562,8 +562,8 @@ class FinalDetailsPage(BasePage):
                 "owned, leased, or financed", normalized
             )
         except Exception as e:
-            print(
-                f"    [GEICO] WARN: vehicle {idx} ownership radio failed: {e}"
+            self.note_warning(
+                f"vehicle {idx} ownership radio failed: {e}"
             )
             await self.screenshot(f"step7_vehicle_{idx}_ownership_error")
 
@@ -586,5 +586,5 @@ class FinalDetailsPage(BasePage):
                 "blanket additional insured", "Yes"
             )
         except Exception as e:
-            print(f"    [GEICO] WARN: blanket additional radio failed: {e}")
+            self.note_warning(f"blanket additional radio failed: {e}")
             await self.screenshot("step7_blanket_additional_error")

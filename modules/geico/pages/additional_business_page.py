@@ -64,7 +64,7 @@ class AdditionalBusinessPage(BasePage):
             )
             await self.page.wait_for_timeout(500)
         except Exception as e:
-            print(f"    [GEICO] WARN: years operating select failed: {e}")
+            self.note_warning(f"years operating select failed: {e}")
             await self.screenshot("step5_years_operating_error")
 
         try:
@@ -74,7 +74,7 @@ class AdditionalBusinessPage(BasePage):
             )
             await self.page.wait_for_timeout(500)
         except Exception as e:
-            print(f"    [GEICO] WARN: employees select failed: {e}")
+            self.note_warning(f"employees select failed: {e}")
             await self.screenshot("step5_employees_error")
 
     # ------------------------------------------------------------------
@@ -91,7 +91,7 @@ class AdditionalBusinessPage(BasePage):
             )
             await self.page.wait_for_timeout(500)
         except Exception as e:
-            print(f"    [GEICO] WARN: has-current-insurance select failed: {e}")
+            self.note_warning(f"has-current-insurance select failed: {e}")
             await self.screenshot("step5_has_current_insurance_error")
             return
 
@@ -103,8 +103,8 @@ class AdditionalBusinessPage(BasePage):
         try:
             await self._wait_for_conditional_insurance_fields()
         except Exception as e:
-            print(
-                f"    [GEICO] WARN: conditional insurance fields did not "
+            self.note_warning(
+                f"conditional insurance fields did not "
                 f"appear within timeout: {e}"
             )
             await self.screenshot("step5_conditional_fields_missing")
@@ -119,7 +119,7 @@ class AdditionalBusinessPage(BasePage):
             )
             await self.page.wait_for_timeout(300)
         except Exception as e:
-            print(f"    [GEICO] WARN: years-with-insurer select failed: {e}")
+            self.note_warning(f"years-with-insurer select failed: {e}")
             await self.screenshot("step5_years_with_insurer_error")
 
         try:
@@ -134,7 +134,7 @@ class AdditionalBusinessPage(BasePage):
             )
             await self.page.wait_for_timeout(300)
         except Exception as e:
-            print(f"    [GEICO] WARN: current BI limits select failed: {e}")
+            self.note_warning(f"current BI limits select failed: {e}")
             await self.screenshot("step5_current_bi_limits_error")
 
     async def _wait_for_conditional_insurance_fields(self) -> None:
@@ -205,7 +205,7 @@ class AdditionalBusinessPage(BasePage):
                 "kind of liability insurance", target_label
             )
         except Exception as e:
-            print(f"    [GEICO] WARN: liability-type radio failed: {e}")
+            self.note_warning(f"liability-type radio failed: {e}")
             await self.screenshot("step5_liability_type_error")
 
     async def _set_radio_group(
@@ -230,7 +230,7 @@ class AdditionalBusinessPage(BasePage):
         try:
             await self.click_question_radio(question_substring, target_name)
         except Exception as e:
-            print(f"    [GEICO] WARN: {log_name} radio failed: {e}")
+            self.note_warning(f"{log_name} radio failed: {e}")
             slug = log_name.lower().replace(" ", "_")
             await self.screenshot(f"step5_radio_{slug}_error")
 

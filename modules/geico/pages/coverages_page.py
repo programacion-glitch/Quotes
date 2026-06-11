@@ -202,7 +202,7 @@ class CoveragesPage(BasePage):
         except Exception as e:
             # Recalc is a soft path — log and continue with whatever
             # price is currently shown.
-            print(f"    [GEICO] WARN: Recalculate handling failed: {e}")
+            self.note_warning(f"Recalculate handling failed: {e}")
 
     # ------------------------------------------------------------------
     # Term (6-month vs 12-month) detection
@@ -226,7 +226,7 @@ class CoveragesPage(BasePage):
                 if pressed and pressed.lower() == "true":
                     return 6
         except Exception as e:
-            print(f"    [GEICO] WARN: term detection failed: {e}")
+            self.note_warning(f"term detection failed: {e}")
         return 12
 
     # ------------------------------------------------------------------
@@ -239,7 +239,7 @@ class CoveragesPage(BasePage):
         try:
             page_text = await self.page.inner_text("body")
         except Exception as e:
-            print(f"    [GEICO] WARN: could not read page text: {e}")
+            self.note_warning(f"could not read page text: {e}")
             return None
         return pick_premium(page_text)
 
