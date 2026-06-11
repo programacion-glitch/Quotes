@@ -145,6 +145,8 @@ class CoveragesProfile:
 
     # Non-Owned Trailer Physical Damage
     non_owned_trailer_phys_damage_limit: Optional[str] = None  # e.g. "$25,000"
+    # Progressive's subform asks for the COUNT, not a limit (live 2026-06-11).
+    non_owned_trailer_count: int = 0
 
     # Hired Auto Liability (see imagenesprogressive/image.png)
     hired_auto: bool = False

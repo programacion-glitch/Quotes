@@ -159,6 +159,7 @@ class QuoteFlow:
             result.step_reached = "rates"
             rates_page = CoveragesRatesPage(wizard_page)
             result.price = await rates_page.customize_and_capture(fields)
+            result.warnings.extend(rates_page.warnings)
 
             if self.dry_run:
                 result.success = True

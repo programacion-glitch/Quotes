@@ -301,6 +301,9 @@ def map_profile_to_fields(
         mv for mv in mapped_vehicles if not _is_non_owned(mv.vin, mv.make, mv.model)
     ]
     coverages_out = profile.coverages_detail
+    if non_owned_count:
+        # Progressive's subform asks for the trailer COUNT (live 2026-06-11).
+        coverages_out.non_owned_trailer_count = non_owned_count
     if non_owned_count and not coverages_out.non_owned_trailer_phys_damage_limit:
         # CoveragesProfile is a dataclass; mutate the field on the existing
         # instance so RATES picks it up. Tests confirm the default does not

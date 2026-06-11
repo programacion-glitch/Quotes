@@ -572,6 +572,12 @@ class DocumentAIExtractor:
                 cov_kwargs["comp_deductible"] = None
                 cov_kwargs["coll_deductible"] = None
         cargo_limit = _str_or_none(cov_data.get("cargo_limit"))
+        # The BQ cargo row is checkboxes '$100,000 / $250,000 / Others: $__'.
+        # When 'Others' is ticked the REAL limit is the handwritten amount in
+        # cargo_limit_other (live WHITE CASTLE 2026-06-11: cargo_limit came
+        # through as the literal 'Others' and the $30,000 next to it was lost).
+        if cargo_limit and "other" in cargo_limit.lower():
+            cargo_limit = _str_or_none(cov_data.get("cargo_limit_other")) or cargo_limit
         if cargo_limit:
             cov_kwargs["motor_truck_cargo_limit"] = cargo_limit
         coverages_detail = CoveragesProfile(**cov_kwargs)

@@ -39,6 +39,11 @@ class QuotePrice:
 class CoveragesRatesPage(BasePage):
     """Progressive wizard - CoveragesRates page (RATES step)."""
 
+    def __init__(self, page):
+        super().__init__(page)
+        # Collected by quote_flow into QuoteResult.warnings.
+        self.warnings: list = []
+
     async def customize_and_capture(self, fields: MappedFields) -> QuotePrice:
         """
         Apply coverage selections, recalculate, capture the premium.
@@ -112,7 +117,8 @@ class CoveragesRatesPage(BasePage):
 
         if coverages.non_owned_trailer_phys_damage_limit:
             await self._configure_non_owned_trailer_phys_damage(
-                coverages.non_owned_trailer_phys_damage_limit
+                coverages.non_owned_trailer_phys_damage_limit,
+                count=getattr(coverages, "non_owned_trailer_count", 0) or 1,
             )
 
         # Recalculate if any change was made
@@ -315,72 +321,101 @@ class CoveragesRatesPage(BasePage):
         except Exception as e:
             print(f"    [Progressive] WARN: radio '{group_label}' = '{value}' failed: {e}")
 
-    # Known "section-is-expanded" markers — visible text that appears only
-    # when the section is open. Used by _expand_coverage to detect whether
-    # our click toggled it open OR closed (Progressive caches expanded state
-    # across quotes for the same USDOT; a naive click would COLLAPSE an
-    # already-open section).
-    _EXPAND_MARKERS = {
-        "Motor Truck Cargo": [
-            "Does the customer require cargo coverage",
-            "Add a commodity",
-            "Commodities the customer hauls",
-            "Motor Truck Cargo coverage limit",
-        ],
-        "Hired Auto Liability": [
-            "Hired Auto Liability coverage limit",
-            "Does the customer require Hired Auto",
-        ],
-        "Employer Non-Owned Auto Liability": [
-            "Employer Non-Owned Auto Liability coverage limit",
-            "How many people does the customer utilize",
-        ],
-        "Non-Owned Trailer Physical Damage": [
-            "Non-Owned Trailer Physical Damage coverage limit",
-        ],
-    }
-
     async def _expand_coverage(self, name: str) -> bool:
-        """Expand a '+' button next to a special coverage section if collapsed.
+        """Expand a special coverage section if it is collapsed.
 
-        Smart toggle: after clicking, verifies that a known expanded-state
-        marker is visible. If not, the section was likely already open and
-        our click COLLAPSED it — so click again to re-expand.
+        The expander is NOT a client-side toggle: the title anchor runs
+        DCT.Util.customOnClick('<X>_open') which does a Duck Creek SERVER
+        round-trip before the section re-renders expanded (header HTML dump
+        2026-06-11). wait_for_extjs_idle does NOT see that XHR (it watches
+        Ext.Ajax), so the old click→quick-check→re-click loop kept toggling
+        the server state back and forth and sections ended collapsed —
+        silently skipping MTC/Non-Owned-Trailer config on some quotes.
 
-        Returns True if the section is now expanded (or the click succeeded
-        on a section without registered markers); False if the button is
-        not on the page at all.
+        Correct interaction: ONE real click on the title anchor, then POLL
+        the header state ('+\\n<name>' collapsed / '-\\n<name>…' expanded)
+        for up to 8s. Never re-click while the round-trip may be in flight.
+
+        Returns True if the section is expanded, False if the section is
+        not on the page or would not open.
         """
         btn = self.page.get_by_role("button", name=name, exact=True)
-        if await btn.count() == 0:
+        n = await btn.count()
+        if n == 0:
             return False
-        try:
-            await btn.first.click(timeout=5_000)
-            await self.wait_for_extjs_idle()
-        except Exception:
-            pass
-        await self.page.wait_for_timeout(150)
+        # The page keeps HIDDEN duplicates of these anchors (same pattern as
+        # the trailer tiles); .first can land on one whose click times out
+        # silently — always target the VISIBLE match.
+        target = None
+        for i in range(n):
+            if await btn.nth(i).is_visible():
+                target = btn.nth(i)
+                break
+        if target is None:
+            print(
+                f"    [Progressive] _expand_coverage('{name}'): {n} matches "
+                f"but none visible"
+            )
+            return False
 
-        markers = self._EXPAND_MARKERS.get(name)
-        if not markers:
+        state = await self._section_expand_state(name)
+        if state == "expanded":
+            # Cached open across same-USDOT quotes — clicking would COLLAPSE.
             return True
 
-        # Verify at least one expanded-state marker is visible
-        for marker in markers:
-            marker_loc = self.page.get_by_text(marker, exact=False).first
-            if await self.field_exists(marker_loc, wait_ms=600):
-                return True
+        for attempt in range(2):
+            try:
+                await target.click(timeout=5_000)
+            except Exception as e:
+                print(
+                    f"    [Progressive] _expand_coverage('{name}'): click "
+                    f"failed: {type(e).__name__}: {e}"
+                )
+            # Poll for the POSITIVE expanded signal through the DCT
+            # round-trip (500ms × 16 = 8s budget, exits as soon as it lands).
+            for _ in range(16):
+                await self.page.wait_for_timeout(500)
+                state = await self._section_expand_state(name)
+                if state == "expanded":
+                    return True
 
-        # No marker visible — we may have collapsed an already-open section.
-        # Click again to re-expand.
-        print(f"    [Progressive] _expand_coverage('{name}'): no expanded marker after click; re-clicking to re-expand")
+        print(
+            f"    [Progressive] _expand_coverage('{name}'): header still "
+            f"collapsed after 2 click+poll attempts"
+        )
+        await self._dump_section_labels(name.split()[0])
+        await self.screenshot(f"expand_{name.replace(' ', '_').lower()}_failed")
+        return False
+
+    async def _section_expand_state(self, name: str) -> str:
+        """'collapsed' | 'expanded' | 'unknown' for a coverage section header.
+
+        Live DOM 2026-06-11: the header container's innerText is exactly
+        '+\\n<name>' while collapsed and starts with '-\\n<name>' once open.
+        'unknown' covers mid-re-render moments (Duck Creek replaces the
+        section DOM after its XHR) and evaluation failures.
+        """
         try:
-            await btn.first.click(timeout=5_000)
-            await self.wait_for_extjs_idle()
+            return await self.page.evaluate(
+                """(name) => {
+                    const els = Array.from(document.querySelectorAll(
+                        'div, span, a, button'
+                    )).filter(el => el.offsetParent !== null);
+                    for (const el of els) {
+                        const t = (el.innerText || '').trim();
+                        if (t === '+\\n' + name || t === '+ ' + name) {
+                            return 'collapsed';
+                        }
+                        if (t.startsWith('-\\n' + name) || t.startsWith('- ' + name)) {
+                            return 'expanded';
+                        }
+                    }
+                    return 'unknown';
+                }""",
+                name,
+            )
         except Exception:
-            pass
-        await self.page.wait_for_timeout(150)
-        return True
+            return "unknown"
 
     async def _recalculate_if_needed(self, *, max_attempts: int = 3) -> None:
         """Click Recalculate and POLL until the page shows a real premium.
@@ -659,20 +694,15 @@ class CoveragesRatesPage(BasePage):
         # $1,000 deductible (standard), exact with $2,500 deductible, then
         # partial "$Xk with a", then bare "$Xk", then the original input.
         if await self.field_exists(limit_combo, wait_ms=2_000):
-            limit_preferences = self._build_mtc_limit_preferences(limit)
-            chosen_limit = await self._pick_first_combo_option(
-                limit_combo, limit_preferences, label="Motor Truck Cargo limit"
-            )
+            chosen_limit = await self._select_mtc_limit(limit_combo, limit)
             if not chosen_limit:
-                # Fall back: pick whatever first option is available
-                chosen_limit = await self._pick_first_visible_combo_option(
-                    limit_combo, label="Motor Truck Cargo limit (first available)"
+                msg = (
+                    f"could not set Motor Truck Cargo limit "
+                    f"(requested {limit!r}) — premium will NOT materialize "
+                    f"while the limit is unset"
                 )
-            if not chosen_limit:
-                print(
-                    f"    [Progressive] WARN: could not set Motor Truck Cargo limit "
-                    f"(tried {limit_preferences})"
-                )
+                print(f"    [Progressive] WARN: {msg}")
+                self.warnings.append(f"rates: {msg}")
         else:
             print(
                 "    [Progressive] WARN: MTC limit combobox still not visible "
@@ -945,6 +975,127 @@ class CoveragesRatesPage(BasePage):
         except Exception:
             return None
 
+    async def _select_mtc_limit(self, combo_input, requested: str) -> Optional[str]:
+        """Pick the MTC limit option that COVERS the requested amount.
+
+        Progressive only offers fixed tiers ('$5k…$250k with a $X Deductible')
+        but Blue Quotes can request any amount (live WHITE CASTLE 2026-06-11:
+        'Others: $30,000' — no $30k tier exists). Exact tier wins; otherwise
+        snap UP to the smallest tier that covers the request (the limit must
+        cover the cargo value), preferring the standard $1,000 deductible.
+        Falls back to the legacy preference cascade when the requested string
+        has no parseable amount.
+        """
+        amount = self._parse_dollar_amount(requested)
+        if amount is None:
+            prefs = self._build_mtc_limit_preferences(requested)
+            return await self._pick_first_combo_option(
+                combo_input, prefs, label="Motor Truck Cargo limit"
+            )
+
+        try:
+            await combo_input.click(timeout=3_000)
+        except Exception:
+            try:
+                await combo_input.click(timeout=3_000, force=True)
+            except Exception as e:
+                print(f"    [Progressive] WARN: MTC limit combo click failed: {e}")
+                return None
+        await self.wait_for_options_open()
+
+        try:
+            visible_options = await self.page.evaluate(
+                """() => {
+                    const out = [];
+                    document.querySelectorAll('li.x-boundlist-item').forEach(el => {
+                        if (el.offsetParent !== null) {
+                            const t = (el.innerText || '').trim();
+                            if (t) out.push(t);
+                        }
+                    });
+                    return out;
+                }"""
+            )
+        except Exception:
+            visible_options = []
+        print(f"    [Progressive] Motor Truck Cargo limit options visible: {visible_options[:30]}")
+
+        chosen = self._choose_mtc_limit_option(visible_options, amount)
+        if not chosen:
+            await self._close_open_boundlist()
+            return None
+
+        chosen_text, chosen_value = chosen
+        if chosen_value != amount:
+            msg = (
+                f"MTC limit ${amount:,} not offered by Progressive — "
+                f"snapped to {chosen_text!r}"
+            )
+            print(f"    [Progressive] {msg}")
+            self.warnings.append(f"rates: {msg}")
+
+        try:
+            opt = self.page.locator(
+                f"li.x-boundlist-item:has-text({chosen_text!r})"
+            ).first
+            await opt.click(timeout=3_000)
+            print(f"    [Progressive] Motor Truck Cargo limit selected: {chosen_text!r}")
+            return chosen_text
+        except Exception as e:
+            print(f"    [Progressive] WARN: MTC limit option click failed: {e}")
+            return None
+
+    @staticmethod
+    def _choose_mtc_limit_option(options: list, amount: int):
+        """From '$Xk with a $Y Deductible' options, pick the tier covering
+        `amount`: smallest value >= amount (or the largest available when
+        nothing covers it), preferring deductible $1,000 > $2,500 > $500.
+        Returns (option_text, option_value_dollars) or None.
+        """
+        import re
+        parsed = []
+        for opt in options:
+            m = re.match(r"\$(\d+)k with a \$([\d,]+) Deductible", opt)
+            if m:
+                parsed.append(
+                    (int(m.group(1)) * 1000, int(m.group(2).replace(",", "")), opt)
+                )
+        if not parsed:
+            return None
+
+        covering = [p for p in parsed if p[0] >= amount]
+        best_value = (
+            min(p[0] for p in covering) if covering else max(p[0] for p in parsed)
+        )
+        ded_rank = {1000: 0, 2500: 1, 500: 2}
+        candidates = sorted(
+            (p for p in parsed if p[0] == best_value),
+            key=lambda p: ded_rank.get(p[1], 9),
+        )
+        return candidates[0][2], candidates[0][0]
+
+    @staticmethod
+    def _parse_dollar_amount(s: str):
+        """'$30.000' / '$100,000' / '100000' / '$100k' → int dollars, else None.
+
+        Dots and commas are both treated as thousands separators (Blue Quotes
+        are often handwritten with either).
+        """
+        import re
+        if not s:
+            return None
+        m = re.search(r"\$?\s*(\d[\d.,]*)\s*([kK])?", s)
+        if not m:
+            return None
+        digits = m.group(1).replace(",", "").replace(".", "")
+        try:
+            n = int(digits)
+        except ValueError:
+            return None
+        if m.group(2):
+            n *= 1000
+        return n or None
+
     @staticmethod
     def _build_mtc_limit_preferences(limit: str) -> list:
         """Convert a dollar-amount limit like '$100,000' into the cascading
@@ -1064,6 +1215,39 @@ class CoveragesRatesPage(BasePage):
         except Exception as e:
             print(f"    [Progressive] {label} dump failed: {e}")
 
+    async def _dump_section_labels(self, fragment: str) -> None:
+        """DIAG: print visible form labels + texts containing `fragment`.
+
+        Used when an expected control is missing so the run log captures the
+        REAL labels/structure of the section (instead of a blind WARN).
+        """
+        try:
+            info = await self.page.evaluate(
+                """(frag) => {
+                    const vis = el => el.offsetParent !== null;
+                    const labels = Array.from(document.querySelectorAll(
+                        'label, .x-form-item-label'
+                    )).filter(vis)
+                      .map(el => (el.innerText || '').trim())
+                      .filter(t => t.length > 0);
+                    const matches = Array.from(document.querySelectorAll(
+                        'span, div, label, legend'
+                    )).filter(el => vis(el)
+                          && (el.innerText || '').includes(frag)
+                          && el.innerText.trim().length < 120)
+                      .map(el => el.innerText.trim());
+                    return {
+                        labels: [...new Set(labels)].slice(0, 40),
+                        matches: [...new Set(matches)].slice(0, 20),
+                    };
+                }""",
+                fragment,
+            )
+            print(f"    [Progressive] DIAG visible form labels: {info.get('labels')}")
+            print(f"    [Progressive] DIAG texts containing '{fragment}': {info.get('matches')}")
+        except Exception as e:
+            print(f"    [Progressive] DIAG label dump failed: {e}")
+
     async def _cancel_commodity_row(self) -> None:
         """Click the small × button to cancel an open commodity row."""
         try:
@@ -1076,16 +1260,89 @@ class CoveragesRatesPage(BasePage):
         except Exception:
             pass
 
-    async def _configure_non_owned_trailer_phys_damage(self, limit: str) -> None:
-        """Fill Non-Owned Trailer Physical Damage subform."""
-        print(f"    [Progressive] Configuring Non-Owned Trailer Physical Damage: {limit}")
-        await self._expand_coverage("Non-Owned Trailer Physical Damage")
-        await self._set_combobox(
-            "Non-Owned Trailer Physical Damage coverage limit",
-            limit,
+    async def _configure_non_owned_trailer_phys_damage(
+        self, limit: str, count: int = 1
+    ) -> None:
+        """Fill Non-Owned Trailer Physical Damage subform.
+
+        The expanded section asks for 'Number of Non-Owned Trailers' (live
+        DOM 2026-06-11) — there is NO standalone 'coverage limit' combobox
+        at this level. Fill the count, then configure whatever control the
+        count reveals (dumped to the log while we learn this subform).
+        """
+        print(
+            f"    [Progressive] Configuring Non-Owned Trailer Physical Damage: "
+            f"{limit} ({count} trailer(s))"
         )
+        expanded = await self._expand_coverage("Non-Owned Trailer Physical Damage")
+        if not expanded:
+            msg = "could not expand Non-Owned Trailer Physical Damage section"
+            print(f"    [Progressive] WARN: {msg}")
+            self.warnings.append(f"rates: {msg}")
+            return
+
+        count_combo = await self.find_combo(
+            "Number of Non-Owned Trailers", exact=False
+        )
+        if await count_combo.count() > 0:
+            try:
+                await self.safe_select_combo(count_combo.first, str(count))
+                print(
+                    f"    [Progressive] Number of Non-Owned Trailers = {count}"
+                )
+            except Exception as e:
+                msg = f"Number of Non-Owned Trailers = {count} failed: {e}"
+                print(f"    [Progressive] WARN: {msg}")
+                self.warnings.append(f"rates: {msg}")
+        else:
+            field = await self.find_by_label_text("Number of Non-Owned Trailers")
+            if await self.field_exists(field, wait_ms=1_500):
+                await self.safe_fill(field, str(count))
+                print(
+                    f"    [Progressive] Number of Non-Owned Trailers = {count} "
+                    f"(textbox)"
+                )
+            else:
+                msg = "'Number of Non-Owned Trailers' control not found"
+                print(f"    [Progressive] WARN: {msg}")
+                self.warnings.append(f"rates: {msg}")
+                await self._dump_section_labels("Non-Owned")
+                await self.screenshot("non_owned_trailer_section")
+                return
+        await self.settle_extjs()
+
+        # Learning dump: see what the count reveals (a limit control? a
+        # per-trailer value?) so the next iteration can configure it.
+        await self._dump_section_labels("Non-Owned")
+
         done = self.page.get_by_role("button", name="Done with this coverage")
         if await done.count() > 0:
             await done.first.click(timeout=5_000)
+            print("    [Progressive] Non-Owned Trailer: 'Done with this coverage' clicked")
             # Wait for ExtJS to collapse the subform after Done
             await self.wait_for_extjs_idle()
+        else:
+            print(
+                "    [Progressive] Non-Owned Trailer: no 'Done with this "
+                "coverage' button (value commits on select)"
+            )
+
+        # Log the section row as displayed — shows whether Progressive
+        # actually CHARGES for this coverage (premium did not move when the
+        # count was first filled on WHITE CASTLE 2026-06-11).
+        try:
+            row_text = await self.page.evaluate(
+                """() => {
+                    const els = Array.from(document.querySelectorAll('div, span'))
+                        .filter(el => el.offsetParent !== null);
+                    const el = els.find(el => {
+                        const t = (el.innerText || '').trim();
+                        return t.startsWith('-\\nNon-Owned Trailer Physical Damage')
+                            || t.startsWith('+\\nNon-Owned Trailer Physical Damage');
+                    });
+                    return el ? el.innerText.trim().slice(0, 200) : null;
+                }"""
+            )
+            print(f"    [Progressive] Non-Owned Trailer section row: {row_text!r}")
+        except Exception:
+            pass
