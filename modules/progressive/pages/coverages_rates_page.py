@@ -359,7 +359,7 @@ class CoveragesRatesPage(BasePage):
             await self.wait_for_extjs_idle()
         except Exception:
             pass
-        await self.page.wait_for_timeout(400)
+        await self.page.wait_for_timeout(150)
 
         markers = self._EXPAND_MARKERS.get(name)
         if not markers:
@@ -379,7 +379,7 @@ class CoveragesRatesPage(BasePage):
             await self.wait_for_extjs_idle()
         except Exception:
             pass
-        await self.page.wait_for_timeout(400)
+        await self.page.wait_for_timeout(150)
         return True
 
     async def _recalculate_if_needed(self, *, max_attempts: int = 3) -> None:
@@ -557,7 +557,7 @@ class CoveragesRatesPage(BasePage):
             await self.wait_for_extjs_idle(timeout_ms=5_000)
         except Exception:
             pass
-        await self.page.wait_for_timeout(800)  # extra cushion for animations
+        await self.page.wait_for_timeout(300)  # cushion for non-ajax animations
 
         # Iteratively answer MTC subform Yes/No questions that Progressive
         # reveals for distributor commodities. Default No for all (RYD-style
@@ -606,7 +606,7 @@ class CoveragesRatesPage(BasePage):
                 await self.wait_for_extjs_idle(timeout_ms=5_000)
             except Exception:
                 pass
-            await self.page.wait_for_timeout(800)
+            await self.page.wait_for_timeout(200)
 
         # NOTE: a verbose MTC DIAGNOSTIC (labels/comboboxes/buttons/radios)
         # was here during initial Beverage-Distributor subform discovery
@@ -638,12 +638,12 @@ class CoveragesRatesPage(BasePage):
         if await self.field_exists(add_commodity, wait_ms=1_500):
             await self._add_mtc_commodities()
             # After commit, wait for Progressive to render the now-required
-            # limit combobox.
+            # limit combobox (the limit lookup downstream has its own poll).
             try:
                 await self.wait_for_extjs_idle(timeout_ms=5_000)
             except Exception:
                 pass
-            await self.page.wait_for_timeout(800)
+            await self.page.wait_for_timeout(200)
 
         # Step B: set the limit combobox (Trucker path had it from the start;
         # Distributor path just had it revealed).
@@ -746,7 +746,7 @@ class CoveragesRatesPage(BasePage):
             await self.wait_for_extjs_idle(timeout_ms=5_000)
         except Exception:
             pass
-        await self.page.wait_for_timeout(800)
+        await self.page.wait_for_timeout(300)
 
         # Save a screenshot of the inline form for debugging
         await self.screenshot("mtc_commodity_dialog")
@@ -787,7 +787,7 @@ class CoveragesRatesPage(BasePage):
             await self.wait_for_extjs_idle(timeout_ms=3_000)
         except Exception:
             pass
-        await self.page.wait_for_timeout(500)
+        await self.page.wait_for_timeout(200)
 
         commodity_input = await self._locate_commodity_combo_input(
             label_text="Commodity:",
@@ -828,7 +828,7 @@ class CoveragesRatesPage(BasePage):
             await self.wait_for_extjs_idle(timeout_ms=5_000)
         except Exception:
             pass
-        await self.page.wait_for_timeout(800)
+        await self.page.wait_for_timeout(300)
         print(f"    [Progressive] MTC commodity row committed: {chosen_category!r} / {chosen_commodity!r}")
 
     async def _click_boundlist_option(self, opt_text: str, *, label: str) -> bool:
@@ -867,7 +867,7 @@ class CoveragesRatesPage(BasePage):
             except Exception as e:
                 print(f"    [Progressive] WARN: {label} combo click failed: {e}")
                 return None
-        await self.page.wait_for_timeout(500)
+        await self.wait_for_options_open()
 
         # ExtJS dropdown panel: x-boundlist with li.x-boundlist-item children
         try:
@@ -914,7 +914,7 @@ class CoveragesRatesPage(BasePage):
             await combo_input.click(timeout=3_000, force=True)
         except Exception:
             return None
-        await self.page.wait_for_timeout(500)
+        await self.wait_for_options_open()
 
         try:
             visible_options = await self.page.evaluate(

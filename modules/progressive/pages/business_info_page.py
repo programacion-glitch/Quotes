@@ -190,7 +190,7 @@ class BusinessInfoPage(BasePage):
         # safe_radio uses exact=True; the option labels are long strings so pass the full label
         radio = group.get_by_role("radio", name=label)
         await radio.click(timeout=5_000)
-        await self.page.wait_for_timeout(500)
+        await self.settle_extjs()
 
     async def _fill_usdot_number(self, usdot: str) -> None:
         """Fill the USDOT Number input that appears after choosing Yes."""
@@ -217,8 +217,26 @@ class BusinessInfoPage(BasePage):
             # Fallback: label may just be "Verify"
             btn = self.page.locator("span.g-btn-text", has_text="Verify").first
         await btn.click(timeout=10_000, force=True)
-        # Wait for SAFER lookup to complete (network round-trip, not ExtJS idle)
-        await self.page.wait_for_timeout(3_000)
+        # SAFER lookup: wait for a POST-VERIFY signal in the DOM rather than
+        # a flat sleep or ajax-idle — the response lands OUTSIDE Ext.Ajax
+        # (live DIBOLL 2026-06-10: an idle-based wait under-waited, the
+        # 'belongs to customer' radio appeared late and was skipped as
+        # auto-confirmed). Signals cover found / not-found / invalid.
+        try:
+            await self.page.wait_for_function(
+                """() => {
+                    const t = document.body.innerText || '';
+                    return t.includes('USDOT Assigned to') ||
+                           t.includes('belong to the customer') ||
+                           t.includes('obtain their USDOT Number') ||
+                           t.includes('USDOT information was not found') ||
+                           t.includes('not a valid USDOT');
+                }""",
+                timeout=12_000,
+            )
+        except Exception:
+            pass
+        await self.page.wait_for_timeout(300)
 
     async def _answer_usdot_recently_obtained(self, recently_obtained: bool = False) -> None:
         """
@@ -325,7 +343,7 @@ class BusinessInfoPage(BasePage):
         if not name:
             return
         print(f"    [Progressive] Setting business name: {name}")
-        await self.page.wait_for_timeout(500)
+        await self.page.wait_for_timeout(200)
 
         # SAFER's pre-suggested radio is unreliable: even when its accessible
         # name matches the blue-quote name exactly, the click sometimes does
@@ -365,7 +383,7 @@ class BusinessInfoPage(BasePage):
             for label, do_click in click_strategies:
                 try:
                     await do_click()
-                    await self.page.wait_for_timeout(800)
+                    await self.settle_extjs()
                     if await safer_radio.is_checked():
                         print(f"    [Progressive] Selected SAFER radio ({label}): {name!r}")
                         if dba:
@@ -396,7 +414,8 @@ class BusinessInfoPage(BasePage):
                 await diff_radio.first.click(timeout=3_000, force=True)
             except Exception as e2:
                 print(f"    [Progressive] WARN: 'Enter a different' radio click failed: {e2}")
-        await self.page.wait_for_timeout(1500)
+        # The revealed textbox renders after the radio's ajax commit.
+        await self.settle_extjs(start_ms=300)
 
         # The textbox is the next <input type="text"> in DOM order AFTER the
         # 'Enter a different Business Name' radio. XPath traversal from the
@@ -510,7 +529,7 @@ class BusinessInfoPage(BasePage):
         except Exception:
             pass
         # let ExtJS finish rendering the conditional dropdown before enumerating options
-        await self.page.wait_for_timeout(500)
+        await self.page.wait_for_timeout(200)
 
         combo = await self.find_combo("Type of Trucker")
         # Required-field case (Trucker) polls generously; conditional case
@@ -531,7 +550,7 @@ class BusinessInfoPage(BasePage):
             return  # Not revealed when business type is not Trucker
 
         await combo.click(timeout=5_000)
-        await self.page.wait_for_timeout(500)
+        await self.wait_for_options_open()
         raw = await self.page.get_by_role("option").all_inner_texts()
         options = [o.strip() for o in raw
                    if o.strip() and o.strip() not in self._TYPE_OF_TRUCKER_HEADERS]
@@ -552,7 +571,7 @@ class BusinessInfoPage(BasePage):
             screenshot_path=screenshot,
         )
         await self.page.get_by_role("option", name=res.value, exact=True).first.click(timeout=5_000)
-        await self.page.wait_for_timeout(800)
+        await self.settle_extjs()
         print(f"    [Progressive] Type of Trucker = {res.value!r} ({res.note})")
 
     async def _answer_hazmat_placard(self, has_placard: bool) -> None:
@@ -624,7 +643,7 @@ class BusinessInfoPage(BasePage):
                     await safer_addr_radio.first.click(timeout=3_000, force=True)
                     used_radio = True
                     print("    [Progressive] Used SAFER-resolved home address radio")
-                    await self.page.wait_for_timeout(500)
+                    await self.settle_extjs()
                 except Exception:
                     pass
 
@@ -636,7 +655,7 @@ class BusinessInfoPage(BasePage):
                 if await diff_radio.count() > 0:
                     try:
                         await diff_radio.first.click(timeout=2_000, force=True)
-                        await self.page.wait_for_timeout(500)
+                        await self.settle_extjs()
                     except Exception:
                         pass
                 box = self.page.get_by_role("textbox", name="Street Address")
@@ -651,7 +670,8 @@ class BusinessInfoPage(BasePage):
                         # verify=False: ZIP triggers city auto-fill on Tab;
                         # input_value may change before we can read it back.
                         await self.safe_fill(zb.first, zip_code, verify=False)
-                        await self.page.wait_for_timeout(1_000)
+                        # City auto-fill XHR fires on Tab; condition-based.
+                        await self.settle_extjs(start_ms=300)
 
                 if city:
                     print(f"    [Progressive] City: {city}")
@@ -846,6 +866,12 @@ class BusinessInfoPage(BasePage):
                             "verification — re-clicking Verify"
                         )
                         await self._click_verify_usdot()
+                except Exception:
+                    pass
+                # Idempotent: answer the 'belongs to customer' radio if it
+                # appeared late (live DIBOLL 2026-06-10 post-optimization).
+                try:
+                    await self._confirm_usdot_belongs_to_customer(True)
                 except Exception:
                     pass
                 # Idempotent re-answer of the late-rendering hazmat group —

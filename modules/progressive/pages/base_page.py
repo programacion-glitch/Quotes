@@ -318,13 +318,26 @@ class BasePage:
         """
         from modules.progressive.pages._exceptions import ComboSelectError
 
+        def _matches(value: str) -> bool:
+            # Bidirectional verification: option_text fully present OR
+            # option_text's key token (first word) present in input value
+            opt_lower = option_text.lower()
+            val_lower = value.lower()
+            if opt_lower in val_lower:
+                return True
+            # Extract key token (e.g., "$1,000" from "$1,000 Deductible")
+            key_token = opt_lower.split(" ", 1)[0] if " " in opt_lower else opt_lower
+            return len(key_token) >= 3 and key_token in val_lower
+
         attempts = 0
         last_value = ""
         for attempt in range(retries + 1):
             attempts = attempt + 1
             try:
                 await combo.click(timeout=5_000)
-                await self.page.wait_for_timeout(300)
+                # Condition-based: resolves as soon as the boundlist renders
+                # (replaces a flat 300ms sleep).
+                await self.wait_for_options_open()
 
                 # Strategy 1: exact match
                 option = self.page.get_by_role("option", name=option_text, exact=True)
@@ -337,21 +350,21 @@ class BasePage:
             except Exception:
                 pass
 
-            try:
-                last_value = (await combo.input_value()) or ""
-            except Exception:
-                last_value = ""
-
-            # Bidirectional verification: option_text fully present OR
-            # option_text's key token (first word) present in input value
-            opt_lower = option_text.lower()
-            val_lower = last_value.lower()
-            if opt_lower in val_lower:
-                return
-            # Extract key token (e.g., "$1,000" from "$1,000 Deductible")
-            key_token = opt_lower.split(" ", 1)[0] if " " in opt_lower else opt_lower
-            if len(key_token) >= 3 and key_token in val_lower:
-                return
+            # ExtJS commits the value asynchronously after the option click:
+            # an instant read used to miss it and burn a FULL retry cycle
+            # (re-click + backoff). Poll briefly instead.
+            for _ in range(10):
+                try:
+                    last_value = (await combo.input_value()) or ""
+                except Exception:
+                    last_value = ""
+                if _matches(last_value):
+                    # Returning fast can leave the dropdown still floating
+                    # over the NEXT field, intercepting its clicks (live 4JR
+                    # 2026-06-10: license textbox unfillable behind it).
+                    await self._close_open_boundlist()
+                    return
+                await self.page.wait_for_timeout(100)
 
             if attempt < retries:
                 await self.page.wait_for_timeout(500 * (attempt + 1))
@@ -400,7 +413,9 @@ class BasePage:
                 return token not in self.page.url   # final snapshot check
 
         await self.blur_active_element()
-        await self.page.wait_for_timeout(300)
+        # Let the blur-commit XHR start and finish before clicking Continue
+        # (condition-based; replaces a flat 300ms sleep).
+        await self.settle_extjs()
 
         attempts = 0
         for attempt in range(retries + 1):
@@ -483,6 +498,60 @@ class BasePage:
             }""",
             timeout=timeout_ms,
         )
+
+    async def _close_open_boundlist(self) -> None:
+        """Press Escape if an ExtJS boundlist is still visibly open.
+
+        A fast post-select return can leave the dropdown floating over the
+        next field and intercept its clicks (live 4JR 2026-06-10: the license
+        textbox was unfillable behind it). One cheap evaluate + Escape.
+        """
+        try:
+            still_open = await self.page.evaluate(
+                """() => Array.from(
+                        document.querySelectorAll('li.x-boundlist-item')
+                    ).some(el => el.offsetParent !== null)"""
+            )
+            if still_open:
+                await self.page.keyboard.press("Escape")
+        except Exception:
+            pass
+
+    async def wait_for_options_open(self, *, timeout_ms: int = 2_500) -> None:
+        """Wait until an ExtJS boundlist option is actually VISIBLE.
+
+        Condition-based replacement for the flat 300-400ms sleep after
+        clicking a combobox: resolves in ~50-150ms when the dropdown renders
+        fast and only burns the budget when it truly never opens (the
+        caller's option click then fails loudly with its own timeout).
+        """
+        try:
+            await self.page.wait_for_function(
+                """() => Array.from(
+                        document.querySelectorAll('li.x-boundlist-item')
+                    ).some(el => el.offsetParent !== null)""",
+                timeout=timeout_ms,
+            )
+        except Exception:
+            pass
+
+    async def settle_extjs(
+        self, *, start_ms: int = 150, timeout_ms: int = 5_000
+    ) -> None:
+        """Condition-based replacement for blind 400-800ms post-commit sleeps.
+
+        A field commit fires its XHR shortly AFTER blur/selection — waiting
+        for idle instantly would resolve before the request even starts. So:
+        a minimal start window for the XHR to begin, then wait for ExtJS to
+        go quiet (no pending Ajax, no masks). Fast path ~150-250ms vs the
+        600-800ms blind cushions it replaces; slow commits get up to
+        timeout_ms instead of racing ahead.
+        """
+        await self.page.wait_for_timeout(start_ms)
+        try:
+            await self.wait_for_extjs_idle(timeout_ms=timeout_ms)
+        except Exception:
+            pass
 
     async def wait_for_page(self, page_name_token: str, *, timeout_ms: int = 30_000) -> None:
         """Poll until URL contains pageName=<page_name_token>. Raises TimeoutError if not."""

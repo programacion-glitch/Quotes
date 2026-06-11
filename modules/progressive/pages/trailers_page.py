@@ -139,8 +139,7 @@ class MostCommonTrailersPage(BasePage):
             print(f"    [Progressive] '{trailer_type}' not a common trailer; "
                   f"expanding '{self._OTHER_NOT_LISTED}'")
             await self._click_tile(self._OTHER_NOT_LISTED)
-            await self.wait_for_extjs_idle()
-            await self.page.wait_for_timeout(600)
+            await self.settle_extjs()
             res = await self.resolve_tile(trailer_type)   # full list; raises if absent
         elif res is None:
             res = await self.resolve_tile(trailer_type)   # no expander; AI/HALT on common
@@ -261,12 +260,14 @@ class AddTrailerPage(BasePage):
         }.get(trailer.has_loan, "No")
         await self._set_radio("Is there a loan/lease on this", loan_label)
 
-        # Wait for ExtJS to render conditional Comp/Coll question
+        # Wait for ExtJS to render conditional Comp/Coll question. The
+        # downstream field_exists already polls 10s for the reveal — only a
+        # minimal repaint cushion is needed here.
         try:
             await self.wait_for_extjs_idle(timeout_ms=5_000)
         except Exception:
             pass
-        await self.page.wait_for_timeout(600)
+        await self.page.wait_for_timeout(150)
 
         # 7. APD conditional on trailer.value (mirrors AddVehicle PR-A behavior)
         if trailer.has_loan == "No":
@@ -295,7 +296,8 @@ class AddTrailerPage(BasePage):
                 await self.wait_for_extjs_idle(timeout_ms=5_000)
             except Exception:
                 pass
-            await self.page.wait_for_timeout(800)
+            # Equipment/Value reveal has its own idle+cushion downstream.
+            await self.page.wait_for_timeout(200)
 
             if wants_apd:
                 await self._tick_no_equipment_checkbox()
@@ -355,10 +357,25 @@ class AddTrailerPage(BasePage):
                 vin_box = self.page.get_by_role(
                     "textbox", name="Vehicle Identification Number (VIN)"
                 )
+        # Accept a Progressive-suggested pre-fill that matches the Blue Quote
+        # (re-typing re-triggers the decode and can wedge ExtJS — see
+        # AddVehiclePage._fill_by_vin, live 2026-06-10).
+        try:
+            current = (await vin_box.first.input_value() or "").strip().upper()
+        except Exception:
+            current = ""
+        if current == vin.strip().upper():
+            print(
+                "    [Progressive] Trailer VIN already pre-filled by "
+                "Progressive (suggested) — keeping it, skipping re-entry"
+            )
+            return
         # verify=False because ExtJS may format VIN mid-stream (uppercase/mask)
         await self.safe_fill(vin_box.first, vin, verify=False)
         await self.blur_active_element()
-        await self.page.wait_for_timeout(1_000)
+        # VIN-commit settle (condition-based; replaces a flat 1s sleep —
+        # the blur XHR is tracked by Ext.Ajax).
+        await self.settle_extjs(start_ms=300)
 
     # ---- Trailer-specific field helpers ----
 
@@ -460,7 +477,7 @@ class AddTrailerPage(BasePage):
             await self.blur_active_element()
             await self.page.wait_for_timeout(200)
             await combo.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(500)
+            await self.wait_for_options_open()
             opts = await self._enumerate_combo_options()
             skip = {"", "make", "select a make", "please select", "select make"}
             cand = next(
@@ -474,7 +491,7 @@ class AddTrailerPage(BasePage):
                         f"li.x-boundlist-item:has-text({cand!r})"
                     ).first
                 await opt.click(timeout=5_000)
-                await self.page.wait_for_timeout(400)
+                await self.settle_extjs()
                 return cand
         except Exception as e:
             print(f"    [DIAG] default-make select failed: {e}")
@@ -535,7 +552,7 @@ class AddTrailerPage(BasePage):
                         f"li.x-boundlist-item:has-text({cand!r})"
                     ).first
                 await opt.click(timeout=5_000)
-                await self.page.wait_for_timeout(400)
+                await self.settle_extjs()
                 return cand
         except Exception as e:
             print(f"    [DIAG] other-make select failed: {e}")
@@ -626,7 +643,7 @@ class AddTrailerPage(BasePage):
                         f"li.x-boundlist-item:has-text({best!r})"
                     ).first
                 await opt.click(timeout=5_000)
-                await self.page.wait_for_timeout(500)
+                await self.settle_extjs()
                 return best
         except Exception as e:
             print(f"    [DIAG] make prefix select failed: {e}")
@@ -744,7 +761,7 @@ class AddTrailerPage(BasePage):
             await self.wait_for_extjs_idle(timeout_ms=5_000)
         except Exception:
             pass
-        await self.page.wait_for_timeout(600)
+        await self.page.wait_for_timeout(200)
         candidates = [
             self.page.locator('input[placeholder="Trailer Value"]'),
             self.page.locator('input[placeholder="Vehicle Value"]'),

@@ -461,8 +461,7 @@ class MostCommonVehiclesPage(BasePage):
             print(f"    [Progressive] '{trailer_type}' not a common vehicle; "
                   f"expanding '{self._OTHER_NOT_LISTED}'")
             await self._click_tile(self._OTHER_NOT_LISTED)
-            await self.wait_for_extjs_idle()
-            await self.page.wait_for_timeout(600)
+            await self.settle_extjs()
             res = await self.resolve_tile(trailer_type)   # full list; raises if absent
         elif res is None:
             res = await self.resolve_tile(trailer_type)   # no expander; AI/HALT on common
@@ -526,7 +525,7 @@ class AddVehiclePage(BasePage):
             return []
         try:
             await combo.click(timeout=5_000)
-            await self.page.wait_for_timeout(400)
+            await self.wait_for_options_open()
             opts = await self.page.evaluate(
                 """() => {
                     const out = [];
@@ -715,7 +714,9 @@ class AddVehiclePage(BasePage):
             await self.wait_for_extjs_idle(timeout_ms=5_000)
         except Exception:
             pass
-        await self.page.wait_for_timeout(600)
+        # _set_radio polls for the reveal itself (2.5s window) — only a
+        # minimal repaint cushion is needed here, not a flat 600ms.
+        await self.page.wait_for_timeout(150)
 
         # Comp/Coll question appears when loan=No. The customer's APD intent
         # is signaled by the Blue Quote "Value" column:
@@ -771,16 +772,29 @@ class AddVehiclePage(BasePage):
         vin_box = self.page.get_by_role(
             "textbox", name="Vehicle Identification Number (VIN)"
         )
-        # Could be pre-filled from suggested vehicle - check and clear if needed
+        # Progressive PRE-FILLS the VIN for vehicles it already knows on this
+        # USDOT (suggested from previous quotes). If it matches the Blue
+        # Quote, ACCEPT it — re-typing the same VIN re-triggers the decode on
+        # an already-decoded form and can wedge ExtJS in an infinite layout
+        # loop (live ALPHA/IMT3 2026-06-10 on heavily re-quoted USDOTs).
         try:
-            current = await vin_box.first.input_value()
-            if current and current != vin:
+            current = (await vin_box.first.input_value() or "").strip().upper()
+        except Exception:
+            current = ""
+        if current == vin.strip().upper():
+            print(
+                "    [Progressive] VIN already pre-filled by Progressive "
+                "(suggested vehicle) — keeping it, skipping re-entry"
+            )
+            return
+        if current:
+            try:
                 clear_btn = self.page.get_by_role("button", name="Clear VIN")
                 if await clear_btn.count() > 0:
                     await clear_btn.first.click()
-                    await self.page.wait_for_timeout(500)
-        except Exception:
-            pass
+                    await self.settle_extjs()
+            except Exception:
+                pass
 
         # VIN is format-restricted; verify=False avoids mismatch on raw vs
         # formatted input_value (ExtJS may auto-uppercase or mask mid-stream).
@@ -789,7 +803,9 @@ class AddVehiclePage(BasePage):
         if await lookup_btn.count() > 0:
             await lookup_btn.first.click(timeout=10_000)
             await self.page.wait_for_load_state("networkidle", timeout=20_000)
-            await self.page.wait_for_timeout(1_500)
+            # Post-decode repaint cushion. The decode XHR itself is covered by
+            # networkidle above; 1.5s flat was mostly dead time.
+            await self.page.wait_for_timeout(600)
 
     async def _fill_by_ymm(
         self, year: Optional[int], make: Optional[str], model: Optional[str]
@@ -846,19 +862,19 @@ class AddVehiclePage(BasePage):
             option_label = "Flatbed Truck"
 
         await combo.first.click()
-        await self.page.wait_for_timeout(400)
+        await self.wait_for_options_open()
         opt = self.page.get_by_role("option", name=option_label, exact=False).first
         if await opt.count() > 0:
             await opt.click(timeout=5_000)
-            await self.page.wait_for_timeout(1_000)
+            await self.settle_extjs()
 
         # If "What type of SUV is this?" appeared after picking SUV, pick "SUV"
         suv_combo = await self.find_combo("What type of SUV is this?")
         if await suv_combo.count() > 0:
             await suv_combo.first.click()
-            await self.page.wait_for_timeout(400)
+            await self.wait_for_options_open()
             await self.page.get_by_role("option", name="SUV", exact=True).first.click()
-            await self.page.wait_for_timeout(500)
+            await self.settle_extjs()
 
     async def _set_zip(self, zip_code: str) -> None:
         zip_box = self.page.get_by_role(
@@ -940,13 +956,13 @@ class AddVehiclePage(BasePage):
     async def _try_pick_trailer_hitch(self, combo) -> bool:
         """One open-and-pick attempt. True if a hitch option was selected."""
         await combo.click(timeout=5_000)
-        await self.page.wait_for_timeout(400)
+        await self.wait_for_options_open()
 
         options = self.page.get_by_role("option")
         preferred = options.filter(has_text="Gooseneck")
         if await preferred.count() > 0:
             await preferred.first.click(timeout=5_000)
-            await self.page.wait_for_timeout(500)
+            await self.settle_extjs()
             print("    [Progressive] Trailer hitch = 'Gooseneck'")
             return True
 
@@ -959,7 +975,7 @@ class AddVehiclePage(BasePage):
             if not text or text in self._COMBO_HEADERS:
                 continue
             await options.nth(i).click(timeout=5_000)
-            await self.page.wait_for_timeout(500)
+            await self.settle_extjs()
             print(
                 f"    [Progressive] Trailer hitch = {text!r} "
                 "(fallback: 'Gooseneck' not present)"
@@ -1022,7 +1038,7 @@ class AddVehiclePage(BasePage):
             return  # something (or someone) already set it
         try:
             await combo.click(timeout=5_000)
-            await self.page.wait_for_timeout(400)
+            await self.wait_for_options_open()
             options = self.page.get_by_role("option")
             for i in range(await options.count()):
                 text = (await options.nth(i).text_content() or "").strip()

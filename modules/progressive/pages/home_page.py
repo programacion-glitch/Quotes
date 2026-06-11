@@ -144,8 +144,21 @@ class HomePage(BasePage):
         )
         await search_btn.first.click(force=True, timeout=5_000)
 
-        # Wait for results table or error to appear
-        await self.page.wait_for_timeout(3_000)
+        # Wait for results table OR error to appear (condition-based; replaces
+        # a flat 3s sleep — resolves as soon as the widget responds).
+        try:
+            await self.page.wait_for_function(
+                """() => {
+                    const err = document.querySelector(
+                        '.js-us-dot-cl-widget__error-message-placeholder:not(.hidden)');
+                    if (err && (err.innerText || '').trim()) return true;
+                    return document.querySelectorAll(
+                        '.us-dot-cl-widget__results tbody tr').length > 0;
+                }""",
+                timeout=15_000,
+            )
+        except Exception:
+            pass  # the explicit checks below produce the actionable error
 
         # Check for error message
         err = self.page.locator(

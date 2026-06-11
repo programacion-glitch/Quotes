@@ -388,6 +388,12 @@ class AddDriverPage(BasePage):
         number inputs on Progressive are often masked after entry.
         """
         print(f"    [Progressive] License number: {number[:4]}****")
+        # Close any boundlist left floating by the License State select and
+        # let its commit settle — an open dropdown intercepted every fill
+        # candidate in sequence (live 4JR 2026-06-10 -> empty license ->
+        # false NoHit).
+        await self._close_open_boundlist()
+        await self.settle_extjs()
         # Primary: label-text XPath traversal via BasePage primitive
         primary = await self.find_by_label_text("License Number")
         # Fallback candidates in priority order (kept for resilience)
