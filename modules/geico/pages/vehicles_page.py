@@ -34,7 +34,25 @@ can loop in the same way: entry -> comp/coll -> summary -> (add another | done).
 from playwright.async_api import Page
 
 from modules.geico.field_mapper import MappedVehicle
-from modules.geico.pages.base_page import BasePage
+from modules.geico.pages.base_page import BasePage, _flex_text_regex
+
+
+# Find the Annual Mileage <select> (revealed for some vehicle/class combos;
+# REQUIRED when present — live NUNEZ 2026-06-11). '1-4000' is its
+# distinctive first bucket.
+_JS_READ_ANNUAL_MILEAGE = """
+    () => {
+        const sel = Array.from(document.querySelectorAll('select')).find(s =>
+            !s.disabled && Array.from(s.options)
+                .some(o => (o.text || '').includes('1-4000')));
+        if (!sel) return null;
+        return {
+            value: sel.value,
+            texts: Array.from(sel.options)
+                .map(o => (o.text || '').trim()).filter(t => t),
+        };
+    }
+"""
 
 
 # Signature lists used to locate the right native <select> when ids are dynamic.
@@ -100,9 +118,58 @@ class VehicleEntryPage(BasePage):
             "Yes" if vehicle.has_personal_use else "No",
         )
 
+        # 6b. Conditional (live NUNEZ 2026-06-11): "Was the customer's
+        # vehicle purchased in the last 45 days?" — fleet units on a
+        # BlueQuote are existing vehicles; default No.
+        try:
+            grp = self.page.locator("gds-radio-button-group").filter(
+                has_text=_flex_text_regex("purchased in the last 45 days")
+            )
+            if await self.field_exists(grp, wait_ms=1_500):
+                print("    [GEICO] Step 3: purchased in last 45 days -> No")
+                await self.click_question_radio(
+                    "purchased in the last 45 days", "No"
+                )
+        except Exception as e:
+            self.note_warning(f"purchased-45-days radio failed: {e}")
+
+        # 6c. Conditional: Annual Mileage (REQUIRED when revealed; the
+        # BlueQuote carries no per-vehicle mileage).
+        await self._fill_annual_mileage_if_present(vehicle)
+
         # 7. Click Next.
         print("    [GEICO] Step 3: submitting vehicle entry...")
         await self._click_next()
+
+    async def _fill_annual_mileage_if_present(self, vehicle: MappedVehicle) -> None:
+        """Fill the Annual Mileage <select> when GEICO reveals it.
+
+        The BlueQuote has no per-vehicle annual mileage. Heuristic: long
+        radius (201+ mi one-way) -> the highest bucket; otherwise a middle
+        bucket. Always surfaced as a warning so a human can review."""
+        try:
+            state = await self.page.evaluate(_JS_READ_ANNUAL_MILEAGE)
+        except Exception:
+            return
+        if not state:
+            return
+        if state.get("value"):
+            return  # pre-filled — leave it
+        texts = [
+            t for t in state.get("texts", [])
+            if t and "select" not in t.lower()
+        ]
+        if not texts:
+            return
+        long_haul = vehicle.one_way_distance in (
+            "201-300", "301-500", "More than 500"
+        )
+        choice = texts[-1] if long_haul else texts[len(texts) // 2]
+        self.note_warning(
+            f"Annual Mileage defaulted to {choice!r} (radius "
+            f"{vehicle.one_way_distance!r}; BlueQuote carries none — review)"
+        )
+        await self.select_by_options_signature(["1-4000"], choice)
 
     async def _fill_vin_and_decode(self, vin: str) -> None:
         """Fill VIN textbox and wait 3 s for GEICO's server-side decode.
