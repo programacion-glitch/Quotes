@@ -553,9 +553,11 @@ class AddVehiclePage(BasePage):
         enumerates options (which races):
 
           1. No combo element (count == 0) — VIN-decoded static text, skip.
+          1b. Combo in DOM but NOT VISIBLE — same static-text case, skip
+              (ExtJS hides rather than removes it on some pickup forms).
           2. Combo present with a value already (e.g. a 2024 RAM 2500 shows
              '6,001 to 10,000') — auto-decoded from the VIN, leave it, skip.
-          3. Combo present and EMPTY (e.g. a dump truck) — a REQUIRED selection.
+          3. Combo VISIBLE and EMPTY (e.g. a dump truck) — a REQUIRED selection.
              Enumerate options (with a retry so a slow dropdown render doesn't
              make us skip a required field); fall back to the seeded gvw catalog
              only here, where the vehicle is genuinely awaiting a weight bucket.
@@ -580,6 +582,43 @@ class AddVehiclePage(BasePage):
                 f"already set by VIN decode ({current!r}) — leaving as-is",
             )
             return
+        # ExtJS can keep a HIDDEN, EMPTY gvw combobox in the DOM while the row
+        # shows the VIN-decoded value as static text (live pickups 2026-06-10,
+        # F350 + RAM 3500: count>0, input_value='', no visible combo — the bot
+        # misread a stray boundlist / failed the select and HALTed). A
+        # genuinely required GVW combo is visible.
+        if not await self.field_exists(combo, wait_ms=1_500):
+            self._log_skipped(
+                "gross vehicle weight",
+                "combo present but hidden — VIN-decoded static text",
+            )
+            return
+        # A visible+empty combo can also be a VIN decode still in flight that
+        # is about to collapse this row into static text (live LQZ 2026-06-10:
+        # the 2nd RAM 3500 raced the decode, enumerated a stray boundlist and
+        # HALTed while the screenshot already showed static text). Only a
+        # combo that STAYS visible+empty is a genuinely required selection.
+        for _ in range(6):
+            # 500ms cadence: the VIN decode repaint is a plain XHR, not an
+            # ExtJS store load — wait_for_extjs_idle doesn't track it.
+            await self.page.wait_for_timeout(500)
+            if not await self.field_exists(combo, wait_ms=200):
+                self._log_skipped(
+                    "gross vehicle weight",
+                    "combo collapsed to static text after VIN decode",
+                )
+                return
+            try:
+                current = (await combo.first.input_value() or "").strip()
+            except Exception:
+                current = ""
+            if current:
+                self._log_skipped(
+                    "gross vehicle weight",
+                    f"VIN decode landed {current!r} mid-wait — leaving as-is",
+                )
+                return
+
         # Empty combo -> required. Enumerate with one retry for a slow render.
         options = await self._enumerate_gvw_options()
         if not options:
@@ -590,7 +629,28 @@ class AddVehiclePage(BasePage):
             options = list(load_catalog("gvw").options)
         screenshot = await self.screenshot("gvw_unmapped")
         gvw_label = resolve_gvw(gvw_raw, options, screenshot_path=screenshot)
-        await self.safe_select_combo(combo, gvw_label)
+        try:
+            await self.safe_select_combo(combo, gvw_label)
+        except Exception:
+            # A slow VIN decode can collapse the combo into static text WHILE
+            # we're selecting (live LQZ round-3 2026-06-10: decode outlasted
+            # the 3s stability poll, select then read '' forever). If the row
+            # resolved itself, that's a skip — not an error.
+            collapsed = not await self.field_exists(combo, wait_ms=500)
+            current = ""
+            if not collapsed:
+                try:
+                    current = (await combo.first.input_value() or "").strip()
+                except Exception:
+                    pass
+            if collapsed or current:
+                self._log_skipped(
+                    "gross vehicle weight",
+                    "combo collapsed to static text during selection "
+                    "(VIN decode won the race)",
+                )
+                return
+            raise
         print(f"    [Progressive] GVW: {gvw_raw!r} -> {gvw_label!r}")
 
     async def fill_from_mapped(self, vehicle: MappedVehicle) -> None:
@@ -634,6 +694,12 @@ class AddVehiclePage(BasePage):
         await self._set_radio(
             "Is this vehicle used to haul goods on a For-Hire basis?", "Yes"
         )
+
+        # Cargo Van-only conditional (live M&S 2026-06-10): "What is the
+        # average number of jobsites, trips, deliveries, service calls or
+        # errands per day?" — REQUIRED combobox the Blue Quote has no data
+        # for. Default to the first (lowest) band with a WARN to verify.
+        await self._set_jobsites_per_day()
 
         # Loan/Lease
         loan_label = {
@@ -846,40 +912,151 @@ class AddVehiclePage(BasePage):
         if not await self.field_exists(combo, wait_ms=1_500):
             return  # Field not rendered (non-Pickup vehicle type)
 
+        last_err: Exception | None = None
+        for attempt in range(3):
+            if attempt:
+                # The GVW static-text repaint can shift the form mid-click
+                # (live TWO BROTHERS 2026-06-10: first click timed out and the
+                # quote died later at Continue with no context). Settle, clear
+                # overlays, retry.
+                await self.remove_overlays()
+                await self.page.wait_for_timeout(700)
+            try:
+                if await self._try_pick_trailer_hitch(combo):
+                    return
+                last_err = RuntimeError("dropdown has no selectable options")
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+
+        # Required whenever rendered (validated live on both sightings):
+        # failing silently just moves the failure to the Continue click with
+        # less context. HALT pointing at the actual field.
+        await self.screenshot("trailer_hitch_failed")
+        raise RuntimeError(
+            f"Trailer hitch combo (required when visible) could not be set "
+            f"after 3 attempts: {last_err}"
+        )
+
+    async def _try_pick_trailer_hitch(self, combo) -> bool:
+        """One open-and-pick attempt. True if a hitch option was selected."""
+        await combo.click(timeout=5_000)
+        await self.page.wait_for_timeout(400)
+
+        options = self.page.get_by_role("option")
+        preferred = options.filter(has_text="Gooseneck")
+        if await preferred.count() > 0:
+            await preferred.first.click(timeout=5_000)
+            await self.page.wait_for_timeout(500)
+            print("    [Progressive] Trailer hitch = 'Gooseneck'")
+            return True
+
+        n = await options.count()
+        for i in range(n):
+            try:
+                text = (await options.nth(i).text_content() or "").strip()
+            except Exception:
+                continue
+            if not text or text in self._COMBO_HEADERS:
+                continue
+            await options.nth(i).click(timeout=5_000)
+            await self.page.wait_for_timeout(500)
+            print(
+                f"    [Progressive] Trailer hitch = {text!r} "
+                "(fallback: 'Gooseneck' not present)"
+            )
+            return True
+        return False
+
+    async def _locate_jobsites_combo(self):
+        """Find the Cargo Van 'jobsites per day' combo input, or None.
+
+        The accessible-name lookup finds nothing (ExtJS doesn't associate the
+        long label), the full-phrase text lookup finds nothing (the wrapped
+        label renders one element per line), and `.first` on a fragment match
+        can land on a HIDDEN ExtJS template copy (live M&S rounds 4-6,
+        2026-06-10). So: name lookup, then VISIBLE-only fragment matches with
+        a settle retry for the reveal that follows the business-use radio.
+        """
+        named = await self.find_combo("What is the average number of jobsites")
+        if await self.field_exists(named, wait_ms=1_500):
+            return named.first
+
+        for _ in range(2):
+            label = self.page.get_by_text("jobsites", exact=False)
+            try:
+                n = await label.count()
+            except Exception:
+                n = 0
+            for i in range(n):
+                el = label.nth(i)
+                try:
+                    if not await el.is_visible():
+                        continue
+                except Exception:
+                    continue
+                cand = el.locator("xpath=following::input[1]").first
+                try:
+                    if await cand.count() > 0 and await cand.is_visible():
+                        return cand
+                except Exception:
+                    continue
+            # The question is revealed by the business-use radio; give the
+            # repaint a beat before the second sweep.
+            await self.page.wait_for_timeout(1_000)
+        return None
+
+    async def _set_jobsites_per_day(self) -> None:
+        """Cargo Van-only: required 'jobsites/trips/deliveries per day' combo.
+
+        No Blue Quote column maps to it, so pick the FIRST selectable band
+        (lowest) and surface a VERIFY warning instead of blocking the quote.
+        """
+        combo = await self._locate_jobsites_combo()
+        if combo is None:
+            return  # not a Cargo Van form
+        try:
+            current = (await combo.input_value() or "").strip()
+        except Exception:
+            current = ""
+        if current:
+            return  # something (or someone) already set it
         try:
             await combo.click(timeout=5_000)
             await self.page.wait_for_timeout(400)
-
             options = self.page.get_by_role("option")
-            preferred = options.filter(has_text="Gooseneck")
-            if await preferred.count() > 0:
-                await preferred.first.click(timeout=5_000)
-                await self.page.wait_for_timeout(500)
-                print("    [Progressive] Trailer hitch = 'Gooseneck'")
-                return
-
-            n = await options.count()
-            for i in range(n):
-                try:
-                    text = (await options.nth(i).text_content() or "").strip()
-                except Exception:
-                    continue
-                if not text or text in self._COMBO_HEADERS:
+            for i in range(await options.count()):
+                text = (await options.nth(i).text_content() or "").strip()
+                if (
+                    not text
+                    or text in self._COMBO_HEADERS
+                    or "not selected" in text.lower()
+                ):
                     continue
                 await options.nth(i).click(timeout=5_000)
-                await self.page.wait_for_timeout(500)
-                print(
-                    f"    [Progressive] Trailer hitch = {text!r} "
-                    "(fallback: 'Gooseneck' not present)"
+                # Commit the change NOW (blur fires the ExtJS XHR) and let
+                # the re-render settle — otherwise the commit lands while
+                # later questions are being answered and RESETS them (live
+                # M&S round-7 2026-06-10: Comp/Coll=No got wiped and the
+                # form blocked on the unanswered radio).
+                await self.blur_active_element()
+                try:
+                    await self.wait_for_extjs_idle(timeout_ms=5_000)
+                except Exception:
+                    pass
+                await self.page.wait_for_timeout(600)
+                msg = (
+                    f"add_vehicle: jobsites/deliveries-per-day defaulted to "
+                    f"{text!r} (no Blue Quote data) — VERIFY"
                 )
+                print(f"    [Progressive] {msg}")
+                self.warnings.append(msg)
                 return
-
             print(
-                "    [Progressive] WARN: Trailer hitch dropdown has no "
+                "    [Progressive] WARN: jobsites-per-day combo has no "
                 "selectable options"
             )
         except Exception as e:
-            print(f"    [Progressive] WARN: Trailer hitch fill failed: {e}")
+            print(f"    [Progressive] WARN: jobsites-per-day fill failed: {e}")
 
     async def _set_combobox_by_label(self, label: str, option_text: str) -> None:
         """Generic helper for Sencha ExtJS comboboxes via BasePage primitives."""

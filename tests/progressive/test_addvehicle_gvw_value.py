@@ -5,9 +5,10 @@ from modules.progressive.pages._exceptions import UnmappableValueError
 
 
 class _Combo:
-    def __init__(self, count, value=""):
+    def __init__(self, count, value="", visible=True):
         self._count = count
         self._value = value
+        self._visible = visible
 
     @property
     def first(self):
@@ -19,18 +20,27 @@ class _Combo:
     async def input_value(self):
         return self._value
 
+    async def wait_for(self, state=None, timeout=None):
+        if not self._visible:
+            raise AssertionError("locator not visible")
 
-def _set_gvw_page(*, combo_count, options, value=""):
+    async def is_visible(self):
+        return self._visible
+
+
+def _set_gvw_page(*, combo_count, options, value="", visible=True):
     """AddVehiclePage with find_combo + _enumerate_gvw_options stubbed.
 
     `value` is the combo's current input value: non-empty means Progressive
     already VIN-decoded the GVW (skip); empty means a required selection.
+    `visible=False` models the hidden-combo static-text case (pickups whose
+    GVW row is VIN-decoded static text while the combo stays in the DOM).
     """
     page = AddVehiclePage.__new__(AddVehiclePage)
     page.warnings = []
     page.page = AsyncMock()  # for wait_for_timeout in the enumerate retry
 
-    combo = _Combo(combo_count, value)
+    combo = _Combo(combo_count, value, visible)
 
     async def _find_combo(label):
         return combo
@@ -70,6 +80,17 @@ async def test_set_gvw_skips_when_combo_already_has_value():
     await page._set_gvw("9,000 lbs")  # must not raise, must not select
     assert "label" not in selected
     assert any("already set" in w for w in page.warnings)
+
+
+@pytest.mark.asyncio
+async def test_set_gvw_skips_when_combo_hidden():
+    """Live pickups (F350/RAM 3500, 2026-06-10): GVW row shows VIN-decoded
+    static text but ExtJS keeps a hidden EMPTY combobox in the DOM. Must skip
+    — selecting on it fails / misreads a stray boundlist."""
+    page, selected = _set_gvw_page(combo_count=1, value="", options=[], visible=False)
+    await page._set_gvw("9.800 LBS")
+    assert "label" not in selected
+    assert any("hidden" in w for w in page.warnings)
 
 
 @pytest.mark.asyncio
