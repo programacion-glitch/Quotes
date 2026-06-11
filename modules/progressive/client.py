@@ -9,6 +9,7 @@ workflow_orchestrator.
 import asyncio
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from modules.quote_profile import QuoteProfile
@@ -100,6 +101,13 @@ class ProgressiveClient:
         return asyncio.run(_run_with_browser(config, fields))
 
 
+# Cookies (incl. Progressive's MFA device-trust) persisted across runs so a
+# batch of quotes does ONE login/OTP instead of 28 — repeated fresh logins
+# trip Progressive's "maximum attempts of submitting an OTP" lockout
+# (observed live 2026-06-10).
+_SESSION_STATE = Path(__file__).resolve().parents[2] / "data" / "progressive_session.json"
+
+
 async def _run_with_browser(config: ProgressiveConfig, fields) -> QuoteResult:
     """Launch browser and run the quote flow with retry logic."""
     from playwright.async_api import async_playwright
@@ -112,12 +120,16 @@ async def _run_with_browser(config: ProgressiveConfig, fields) -> QuoteResult:
 
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=config.headless)
+            storage_state = (
+                str(_SESSION_STATE) if _SESSION_STATE.exists() else None
+            )
             context = await browser.new_context(
                 viewport={"width": 1280, "height": 900},
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36"
                 ),
+                storage_state=storage_state,
             )
             page = await context.new_page()
 
@@ -137,6 +149,15 @@ async def _run_with_browser(config: ProgressiveConfig, fields) -> QuoteResult:
             )
 
             last_result = await flow.run(fields)
+
+            # Persist cookies whenever we got past LOGIN, so the next quote
+            # reuses the authenticated session instead of burning an OTP.
+            if last_result.step_reached not in ("login", "", None):
+                try:
+                    await context.storage_state(path=str(_SESSION_STATE))
+                except Exception as e:
+                    print(f"    [Progressive] WARN: could not save session state: {e}")
+
             await browser.close()
 
             if last_result.success:

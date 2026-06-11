@@ -31,9 +31,9 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 
-# Read-only is enough: we filter by message timestamp instead of marking
-# messages as read, so we never need write scope.
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+# gmail.modify (not readonly): after consuming an OTP we move the message to
+# TRASH so the mailbox doesn't accumulate one junk mail per login.
+SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_CREDENTIALS = _PROJECT_ROOT / "data" / "credentials.json"
@@ -151,11 +151,20 @@ class GmailAPIOTPReader:
                     continue
                 code = self._extract_code(body)
                 if code:
+                    self._trash_message(svc, ref["id"])
                     return code
             return None
         except Exception as e:  # noqa: BLE001
             print(f"    OTP fetch error (Gmail API): {e}")
             return None
+
+    def _trash_message(self, svc, msg_id: str) -> None:
+        """Move a consumed OTP mail to TRASH (best-effort: a failure here must
+        never break the login that is waiting on the code)."""
+        try:
+            svc.users().messages().trash(userId="me", id=msg_id).execute()
+        except Exception as e:  # noqa: BLE001
+            print(f"    OTP trash warning (Gmail API): {e}")
 
     # ---- body parsing ----
 

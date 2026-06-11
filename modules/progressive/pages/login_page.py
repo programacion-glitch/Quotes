@@ -4,6 +4,7 @@ Login Page Object for Progressive portal.
 Handles: navigate to login -> enter credentials -> submit -> enter OTP -> continue.
 """
 
+import time
 from datetime import datetime, timezone
 
 from playwright.async_api import Page
@@ -31,6 +32,18 @@ class LoginPage(BasePage):
         print("    [Progressive] Navigating to login page...")
         await self.page.goto(self.LOGIN_URL, wait_until="networkidle", timeout=30_000)
 
+        # With a restored session (client storage_state) the Welcome URL does
+        # NOT redirect to foragentsonlylogin — we land authenticated on the
+        # agent dashboard and there is no login form to fill.
+        if "foragentsonlylogin" not in self.page.url.lower():
+            user_field = self.page.get_by_role("textbox", name="User ID")
+            if await user_field.count() == 0:
+                print(
+                    "    [Progressive] Session restored — already "
+                    "authenticated (no login/OTP needed)"
+                )
+                return True
+
         # Enter credentials (validated label-based selectors)
         print("    [Progressive] Entering credentials...")
         await self.safe_fill(
@@ -49,16 +62,26 @@ class LoginPage(BasePage):
 
         # Submit login form — "Log In" is NOT a wizard Continue; keep as direct click.
         await self.page.get_by_role("button", name="Log In").click(force=True, timeout=10_000)
-        # Post-login redirect chain settles via networkidle (not ExtJS).
-        await self.page.wait_for_load_state("networkidle", timeout=15_000)
 
-        # Check if OTP page appeared
-        otp_visible = await self._is_otp_page()
-        if not otp_visible:
-            if "home" in self.page.url.lower() or "foragentsonly.com" in self.page.url.lower():
-                print("    [Progressive] Logged in (no OTP required)")
-                return True
-            print("    [Progressive] Login failed - unexpected page")
+        # The login XHR keeps the button spinning well past networkidle
+        # (observed live 2026-06-10: a screenshot caught the spinner while the
+        # old load-state wait had already returned). Poll for a definitive
+        # outcome instead of trusting load-state timing.
+        outcome = await self._wait_login_outcome(timeout_s=45)
+
+        if outcome == "home":
+            print("    [Progressive] Logged in (no OTP required)")
+            return True
+        if outcome == "rejected":
+            await self.screenshot("login_rejected")
+            print("    [Progressive] Login rejected — invalid credentials")
+            return False
+        if outcome == "unknown":
+            await self.screenshot("login_unknown_state")
+            print(
+                f"    [Progressive] Login outcome unknown after wait — "
+                f"url={self.page.url}"
+            )
             return False
 
         # Fetch OTP from Gmail
@@ -83,12 +106,62 @@ class LoginPage(BasePage):
         print(f"    [Progressive] Unexpected URL after OTP: {self.page.url}")
         return False
 
+    async def _wait_login_outcome(self, timeout_s: float = 45.0) -> str:
+        """Poll until the post-Log-In state is definitive.
+
+        Returns one of:
+          "otp"      — the OTP input is actually visible
+          "home"     — landed back on foragentsonly.com (no MFA required)
+          "rejected" — a credentials error message is visible
+          "unknown"  — nothing definitive within timeout_s
+        """
+        deadline = time.monotonic() + timeout_s
+        while True:
+            if await self._is_otp_page():
+                return "otp"
+
+            url = self.page.url.lower()
+            # Authenticated users land on foragentsonly.com; unauthenticated
+            # flows live on foragentsonlylogin.progressive.com.
+            if "foragentsonly.com" in url and "foragentsonlylogin" not in url:
+                if "welcome=" not in url:
+                    return "home"
+
+            for phrase in (
+                "incorrect", "invalid", "locked", "does not match",
+                "unable to log", "try again",
+            ):
+                try:
+                    loc = self.page.get_by_text(phrase, exact=False)
+                    if await loc.count() > 0 and await loc.first.is_visible():
+                        return "rejected"
+                except Exception:
+                    pass
+
+            if time.monotonic() >= deadline:
+                return "unknown"
+            # Poll cadence while the Log In spinner / redirect chain settles.
+            await self.page.wait_for_timeout(500)
+
     async def _is_otp_page(self) -> bool:
-        """Check if the current page is asking for an OTP."""
+        """Check if the current page is REALLY asking for an OTP.
+
+        The login page itself can contain words like "passcode"/"OTP" in
+        static text, so text matching alone gives a false positive when the
+        login is rejected (observed live 2026-06-10: wrong password reported
+        as "OTP not received"). Require an actual visible OTP input instead.
+        """
         try:
-            for text in ["passcode", "one-time", "verification code", "OTP"]:
-                loc = self.page.get_by_text(text, exact=False)
-                if await loc.count() > 0:
+            primary = self.page.get_by_role("textbox", name="One-time passcode")
+            if await primary.count() > 0 and await primary.first.is_visible():
+                return True
+            # Legacy multi-MfaOtpEntry variant: any visible candidate input.
+            legacy = self.page.locator(
+                'input[name*="passcode" i], input[name*="otp" i], '
+                'input[name*="MfaOtpEntry" i]'
+            )
+            for i in range(await legacy.count()):
+                if await legacy.nth(i).is_visible():
                     return True
             return False
         except Exception:
