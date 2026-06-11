@@ -122,10 +122,18 @@ class LoginPage(BasePage):
 
             url = self.page.url.lower()
             # Authenticated users land on foragentsonly.com; unauthenticated
-            # flows live on foragentsonlylogin.progressive.com.
+            # flows live on foragentsonlylogin.progressive.com. The query
+            # string is NOT a discriminator: a device-trusted re-login (no
+            # OTP) bounces back to the original /home/?Welcome=584 URL
+            # (observed live 2026-06-11) — so confirm by the ABSENCE of the
+            # login form instead of by URL params.
             if "foragentsonly.com" in url and "foragentsonlylogin" not in url:
-                if "welcome=" not in url:
-                    return "home"
+                try:
+                    form = self.page.get_by_role("textbox", name="User ID")
+                    if await form.count() == 0 or not await form.first.is_visible():
+                        return "home"
+                except Exception:
+                    pass
 
             for phrase in (
                 "incorrect", "invalid", "locked", "does not match",
