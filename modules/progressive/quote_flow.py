@@ -382,6 +382,7 @@ class QuoteFlow:
                 has_driving_history=driver.has_driving_history,
                 name=driver.name,
                 date_of_birth=driver.date_of_birth,
+                additional=True,
             )
 
         # If we deferred policyholder exclusion, apply it now via Edit on the

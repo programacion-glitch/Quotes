@@ -127,17 +127,22 @@ class AddDriverPage(BasePage):
         has_driving_history: bool = False,
         name: Optional[str] = None,
         date_of_birth: Optional[str] = None,
+        additional: bool = False,
     ) -> None:
         """Fill the AddDriver form and click Continue.
 
         Progressive AUTO-POPULATES First/Last/DOB for the policyholder from
         BusinessOwnerInfo, but ADDITIONAL drivers arrive with empty fields.
         We fill name + DOB only if the fields are currently empty (idempotent).
+
+        additional=True: this is an added driver, so the First/Last Name
+        inputs MUST exist — failing to locate them is an error, not the
+        policyholder's prefilled-form context.
         """
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
 
         if name:
-            await self._fill_name_if_empty(name)
+            await self._fill_name_if_empty(name, required=additional)
         if date_of_birth:
             await self._fill_dob_if_empty(date_of_birth)
 
@@ -207,14 +212,17 @@ class AddDriverPage(BasePage):
         except Exception as e:
             print(f"    [Progressive] AddDriver diagnostic failed: {e}")
 
-    async def _fill_name_if_empty(self, full_name: str) -> None:
+    async def _fill_name_if_empty(self, full_name: str, required: bool = False) -> None:
         """Fill First / Last name textboxes if empty (additional drivers).
 
         Silent no-op for the POLICYHOLDER (whose Name + DOB are pre-filled
         by Progressive from BusinessOwnerInfo — these inputs don't render on
-        the form). We detect that context by 'no First Name input visible'
-        and just return; only emit WARN+diagnostic if it's an ADDITIONAL
-        driver form (Name label is visible but inputs can't be located).
+        the form). We detect that context by 'no First Name input visible'.
+
+        required=True (additional drivers): the inputs MUST exist — a locate
+        miss is a real failure (live DDH driver 4 2026-06-10: silent skip left
+        First/Last empty and Continue blocked with no context). Dump the DOM
+        diagnostic and raise instead.
         """
         parts = full_name.strip().split()
         if not parts:
@@ -227,7 +235,23 @@ class AddDriverPage(BasePage):
             placeholder_keywords=["First Name", "First"],
             label_text="Name",
         )
+        if first_input is None and required:
+            # One retry after a settle: the 4th+ AddDriver form can render
+            # slower than the 600ms locate window.
+            await self.page.wait_for_timeout(1_500)
+            first_input = await self._locate_input_by_placeholder_or_label(
+                placeholder_keywords=["First Name", "First"],
+                label_text="Name",
+            )
         if first_input is None:
+            if required:
+                await self._dump_addriver_inputs()
+                await self.screenshot("adddriver_name_inputs_missing")
+                raise RuntimeError(
+                    f"AddDriver (additional): First Name input not found — "
+                    f"cannot save driver {full_name!r} (required fields would "
+                    f"block Continue)"
+                )
             # Policyholder context: name fields aren't rendered. Silent skip.
             return
         current = ""
@@ -297,6 +321,32 @@ class AddDriverPage(BasePage):
             return  # already filled (likely policyholder auto-populated)
         print(f"    [Progressive] DOB = {dob}")
         await self.safe_fill(dob_input, dob, verify=False)
+
+        # The DOB input is MASKED (auto-inserts '/'): fill() can collide with
+        # the mask and drop a separator ('05/101982', live ALPHA 2026-06-10),
+        # which blocks Continue with a format error. Verify; on mismatch clear
+        # and re-type digits only, letting the mask place the slashes.
+        import re as _re
+        try:
+            landed = (await dob_input.input_value()).strip()
+        except Exception:
+            landed = ""
+        if landed and not _re.fullmatch(r"\d{2}/\d{2}/\d{4}", landed):
+            digits = _re.sub(r"\D", "", dob)
+            try:
+                await dob_input.click()
+                await dob_input.fill("")
+                try:
+                    await dob_input.press_sequentially(digits, delay=50)
+                except AttributeError:  # older Playwright API
+                    await dob_input.type(digits, delay=50)
+                await self.page.keyboard.press("Tab")
+                print(
+                    f"    [Progressive] DOB re-typed digits-only "
+                    f"(mask garbled it to {landed!r})"
+                )
+            except Exception as e:
+                print(f"    [Progressive] WARN: DOB digits-only retry failed: {e}")
 
     async def _select_license_state(self, state: str) -> None:
         """Select Driver’s License State (default Texas).

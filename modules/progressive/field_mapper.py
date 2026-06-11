@@ -180,10 +180,55 @@ def _same_person(a: Optional[str], b: Optional[str]) -> bool:
         return False
     if ta == tb:
         return True
-    if ta[0] != tb[0]:
+
+    def first_substantive(tokens: list) -> str:
+        """First token that isn't a single-letter initial ('J', 'A.') —
+        driver rows sometimes lead with one ('J ANTONIO GONZALEZ' vs owner
+        'ANTONIO S GONZALEZ', live 2026-06-10)."""
+        for t in tokens:
+            if len(t.rstrip(".")) > 1:
+                return t
+        return tokens[0]
+
+    fa, fb = first_substantive(ta), first_substantive(tb)
+    if fa != fb:
         return False
-    # Beyond the first name, require at least one shared surname/middle token.
-    return bool(set(ta[1:]) & set(tb[1:]))
+    # Beyond the first name, require at least one shared surname/middle token
+    # (drop only the matched first-name occurrence; surnames can repeat).
+    ra, rb = list(ta), list(tb)
+    ra.remove(fa)
+    rb.remove(fb)
+    return bool(set(ra) & set(rb))
+
+
+_US_STATES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
+    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota",
+    "MS": "Mississippi", "MO": "Missouri", "MT": "Montana", "NE": "Nebraska",
+    "NV": "Nevada", "NH": "New Hampshire", "NJ": "New Jersey",
+    "NM": "New Mexico", "NY": "New York", "NC": "North Carolina",
+    "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon",
+    "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
+    "VT": "Vermont", "VA": "Virginia", "WA": "Washington",
+    "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming",
+    "DC": "District of Columbia",
+}
+
+
+def _normalize_license_state(raw: Optional[str]) -> str:
+    """'GA' -> 'Georgia'. Feeding abbreviations to the License State combo's
+    tolerant partial match is a trap: 'GA' substring-matched 'MichiGAn' live
+    (DDH driver 4, 2026-06-10) and the license number then failed validation
+    for the wrong state. Full names pass through unchanged."""
+    s = (raw or "").strip()
+    if not s:
+        return "Texas"
+    return _US_STATES.get(s.upper(), s)
 
 
 def _map_driver(d: DriverProfile, owner_name: Optional[str]) -> MappedDriver:
@@ -191,7 +236,7 @@ def _map_driver(d: DriverProfile, owner_name: Optional[str]) -> MappedDriver:
     is_owner = _same_person(owner_name, d.name)
     return MappedDriver(
         name=d.name,
-        license_state=d.license_state or "Texas",
+        license_state=_normalize_license_state(d.license_state),
         license_number=d.license_number,
         date_of_birth=d.date_of_birth,
         exclude_from_policy=d.exclude_from_policy,
