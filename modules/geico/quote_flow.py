@@ -25,7 +25,7 @@ from typing import Optional
 from playwright.async_api import Page, BrowserContext
 
 from modules.geico.field_mapper import MappedDriver, MappedFields
-from modules.geico.otp_reader import GeicoOTPReader
+from modules.gmail_api_otp_reader import GmailAPIOTPReader
 from modules.geico.pdf_downloader import download_geico_pdf, quote_pdf_filename
 from modules.geico.pages.additional_business_page import AdditionalBusinessPage
 from modules.geico.pages.base_page import BasePage
@@ -71,7 +71,7 @@ class QuoteFlow:
         self,
         page: Page,
         context: BrowserContext,
-        otp_reader: GeicoOTPReader,
+        otp_reader: GmailAPIOTPReader,
         username: str,
         password: str,
         login_url: str,

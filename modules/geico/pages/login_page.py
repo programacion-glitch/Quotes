@@ -8,7 +8,9 @@ Flow (very different from Progressive's ForAgentsOnly):
   4. Pick the Email radio (custom radio whose real input is `#extension_mfaByPhoneOrEmail_email`).
   5. Click Continue. Page shows masked email + "Send verification code" button.
   6. Click "Send verification code" (record login_time first, for OTP filter).
-  7. Wait for "Verification code" textbox, fetch OTP via GeicoOTPReader, fill, click "Verify code".
+  7. Wait for "Verification code" textbox, fetch OTP via the Gmail API
+     reader (HTTPS/443 — IMAP is reset by this host's mail-scanning stack),
+     fill, click "Verify code".
   8. Click "Continue" -> redirect to gateway.geico.com/quote.
 """
 
@@ -18,7 +20,7 @@ from urllib.parse import urlparse
 from playwright.async_api import Page
 
 from modules.geico.pages.base_page import BasePage
-from modules.geico.otp_reader import GeicoOTPReader
+from modules.gmail_api_otp_reader import GmailAPIOTPReader
 
 
 def _host_is_gateway(url: str) -> bool:
@@ -40,7 +42,7 @@ class LoginPage(BasePage):
 
     GATEWAY_HOST = "gateway.geico.com"
 
-    def __init__(self, page: Page, otp_reader: GeicoOTPReader, login_url: str):
+    def __init__(self, page: Page, otp_reader: GmailAPIOTPReader, login_url: str):
         super().__init__(page)
         self.otp_reader = otp_reader
         self.login_url = login_url

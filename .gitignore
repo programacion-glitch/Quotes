@@ -62,7 +62,7 @@ results_display.txt
 ~$*.xlsb
 ~$*.xls
 
-# Data (if sensitive) — input Blue Quotes are runtime data, not tracked
+# Data (if sensitive) ??? input Blue Quotes are runtime data, not tracked
 data/input/*.pdf
 # data/output/*.json
 
@@ -79,6 +79,7 @@ config/*.json
 data/credentials.json
 data/token.json
 data/progressive_session.json
+data/geico_session.json
 
 # Learned-mappings runtime cache (persists on the data volume / Drive, not in git)
 data/learned_mappings.xlsx

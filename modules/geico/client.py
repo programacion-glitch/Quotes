@@ -1,22 +1,54 @@
 """
 GEICO Client
 
-Top-level API for the GEICO module. Manages browser lifecycle, retry logic,
-and provides the create_quote() entry point used by workflow_orchestrator.
+Top-level API for the GEICO module. Manages browser lifecycle, session
+persistence, retry policy, and provides the create_quote() entry point used
+by workflow_orchestrator.
 
 Mirrors modules/progressive/client.py — same shape so the orchestrator can
-dispatch to either MGA with identical call semantics.
+dispatch to either MGA with identical call semantics. Containment lessons
+inherited from Progressive (2026-06-10/11 live):
+  * OTP over the Gmail REST API (HTTPS/443) — this host's mail-scanning
+    stack (eScan/Acronis) resets IMAP TLS to Gmail, so imaplib never works.
+  * Persistent storage_state: one login/OTP per batch, not per quote.
+    GEICO enforces a SINGLE session per agent and Azure B2C throttles OTP —
+    hammering fresh logins locks the account.
+  * Bounded protocol calls + a hard per-attempt budget: a wedged renderer
+    survives even bounded calls, so the whole attempt is wrapped in
+    asyncio.wait_for.
+  * Retry ONLY what a fresh attempt can plausibly change (login flakes,
+    GEICO's intermittent owner-identity check). Mid-flow failures reproduce
+    identically and just burn OTPs.
 """
 
 import asyncio
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from modules.quote_profile import QuoteProfile
-from modules.geico.otp_reader import GeicoOTPReader
+from modules.gmail_api_otp_reader import GmailAPIOTPReader
 from modules.geico.field_mapper import map_profile_to_fields
 from modules.geico.quote_flow import QuoteFlow, QuoteResult
+
+
+# SP-initiated entry point. NEVER a captured authorize URL: its PKCE
+# code_challenge has the verifier in the browser that generated it, so
+# reusing it breaks the token exchange ("Tu sesión ha terminado").
+# Validated live 2026-05-28 — see docs/Proceso GEICO.md "Login + MFA".
+_DEFAULT_LOGIN_URL = "https://gateway.geico.com"
+
+# Cookies (incl. trusted-device state) persisted across runs so a batch of
+# quotes does ONE login/OTP instead of one per quote. GEICO enforces a single
+# session per agent (i070857): fresh logins invalidate the previous session
+# and too many in a row can lock the account.
+_SESSION_STATE = Path(__file__).resolve().parents[2] / "data" / "geico_session.json"
+
+# Hard per-attempt budget. Provisional: copied from Progressive (largest
+# legit quote there was 556s; 700 covers it with margin). Recalibrate once
+# Fase 4 produces a GEICO end-to-end baseline.
+_ATTEMPT_BUDGET_S = 700
 
 
 @dataclass
@@ -26,7 +58,6 @@ class GEICOConfig:
     password: str
     login_url: str
     otp_email: str
-    otp_app_password: str
     dry_run: bool = False
     headless: bool = True
     max_retries: int = 1
@@ -43,9 +74,8 @@ class GEICOConfig:
         return cls(
             username=os.getenv("GEICO_USER", ""),
             password=os.getenv("GEICO_PASS", ""),
-            login_url=os.getenv("GEICO_LOGIN_URL", ""),
+            login_url=os.getenv("GEICO_LOGIN_URL", "") or _DEFAULT_LOGIN_URL,
             otp_email=os.getenv("GEICO_OTP_EMAIL", ""),
-            otp_app_password=os.getenv("GEICO_OTP_APP_PASSWORD", ""),
             dry_run=os.getenv("GEICO_DRY_RUN", "false").lower()
             in ("true", "1", "yes"),
             headless=os.getenv("GEICO_HEADLESS", "true").lower()
@@ -59,13 +89,36 @@ class GEICOConfig:
             return "GEICO_USER not set"
         if not self.password:
             return "GEICO_PASS not set"
-        if not self.login_url:
-            return "GEICO_LOGIN_URL not set"
         if not self.otp_email:
             return "GEICO_OTP_EMAIL not set"
-        if not self.otp_app_password:
-            return "GEICO_OTP_APP_PASSWORD not set"
+        if "code_challenge" in self.login_url:
+            return (
+                "GEICO_LOGIN_URL is a captured authorize URL (has "
+                "code_challenge) — its PKCE verifier lives in the browser "
+                "that generated it and the session always dies. Use "
+                f"{_DEFAULT_LOGIN_URL} (or unset the variable)."
+            )
         return None
+
+
+def _should_retry(result: QuoteResult) -> bool:
+    """Retry only failures a fresh attempt can plausibly change:
+
+      * login flakes (OTP timing, redirect races) — step_reached == 'login';
+      * a hard-budget blowup before any step registered (renderer wedge) —
+        step_reached '' / None;
+      * GEICO's intermittent owner-identity check (needs_manual_review):
+        the same owner often verifies on a later attempt; after the retry
+        loop exhausts, the caller promotes it to a HALT.
+
+    Everything else either reproduces identically (mid-flow selector/logic
+    failures) or is a definitive answer (halted, is_stub, success).
+    """
+    if result.success or result.halted or result.is_stub:
+        return False
+    if result.needs_manual_review:
+        return True
+    return result.step_reached in ("login", "", None)
 
 
 class GEICOClient:
@@ -126,18 +179,26 @@ async def _run_with_browser(config: GEICOConfig, fields) -> QuoteResult:
 
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=config.headless)
+            storage_state = (
+                str(_SESSION_STATE) if _SESSION_STATE.exists() else None
+            )
             context = await browser.new_context(
                 viewport={"width": 1280, "height": 900},
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36"
                 ),
+                storage_state=storage_state,
             )
+            # Bound EVERY protocol call: a wedged renderer makes unbounded
+            # calls hang the quote forever (Progressive live 2026-06-10).
+            # Explicit per-call timeouts still override this default.
+            context.set_default_timeout(30_000)
             page = await context.new_page()
 
-            otp_reader = GeicoOTPReader(
-                config.otp_email, config.otp_app_password
-            )
+            # OTP over the Gmail REST API (HTTPS/443). IMAP/993 is reset by
+            # the host's mail-scanning security stack on this machine.
+            otp_reader = GmailAPIOTPReader(config.otp_email, subject="GEICO")
             flow = QuoteFlow(
                 page=page,
                 context=context,
@@ -148,23 +209,46 @@ async def _run_with_browser(config: GEICOConfig, fields) -> QuoteResult:
                 dry_run=config.dry_run,
             )
 
-            last_result = await flow.run(fields)
+            # Hard per-attempt budget: even bounded protocol calls keep a
+            # wedged flow poking a dead page for ages without this.
+            try:
+                last_result = await asyncio.wait_for(
+                    flow.run(fields), timeout=_ATTEMPT_BUDGET_S
+                )
+            except asyncio.TimeoutError:
+                print(
+                    f"    [GEICO] HARD BUDGET ({_ATTEMPT_BUDGET_S}s) exceeded "
+                    f"— wedge suspected; aborting this attempt"
+                )
+                last_result = QuoteResult(
+                    success=False,
+                    error=(
+                        f"Attempt exceeded {_ATTEMPT_BUDGET_S}s hard budget "
+                        f"(renderer/page wedge suspected)"
+                    ),
+                    step_reached="",
+                )
+
+            # Persist cookies whenever we got past LOGIN, so the next quote
+            # reuses the authenticated session instead of burning an OTP.
+            if last_result.step_reached not in ("login", "", None):
+                try:
+                    await context.storage_state(path=str(_SESSION_STATE))
+                except Exception as e:
+                    print(f"    [GEICO] WARN: could not save session state: {e}")
+
             await browser.close()
 
             if last_result.success:
                 return last_result
-            # Stubs (Block N checkpoints during development) are NOT real
-            # failures — retrying would burn another browser session for the
-            # same expected outcome. Bail out immediately.
-            if last_result.is_stub:
+            if not _should_retry(last_result):
+                if not last_result.halted and not last_result.is_stub:
+                    print(
+                        f"    [GEICO] Failure at step "
+                        f"'{last_result.step_reached}' is not retryable; "
+                        f"returning original error."
+                    )
                 return last_result
-            # Eligibility halts are a definitive GEICO answer (USDOT/ZIP not
-            # eligible). Retrying would hit the identical rejection. Bail.
-            if last_result.halted:
-                return last_result
-            # Owner-verification failures (GEICO asked for SSN) are intermittent,
-            # so we fall through and retry. After the loop exhausts, they are
-            # promoted to a HALT below.
 
     # Retries exhausted. If the last failure was GEICO repeatedly asking for the
     # owner's SSN, promote it to a HALT so the caller treats it as a definitive
