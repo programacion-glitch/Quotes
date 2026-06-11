@@ -35,6 +35,13 @@ from modules.quote_profile import (
     QuoteProfile,
     VehicleProfile,
 )
+# Name/state utilities shared with Progressive — same BlueQuote quirks on
+# both portals (two-surname names, middle initials, 'TX' vs full 'Texas'
+# select options). Unit-tested in tests/progressive/test_same_person.py.
+from modules.progressive.field_mapper import (
+    _normalize_license_state,
+    _same_person,
+)
 
 
 _SUFFIX_TOKENS = {"JR", "SR", "II", "III", "IV", "V", "2ND", "3RD"}
@@ -181,9 +188,11 @@ def _parse_name(full_name: str) -> Tuple[str, str, Optional[str]]:
     """Split a full name into (first, last, suffix).
 
     Examples:
+        "CLIFTON THOMAS JR"  -> ("CLIFTON", "THOMAS", "JR")
         "CLIFTON JR THOMAS"  -> ("CLIFTON", "THOMAS", "JR")
         "JOHN SMITH"         -> ("JOHN", "SMITH", None)
         "MARY ANN DOE"       -> ("MARY", "DOE", None)
+        "JOHN JR"            -> ("JOHN", "JR", None)   # no real surname left
     """
     if not full_name:
         return ("", "", None)
@@ -192,13 +201,22 @@ def _parse_name(full_name: str) -> Tuple[str, str, Optional[str]]:
         return ("", "", None)
     if len(tokens) == 1:
         return (tokens[0], "", None)
+
+    suffix: Optional[str] = None
+    # Trailing suffix is the natural BlueQuote order ("CLIFTON THOMAS JR").
+    # Only strip it when a real surname remains (>= 3 tokens) — "JOHN JR"
+    # is ambiguous and keeps JR as the last name.
+    if len(tokens) >= 3 and tokens[-1].upper().strip(".") in _SUFFIX_TOKENS:
+        suffix = tokens[-1].upper().strip(".")
+        tokens = tokens[:-1]
+
     first = tokens[0]
     last = tokens[-1]
-    suffix: Optional[str] = None
-    for mid in tokens[1:-1]:
-        if mid.upper().strip(".") in _SUFFIX_TOKENS:
-            suffix = mid.upper().strip(".")
-            break
+    if suffix is None:
+        for mid in tokens[1:-1]:
+            if mid.upper().strip(".") in _SUFFIX_TOKENS:
+                suffix = mid.upper().strip(".")
+                break
     return (first, last, suffix)
 
 
@@ -303,18 +321,14 @@ def _bi_limits_to_geico(bluequote_limit: Optional[str]) -> str:
 def _map_driver(d: DriverProfile, owner_name: Optional[str]) -> MappedDriver:
     """Map a DriverProfile to a MappedDriver.
 
-    Owner detection: compare (first, last) tuples after `_parse_name` so that
-    "HUMBERTO F VILLARREAL" (driver, with middle initial) matches the owner
-    name "HUMBERTO VILLARREAL". Direct string comparison breaks on middle
-    initials, suffix differences, and extra whitespace.
+    Owner detection uses `_same_person` (first name + at least one shared
+    surname token) so that middle initials ("HUMBERTO F VILLARREAL"), and
+    one-vs-two-surname variants ("JERSSON MEDINA" vs "JERSSON STIVEN MEDINA
+    ROBAYO") still match the owner — exact (first, last) comparison broke on
+    both live in Progressive.
     """
     first, last, suffix = _parse_name(d.name)
-    o_first, o_last, _o_suf = _parse_name(owner_name or "")
-    is_owner = bool(
-        o_first and o_last and first and last
-        and o_first.strip().upper() == first.strip().upper()
-        and o_last.strip().upper() == last.strip().upper()
-    )
+    is_owner = _same_person(d.name, owner_name)
     has_cdl = bool(
         (d.cdl_class and d.cdl_class.strip().upper() in {"A", "B"})
         or d.cdl_present
@@ -328,7 +342,9 @@ def _map_driver(d: DriverProfile, owner_name: Optional[str]) -> MappedDriver:
         last_name=last,
         suffix=suffix,
         date_of_birth=d.date_of_birth,
-        license_state=d.license_state or "Texas",
+        # 'TX' -> 'Texas': GEICO's license-state <select> options are full
+        # state names; an abbreviation never matches an option.
+        license_state=_normalize_license_state(d.license_state),
         license_number=d.license_number,
         has_cdl=has_cdl,
         is_owner=is_owner,

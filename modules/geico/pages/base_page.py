@@ -1,19 +1,38 @@
 """
-Base Page Object for GEICO portal.
+Base Page Object for GEICO portal — hub of shadow-DOM-safe primitives.
 
-Provides shared helpers for all page objects. Uses label-based selectors
-because GEICO (like Progressive) generates dynamic IDs on every page load.
+Every page object MUST use these primitives instead of calling
+page.fill/click/select_option directly (same discipline as the Progressive
+BasePage, adapted to GEICO's front end: gds-* custom elements with shadow
+DOM, native <select>s with dynamic ids, Select2 for the business class).
 
-Note: GEICO uses both native `<select>` and Sencha/custom comboboxes —
-`select_by_js` and `select_by_options_signature` are the proven fallbacks
-from the live-mapping session. Some radio inputs live inside shadow DOM,
-which is handled by `click_shadow_radio`.
+Families:
+  A. Localización tolerante (by_label, field_exists, _flex_text_regex)
+  B. Interacción verificada (safe_fill, select_by_js,
+     select_by_options_signature, click_question_radio, click_button)
+     — every committed value is read back and verified; retries with
+     backoff; structured exceptions (_exceptions.py) carrying screenshot
+     + debug context + the visible option catalog on select failures.
+  C. Esperas por condición (wait_for_any_title, wait_for_title_change,
+     wait_for_text)
+  D. Estado de página (remove_overlays)
+  E. Diagnóstico y aprendizaje (screenshot, dump_debug_context,
+     note_warning/self.warnings — harvested into QuoteResult.warnings)
 """
 
+import json
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
+
 from playwright.async_api import Page, Locator
+
+from modules.geico.pages._exceptions import (
+    FillVerifyError,
+    RadioStuckError,
+    SelectNotFoundError,
+    SelectVerifyError,
+)
 
 
 def _flex_text_regex(substring: str) -> "re.Pattern":
@@ -25,7 +44,7 @@ def _flex_text_regex(substring: str) -> "re.Pattern":
     # Swap apostrophes for a private-use placeholder BEFORE re.escape (which
     # would turn ' into \' and break a naive post-escape replace), then
     # substitute the apostrophe character class back in.
-    _APOS = ""
+    _APOS = ""
     norm = substring.strip().replace("'", _APOS).replace("’", _APOS)
     parts = re.split(r"\s+", norm)
     escaped = r"\s+".join(re.escape(p) for p in parts)
@@ -33,13 +52,166 @@ def _flex_text_regex(substring: str) -> "re.Pattern":
     return re.compile(escaped, re.IGNORECASE)
 
 
+# JS shared by the verified native-select primitives. Two find modes
+# (id-pattern / options-signature) × two actions (set / read-back).
+# Always returns a JSON string; on failure the payload carries the select's
+# visible option texts so the exception can teach the real catalog.
+_JS_NATIVE_SELECT = """
+    (args) => {
+        const norm = (s) => (s || '').trim();
+        const findSelect = () => {
+            const selects = Array.from(document.querySelectorAll('select'));
+            if (args.mode === 'pattern') {
+                const p = (args.pattern || '').toLowerCase();
+                return selects.find(
+                    s => !s.disabled && s.id && s.id.toLowerCase().includes(p)
+                ) || null;
+            }
+            const sig = args.signature || [];
+            return selects.find(s => {
+                if (s.disabled) return false;
+                const texts = Array.from(s.options).map(o => norm(o.text));
+                return sig.every(g => texts.some(t => t.includes(g)));
+            }) || null;
+        };
+        const sel = findSelect();
+        if (!sel) return JSON.stringify({error: 'no-match'});
+        const optionTexts = Array.from(sel.options)
+            .map(o => norm(o.text)).slice(0, 60);
+        const current = () => {
+            const o = sel.selectedOptions && sel.selectedOptions[0];
+            return o ? norm(o.text) : '';
+        };
+        if (args.action === 'read') {
+            return JSON.stringify(
+                {found: true, value: sel.value, text: current()}
+            );
+        }
+        // action === 'set': match by value attribute first, then by text.
+        const desired = args.value;
+        let chosen = null;
+        for (const opt of sel.options) {
+            if (opt.value === desired) { chosen = opt; break; }
+        }
+        if (!chosen) {
+            for (const opt of sel.options) {
+                if (norm(opt.text) === norm(desired)) { chosen = opt; break; }
+            }
+        }
+        if (!chosen) {
+            return JSON.stringify({
+                error: 'option-not-found', id: sel.id || '',
+                options: optionTexts,
+            });
+        }
+        sel.value = chosen.value;
+        sel.dispatchEvent(new Event('change', {bubbles: true}));
+        return JSON.stringify({
+            id: sel.id || '', value: sel.value, text: current(),
+            options: optionTexts,
+        });
+    }
+"""
+
+# Probe the real checked state of a gds-radio-button whose input lives in
+# shadow DOM. Returns true/false, or null when the state is unreadable.
+_JS_RADIO_STATE = """
+    (el) => {
+        const input = el.shadowRoot
+            && el.shadowRoot.querySelector('input[type=radio]');
+        if (input) return input.checked;
+        const aria = el.getAttribute('aria-checked');
+        if (aria !== null) return aria === 'true';
+        if (el.hasAttribute('checked')) return true;
+        return null;
+    }
+"""
+
+# Learning-instrumentation dump: what is actually on screen right now.
+_JS_DEBUG_DUMP = """
+    () => {
+        const vis = el => el.offsetParent !== null;
+        const txt = el => (el.innerText || el.textContent || '').trim();
+        const visible_buttons = Array.from(
+                document.querySelectorAll('gds-button, button')
+            ).filter(vis).map(txt).filter(t => t.length > 0).slice(0, 20);
+        const visible_questions = Array.from(
+                document.querySelectorAll('gds-radio-button-group')
+            ).filter(vis).map(el => txt(el).split('\\n')[0])
+             .filter(t => t.length > 0).slice(0, 15);
+        const visible_selects = Array.from(
+                document.querySelectorAll('select')
+            ).filter(s => !s.disabled).slice(0, 10)
+             .map(s => ({
+                 id: s.id || '',
+                 value: s.value,
+                 first_options: Array.from(s.options).slice(0, 4)
+                     .map(o => (o.text || '').trim()),
+             }));
+        return {visible_buttons, visible_questions, visible_selects};
+    }
+"""
+
+
 class BasePage:
     """Base class for all GEICO page objects."""
 
     def __init__(self, page: Page):
         self.page = page
+        # Fail-soft trail: pages call note_warning(); quote_flow harvests
+        # this into QuoteResult.warnings so the batch report shows it.
+        self.warnings: list[str] = []
 
-    # ---- Selectors ----
+    # ============================================================
+    # Familia E — Diagnóstico y aprendizaje
+    # ============================================================
+
+    def note_warning(self, message: str) -> None:
+        """Record a fail-soft warning: printed AND accumulated for the
+        QuoteResult so it survives into the batch report."""
+        print(f"    [GEICO] WARN: {message}")
+        self.warnings.append(message)
+
+    async def dump_debug_context(self, label: str) -> dict:
+        """Collect URL, title, and the visible buttons/questions/selects.
+
+        This is the learning instrumentation: when something fails, the log
+        must teach the real DOM so the next fix is surgical, not guessed.
+        """
+        ctx: dict = {
+            "label": label,
+            "url": self.page.url,
+            "title": None,
+            "visible_buttons": [],
+            "visible_questions": [],
+            "visible_selects": [],
+        }
+        try:
+            ctx["title"] = await self.page.title()
+        except Exception:
+            pass
+        try:
+            dump = await self.page.evaluate(_JS_DEBUG_DUMP)
+            if isinstance(dump, dict):
+                ctx.update(dump)
+        except Exception:
+            pass
+        return ctx
+
+    async def screenshot(self, name: str, output_dir: str = "logs") -> Optional[str]:
+        """Take a screenshot for error reporting. Returns path or None."""
+        try:
+            path = Path(output_dir) / f"geico_{name}.png"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            await self.page.screenshot(path=str(path), full_page=True)
+            return str(path)
+        except Exception as e:
+            print(f"    Screenshot failed: {e}")
+            return None
+
+    # ============================================================
+    # Familia A — Localización tolerante
+    # ============================================================
 
     def by_label(self, label_text: str) -> Locator:
         """Find an input/select associated with a visible label."""
@@ -59,13 +231,93 @@ class BasePage:
         """Find a radio button by its label text."""
         return self.page.get_by_label(label_text)
 
-    # ---- Actions ----
+    async def field_exists(self, locator: Locator, *, wait_ms: int = 2_000) -> bool:
+        """Short-poll: True if locator has at least one visible match within
+        wait_ms. Use for CONDITIONAL fields (hazmat, conditional insurance
+        comboboxes, DriveEasy radios) before acting on them.
+
+        Tolerates multi-element locators by probing `.first` (strict mode
+        rejects wait_for/is_visible on multi-match locators)."""
+        first = locator.first
+        try:
+            await first.wait_for(state="visible", timeout=wait_ms)
+            return (await locator.count()) > 0 and await first.is_visible()
+        except Exception:
+            try:
+                if (await locator.count()) > 0 and await first.is_visible():
+                    return True
+            except Exception:
+                pass
+            return False
+
+    # ============================================================
+    # Familia B — Interacción verificada
+    # ============================================================
+
+    async def safe_fill(
+        self,
+        locator: Locator,
+        value: str,
+        *,
+        verify: bool = True,
+        retries: int = 2,
+    ) -> None:
+        """Click → fill → Tab → verify input_value(). Retry on mismatch.
+
+        Raises FillVerifyError (screenshot + debug context) after retries."""
+        attempts = 0
+        last_seen = ""
+        for attempt in range(retries + 1):
+            attempts = attempt + 1
+            try:
+                await locator.click(timeout=5_000)
+                await locator.fill(value)
+                await self.page.keyboard.press("Tab")
+            except Exception as e:
+                if attempt == retries:
+                    debug = await self.dump_debug_context("safe_fill_action")
+                    shot = await self.screenshot(f"safe_fill_action_failed_{attempts}")
+                    raise FillVerifyError(
+                        f"safe_fill action failed after {attempts} attempts: {e}",
+                        primitive="safe_fill",
+                        field=value,
+                        attempts=attempts,
+                        screenshot_path=shot,
+                        debug_context=debug,
+                    ) from e
+                await self.page.wait_for_timeout(500 * (attempt + 1))
+                continue
+
+            if not verify:
+                return
+
+            try:
+                last_seen = (await locator.input_value()) or ""
+            except Exception:
+                last_seen = ""
+
+            if last_seen == value:
+                return
+
+            if attempt < retries:
+                await self.page.wait_for_timeout(500 * (attempt + 1))
+
+        debug = await self.dump_debug_context("safe_fill_verify")
+        shot = await self.screenshot(f"safe_fill_verify_failed_{attempts}")
+        raise FillVerifyError(
+            f"safe_fill expected '{value}' got '{last_seen}' after {attempts} attempts",
+            primitive="safe_fill",
+            field=value,
+            attempts=attempts,
+            screenshot_path=shot,
+            debug_context=debug,
+        )
 
     async def fill_by_label(self, label_text: str, value: str) -> None:
-        """Fill an input field identified by its label."""
+        """Fill an input identified by its label — verified via safe_fill."""
         loc = self.by_label(label_text)
         await loc.wait_for(state="visible", timeout=10_000)
-        await loc.fill(value)
+        await self.safe_fill(loc, value)
 
     async def click_by_text(self, text: str, tag: str = "*") -> None:
         """Click an element by visible text, removing overlays first."""
@@ -83,6 +335,9 @@ class BasePage:
              primary action is at the bottom of the wizard forms).
           2. role=button by name — last visible.
           3. the gds-button's shadow inner <button>, clicked via JS.
+
+        Effect verification is the CALLER's job (wait_for_any_title /
+        wait_for_title_change) — a button's outcome is page-specific.
         """
         await self.remove_overlays()
         text_re = _flex_text_regex(text)
@@ -133,20 +388,295 @@ class BasePage:
         if not clicked:
             raise RuntimeError(f"Could not click button {text!r}")
 
+    # ---- Verified native <select> primitives ----
+
+    async def select_by_js(
+        self, select_id_pattern: str, value: str, *, retries: int = 2
+    ) -> str:
+        """Find the first non-disabled <select> whose id contains the pattern
+        (case-insensitive), select `value` (by value attr OR visible text),
+        VERIFY the value stuck after the framework's change handlers ran,
+        retry on reset. Returns the element id.
+
+        Raises SelectNotFoundError / SelectVerifyError (with the visible
+        option catalog) after retries."""
+        return await self._select_native_verified(
+            mode="pattern",
+            pattern=select_id_pattern,
+            signature=None,
+            value=value,
+            retries=retries,
+            field_label=select_id_pattern,
+        )
+
+    async def select_by_options_signature(
+        self, options_signature: list, value: str, *, retries: int = 2
+    ) -> str:
+        """Find the first non-disabled <select> whose options CONTAIN all the
+        given texts (ids are dynamic; the option list is the stable
+        signature), select `value`, VERIFY it stuck, retry on reset.
+        Returns the element id ('' if the element has no id).
+
+        Raises SelectNotFoundError / SelectVerifyError (with the visible
+        option catalog) after retries."""
+        return await self._select_native_verified(
+            mode="signature",
+            pattern=None,
+            signature=list(options_signature),
+            value=value,
+            retries=retries,
+            field_label=f"signature {options_signature}",
+        )
+
+    def _select_value_committed(self, desired: str, payload: dict) -> bool:
+        """True when the read-back state matches the desired option."""
+        want = (desired or "").strip()
+        return (
+            (payload.get("text") or "").strip() == want
+            or (payload.get("value") or "") == desired
+        )
+
+    async def _select_native_verified(
+        self,
+        *,
+        mode: str,
+        pattern: Optional[str],
+        signature: Optional[list],
+        value: str,
+        retries: int,
+        field_label: str,
+    ) -> str:
+        """Core of the verified select primitives: set → read back → retry."""
+        base_args = {"mode": mode, "pattern": pattern, "signature": signature}
+        attempts = 0
+        last_failure: tuple = ("unknown", {})
+
+        for attempt in range(retries + 1):
+            attempts = attempt + 1
+            raw = await self.page.evaluate(
+                _JS_NATIVE_SELECT,
+                {**base_args, "action": "set", "value": value},
+            )
+            result = json.loads(raw)
+
+            if result.get("error") == "no-match":
+                last_failure = ("no-match", result)
+            elif result.get("error") == "option-not-found":
+                last_failure = ("option-not-found", result)
+            else:
+                # Set reported OK. The framework's change handlers may reset
+                # the value asynchronously — give them a beat, then read back.
+                await self.page.wait_for_timeout(150)
+                raw2 = await self.page.evaluate(
+                    _JS_NATIVE_SELECT, {**base_args, "action": "read"}
+                )
+                readback = json.loads(raw2)
+                if readback.get("found") and self._select_value_committed(
+                    value, readback
+                ):
+                    return result.get("id", "")
+                last_failure = ("reset", {**result, "readback": readback})
+
+            if attempt < retries:
+                await self.page.wait_for_timeout(400 * (attempt + 1))
+
+        kind, payload = last_failure
+        debug = await self.dump_debug_context(f"select_{mode}")
+        shot = await self.screenshot(f"select_failed_{mode}_{attempts}")
+        if kind == "no-match":
+            raise SelectNotFoundError(
+                f"No non-disabled <select> matching {field_label}",
+                primitive=f"select_by_{mode}",
+                field=field_label,
+                attempts=attempts,
+                screenshot_path=shot,
+                debug_context=debug,
+            )
+        raise SelectVerifyError(
+            f"<select id={payload.get('id')!r}> ({field_label}): value "
+            f"{value!r} {'not among options' if kind == 'option-not-found' else 'did not stick (framework reset)'} "
+            f"after {attempts} attempts",
+            primitive=f"select_by_{mode}",
+            field=field_label,
+            attempts=attempts,
+            available_options=payload.get("options", []),
+            screenshot_path=shot,
+            debug_context=debug,
+        )
+
+    async def click_shadow_radio(self, shadow_id: str) -> None:
+        """Click a custom radio whose real input lives in shadow DOM
+        (selector `#{shadow_id}`). Encountered for MFA radios and form radios.
+        """
+        await self.page.locator(f"#{shadow_id}").click(timeout=10_000)
+
+    async def click_question_radio(
+        self,
+        question_substring: str,
+        answer: str,
+        timeout: int = 10_000,
+        retries: int = 2,
+    ) -> None:
+        """Click the radio labeled `answer` (e.g. "Yes"/"No"/"Employee") for
+        the question whose visible text contains `question_substring`, then
+        VERIFY the radio actually became checked.
+
+        GEICO uses its own design system: each question is a custom element
+        `<gds-radio-button-group>` (light-DOM children `<gds-radio-button
+        value="Yes">` / `value="No">`, exposed to the a11y tree as role=radio).
+        The actual <input>s live in shadow DOM, so a light-DOM `[role=radio]`
+        query finds NOTHING — the radio MUST be reached via the custom element.
+        There are many such groups on a page (14+ on Step 1), so the radio is
+        scoped to its question's group. Verified live 2026-05-28.
+
+        Click strategies, in order:
+          1. <gds-radio-button-group>:has(question) -> gds-radio-button[value=answer]
+          2. same group -> gds-radio-button whose visible text == answer
+             (covers cases where value is a code, not the label)
+          3. same group -> role=radio by accessible name
+          4. same group -> exact answer label text
+          5. generic role=group fallback (non-gds pages, if any)
+
+        Verification (shadow-DOM aware): a11y is_checked first, then a JS
+        probe of the custom element's shadow input. Three outcomes:
+          * checked        -> done.
+          * unreadable     -> note_warning('unverified') and continue —
+                              never block a quote on unreadable shadow state.
+          * unchecked      -> retry the click; after retries raise
+                              RadioStuckError (screenshot + debug dump).
+        Radio re-clicks are idempotent (unlike toggles), so retrying a click
+        that silently landed is safe.
+        """
+        answer = answer.strip()
+        q_re = _flex_text_regex(question_substring)
+
+        gds_group = self.page.locator("gds-radio-button-group").filter(has_text=q_re)
+
+        # Wait for the question group to render before probing (the SPA may
+        # not have painted it yet right after a step transition — an immediate
+        # count()==0 caused flaky "Could not click radio" failures).
+        try:
+            await gds_group.first.wait_for(state="visible", timeout=timeout)
+        except Exception:
+            pass  # strategies below may still find it via role=group
+
+        attempts_locators = []
+        # 1. value attribute match (Yes/No and most labels).
+        attempts_locators.append(
+            gds_group.locator(f'gds-radio-button[value="{answer}"]')
+        )
+        # 2. gds-radio-button whose trimmed text is exactly the answer.
+        answer_re = re.compile(rf"^\s*{re.escape(answer)}\s*$")
+        attempts_locators.append(
+            gds_group.locator("gds-radio-button").filter(has_text=answer_re)
+        )
+        # 3. accessible radio role within the group.
+        attempts_locators.append(
+            gds_group.get_by_role("radio", name=answer, exact=True)
+        )
+        # 4. exact answer label text within the group.
+        attempts_locators.append(gds_group.get_by_text(answer, exact=True))
+        # 5. generic fallback: role=group + text-anchor.
+        grp = self.page.get_by_role("group").filter(has_text=q_re)
+        attempts_locators.append(grp.get_by_role("radio", name=answer, exact=True))
+
+        last_err = None
+        total_rounds = 0
+        for round_idx in range(retries + 1):
+            total_rounds = round_idx + 1
+            clicked = False
+            for loc in attempts_locators:
+                try:
+                    if await loc.count() == 0:
+                        continue
+                    el = loc.first
+                    try:
+                        await el.scroll_into_view_if_needed(timeout=3_000)
+                    except Exception:
+                        pass
+                    await el.click(timeout=timeout)
+                    clicked = True
+                    break
+                except Exception as e:  # noqa: PERF203
+                    last_err = e
+                    continue
+
+            if clicked:
+                state = await self._radio_checked_state(gds_group, answer)
+                if state is True:
+                    return
+                if state is None:
+                    self.note_warning(
+                        f"radio {answer!r} for {question_substring!r}: "
+                        f"checked-state unreadable (shadow DOM) — click unverified"
+                    )
+                    return
+                # state is False -> the click did not commit; retry.
+
+            if round_idx < retries:
+                await self.page.wait_for_timeout(400 * (round_idx + 1))
+
+        debug = await self.dump_debug_context("click_question_radio")
+        shot = await self.screenshot(f"radio_stuck_{answer}_{total_rounds}")
+        raise RadioStuckError(
+            f"Could not verify {answer!r} checked for question "
+            f"{question_substring!r} after {total_rounds} attempts "
+            f"(last error: {last_err})",
+            primitive="click_question_radio",
+            field=question_substring,
+            attempts=total_rounds,
+            screenshot_path=shot,
+            debug_context=debug,
+        )
+
+    async def _radio_checked_state(
+        self, gds_group: Locator, answer: str
+    ) -> Optional[bool]:
+        """Read the checked state of the `answer` radio inside the group.
+
+        Returns True/False when readable, None when no strategy could read
+        it (shadow DOM without a11y exposure). Polls briefly on the a11y
+        path because the design system commits state a beat after the click.
+        """
+        readable: Optional[bool] = None
+        # Strategy 1: a11y role (Playwright pierces open shadow roots).
+        try:
+            radio = gds_group.get_by_role("radio", name=answer, exact=True).first
+            for _ in range(6):
+                if await radio.is_checked():
+                    return True
+                readable = False
+                await self.page.wait_for_timeout(150)
+        except Exception:
+            pass
+        # Strategy 2: JS probe of the custom element's shadow input.
+        try:
+            el = gds_group.locator(f'gds-radio-button[value="{answer}"]').first
+            state = await el.evaluate(_JS_RADIO_STATE)
+            if isinstance(state, bool):
+                return state
+        except Exception:
+            pass
+        return readable
+
+    # ============================================================
+    # DEPRECATED select helpers — unverified; do not use in new code.
+    # Kept only until every caller migrates to the verified primitives.
+    # ============================================================
+
     async def select_by_label(self, label_text: str, value: str) -> None:
-        """Select a dropdown option by label. Falls back to JS if needed."""
+        """DEPRECATED — prefer select_by_options_signature / select_by_js."""
         loc = self.by_label(label_text)
         await loc.wait_for(state="visible", timeout=10_000)
         try:
             await loc.select_option(value=value, timeout=5_000)
         except Exception:
-            # Fallback: set value via JS and dispatch change event
             await loc.evaluate(
                 f"(el) => {{ el.value = '{value}'; el.dispatchEvent(new Event('change', {{bubbles: true}})); }}"
             )
 
     async def select_option_by_text(self, label_text: str, option_text: str) -> None:
-        """Select a dropdown option by visible option text."""
+        """DEPRECATED — prefer select_by_options_signature / select_by_js."""
         loc = self.by_label(label_text)
         await loc.wait_for(state="visible", timeout=10_000)
         try:
@@ -159,203 +689,9 @@ class BasePage:
                 }}"""
             )
 
-    # ---- GEICO-specific helpers ----
-
-    # JS helper shared by both select helpers: try matching `desired` against
-    # option.value first, then against option.text (visible label). The latter
-    # is critical because many <option> use a non-label `value` attribute
-    # (e.g. <option value="1">Single</option>) — setting select.value="Single"
-    # would silently no-op without this fallback.
-    _JS_SET_OPTION_BY_VALUE_OR_TEXT = """
-        function setOption(select, desired) {
-            const norm = (s) => (s || '').trim();
-            // Try value attribute first
-            for (const opt of select.options) {
-                if (opt.value === desired) {
-                    select.value = desired;
-                    select.dispatchEvent(new Event('change', {bubbles: true}));
-                    return true;
-                }
-            }
-            // Fall back to visible text
-            for (const opt of select.options) {
-                if (norm(opt.text) === norm(desired)) {
-                    select.value = opt.value;
-                    select.dispatchEvent(new Event('change', {bubbles: true}));
-                    return true;
-                }
-            }
-            return false;
-        }
-    """
-
-    async def select_by_js(self, select_id_pattern: str, value: str) -> str:
-        """
-        Find first non-disabled <select> whose id matches the substring
-        (case-insensitive), select an option whose value OR visible text
-        matches `value`, dispatch change event. Returns element id.
-
-        Raises if no <select> matches the id pattern, or if no option
-        matched `value` by either attribute.
-        """
-        js = self._JS_SET_OPTION_BY_VALUE_OR_TEXT + """
-            const pattern = args.pattern.toLowerCase();
-            const value = args.value;
-            const selects = Array.from(document.querySelectorAll('select'));
-            const match = selects.find(s =>
-                !s.disabled && s.id && s.id.toLowerCase().includes(pattern)
-            );
-            if (!match) return JSON.stringify({error: 'no-match'});
-            const ok = setOption(match, value);
-            if (!ok) return JSON.stringify({error: 'option-not-found', id: match.id});
-            return JSON.stringify({id: match.id});
-        """
-        raw = await self.page.evaluate(
-            "(args) => { " + js + " }",
-            {"pattern": select_id_pattern, "value": value},
-        )
-        import json as _json
-        result = _json.loads(raw)
-        if result.get("error") == "no-match":
-            raise RuntimeError(
-                f"No non-disabled <select> matching id pattern '{select_id_pattern}'"
-            )
-        if result.get("error") == "option-not-found":
-            raise RuntimeError(
-                f"<select id={result.get('id')!r}> has no option with value or text {value!r}"
-            )
-        return result["id"]
-
-    async def select_by_options_signature(
-        self, options_signature: list[str], value: str
-    ) -> str:
-        """
-        Find first non-disabled <select> whose options array CONTAINS all
-        the given option texts (useful when id varies but options are stable;
-        e.g. for the "Years operating" combobox we use ["Less than 1", "7+"]
-        as signature). Selects an option whose value OR visible text matches
-        `value`. Returns element id (may be empty string if the element has
-        no id attribute).
-
-        Raises if no <select> matches the signature, or if no option matches
-        `value`.
-        """
-        js = self._JS_SET_OPTION_BY_VALUE_OR_TEXT + """
-            const signature = args.signature;
-            const value = args.value;
-            const selects = Array.from(document.querySelectorAll('select'));
-            const match = selects.find(s => {
-                if (s.disabled) return false;
-                const texts = Array.from(s.options).map(o => (o.text || '').trim());
-                return signature.every(sig => texts.some(t => t.includes(sig)));
-            });
-            if (!match) return JSON.stringify({error: 'no-match'});
-            const ok = setOption(match, value);
-            if (!ok) return JSON.stringify({error: 'option-not-found', id: match.id});
-            return JSON.stringify({id: match.id || ''});
-        """
-        raw = await self.page.evaluate(
-            "(args) => { " + js + " }",
-            {"signature": options_signature, "value": value},
-        )
-        import json as _json
-        result = _json.loads(raw)
-        if result.get("error") == "no-match":
-            raise RuntimeError(
-                f"No non-disabled <select> matching options signature {options_signature}"
-            )
-        if result.get("error") == "option-not-found":
-            raise RuntimeError(
-                f"<select id={result.get('id')!r} matched by signature {options_signature}> "
-                f"has no option with value or text {value!r}"
-            )
-        return result["id"]
-
-    async def click_shadow_radio(self, shadow_id: str) -> None:
-        """
-        Click a custom radio whose real input lives in shadow DOM
-        (selector `#{shadow_id}`). Encountered for MFA radios and form radios.
-        """
-        await self.page.locator(f"#{shadow_id}").click(timeout=10_000)
-
-    async def click_question_radio(
-        self, question_substring: str, answer: str, timeout: int = 10_000
-    ) -> None:
-        """Click the radio labeled `answer` (e.g. "Yes"/"No"/"Employee") for
-        the question whose visible text contains `question_substring`.
-
-        GEICO uses its own design system: each question is a custom element
-        `<gds-radio-button-group>` (light-DOM children `<gds-radio-button
-        value="Yes">` / `value="No">`, exposed to the a11y tree as role=radio).
-        The actual <input>s live in shadow DOM, so a light-DOM `[role=radio]`
-        query finds NOTHING — the radio MUST be reached via the custom element.
-        There are many such groups on a page (14+ on Step 1), so the radio is
-        scoped to its question's group. Verified live 2026-05-28.
-
-        Strategies, in order:
-          1. <gds-radio-button-group>:has(question) -> gds-radio-button[value=answer]
-          2. same group -> gds-radio-button whose visible text == answer
-             (covers cases where value is a code, not the label)
-          3. same group -> role=radio by accessible name
-          4. same group -> exact answer label text
-        Raises RuntimeError if none work.
-        """
-        answer = answer.strip()
-        # Apostrophe-flexible, whitespace-flexible matcher for the question.
-        q_re = _flex_text_regex(question_substring)
-        attempts = []
-
-        # GEICO design-system group scoped to the question.
-        gds_group = self.page.locator("gds-radio-button-group").filter(has_text=q_re)
-
-        # Wait for the question group to render before probing (the SPA may not
-        # have painted it yet right after a step transition — an immediate
-        # count()==0 caused flaky "Could not click radio ... : None" failures).
-        try:
-            await gds_group.first.wait_for(state="visible", timeout=timeout)
-        except Exception:
-            # Fall through; the strategies below may still find it via the
-            # generic role=group path, or raise a clear error.
-            pass
-        # 1. value attribute match (Yes/No and most labels).
-        attempts.append(gds_group.locator(f'gds-radio-button[value="{answer}"]'))
-        # 2. gds-radio-button whose trimmed text is exactly the answer.
-        answer_re = re.compile(rf"^\s*{re.escape(answer)}\s*$")
-        attempts.append(
-            gds_group.locator("gds-radio-button").filter(has_text=answer_re)
-        )
-        # 3. accessible radio role within the group.
-        attempts.append(gds_group.get_by_role("radio", name=answer, exact=True))
-        # 4. exact answer label text within the group.
-        attempts.append(gds_group.get_by_text(answer, exact=True))
-
-        # Generic fallbacks (non-gds pages, if any): role=group + text-anchor.
-        grp = self.page.get_by_role("group").filter(has_text=q_re)
-        attempts.append(grp.get_by_role("radio", name=answer, exact=True))
-
-        last_err = None
-        for loc in attempts:
-            try:
-                if await loc.count() == 0:
-                    continue
-                el = loc.first
-                try:
-                    await el.scroll_into_view_if_needed(timeout=3_000)
-                except Exception:
-                    pass
-                await el.click(timeout=timeout)
-                await self.page.wait_for_timeout(300)
-                return
-            except Exception as e:  # noqa: PERF203
-                last_err = e
-                continue
-
-        raise RuntimeError(
-            f"Could not click {answer!r} radio for question "
-            f"{question_substring!r}: {last_err}"
-        )
-
-    # ---- Overlay handling ----
+    # ============================================================
+    # Familia D — Estado de página
+    # ============================================================
 
     async def remove_overlays(self) -> None:
         """Remove invisible modal overlays that intercept clicks."""
@@ -366,7 +702,9 @@ class BasePage:
             }
         """)
 
-    # ---- Waits ----
+    # ============================================================
+    # Familia C — Esperas por condición
+    # ============================================================
 
     async def wait_for_text(self, text: str, timeout: int = 15_000) -> None:
         """Wait until text appears on page."""
@@ -389,19 +727,43 @@ class BasePage:
             timeout=timeout,
         )
 
-    async def wait_for_navigation(self, timeout: int = 30_000) -> None:
-        """Wait for page navigation to complete."""
-        await self.page.wait_for_load_state("networkidle", timeout=timeout)
+    async def wait_for_any_title(
+        self, substrings: Sequence[str], *, timeout_ms: int = 20_000
+    ) -> str:
+        """Wait until document.title contains ANY of `substrings`; return the
+        one that matched. For transitions with more than one legitimate
+        destination (e.g. Step 5 -> DriveEasy Pro OR straight to Quote &
+        Coverages when the server skips telematics).
 
-    # ---- Error handling ----
-
-    async def screenshot(self, name: str, output_dir: str = "logs") -> Optional[str]:
-        """Take a screenshot for error reporting. Returns path or None."""
+        Raises TimeoutError (with the current title) when none appears.
+        """
+        candidates = list(substrings)
         try:
-            path = Path(output_dir) / f"geico_{name}.png"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            await self.page.screenshot(path=str(path), full_page=True)
-            return str(path)
+            await self.page.wait_for_function(
+                "(subs) => subs.some(s => document.title && document.title.includes(s))",
+                arg=candidates,
+                timeout=timeout_ms,
+            )
         except Exception as e:
-            print(f"    Screenshot failed: {e}")
-            return None
+            try:
+                current = await self.page.title()
+            except Exception:
+                current = "?"
+            raise TimeoutError(
+                f"wait_for_any_title: none of {candidates} appeared within "
+                f"{timeout_ms}ms (title={current!r})"
+            ) from e
+        title = await self.page.title()
+        for s in candidates:
+            if s in title:
+                return s
+        return title
+
+    async def wait_for_navigation(self, timeout: int = 30_000) -> None:
+        """Wait for page navigation to complete.
+
+        NOTE: networkidle is NOT a step-transition signal on this SPA — use
+        wait_for_any_title / wait_for_title_change for that. This helper is
+        only for genuine full-page navigations (login redirects, new tabs).
+        """
+        await self.page.wait_for_load_state("networkidle", timeout=timeout)

@@ -54,6 +54,63 @@ PREMIUM_MIN_DIGITS = 4
 # is relative (starts with `/PrintQuote?...`).
 GEICO_SALES_BASE_URL = "https://sales.geico.com"
 
+# How far (chars) around a "Due Today" label an amount may sit to count as
+# anchored to it in the body text.
+_ANCHOR_WINDOW = 120
+
+
+def pick_premium(page_text: str) -> Optional[str]:
+    """Extract the premium from the Step 6 body text.
+
+    Anchor-first: the amount nearest a "Due Today" label wins. Order-based
+    scanning is NOT safe here — in the HUMBERTO live mapping the BI line
+    item ($19,344.00) was LARGER than the real premium ($18,941.00) and only
+    DOM order saved the capture. Amounts that belong to the pay-in-full
+    savings line ("Save $X") are excluded from the anchored scan.
+
+    Fallback (no anchor present): first cents-bearing amount >= $1,000
+    (>= PREMIUM_MIN_DIGITS integer digits), which filters out per-coverage
+    line items like "$582.00". $0.00-style rating glitches never qualify.
+    """
+    if not page_text:
+        return None
+
+    # 1. Anchored scan: nearest qualifying amount to each "Due Today".
+    best: Optional[tuple] = None  # (distance, "$amount")
+    for anchor in re.finditer(r"Due\s+Today", page_text, re.IGNORECASE):
+        lo = max(0, anchor.start() - _ANCHOR_WINDOW)
+        hi = anchor.end() + _ANCHOR_WINDOW
+        anchor_mid = (anchor.start() + anchor.end()) / 2
+        for m in PREMIUM_RE.finditer(page_text, lo, hi):
+            try:
+                amount = float(m.group(1).replace(",", ""))
+            except ValueError:
+                continue
+            if amount <= 0:
+                continue
+            # Skip the savings line ("Save $2,075.00 by paying in full").
+            prefix = page_text[max(0, m.start() - 8):m.start()]
+            if re.search(r"save\s*$", prefix, re.IGNORECASE):
+                continue
+            dist = abs((m.start() + m.end()) / 2 - anchor_mid)
+            if best is None or dist < best[0]:
+                best = (dist, f"${m.group(1)}")
+    if best:
+        return best[1]
+
+    # 2. Fallback: first large cents-bearing amount in the body.
+    for m in PREMIUM_RE.finditer(page_text):
+        try:
+            amount = float(m.group(1).replace(",", ""))
+        except ValueError:
+            continue
+        if amount <= 0:
+            continue
+        integer_part = m.group(1).split(".")[0].replace(",", "")
+        if len(integer_part) >= PREMIUM_MIN_DIGITS:
+            return f"${m.group(1)}"
+    return None
+
 
 class CoveragesPage(BasePage):
     """GEICO wizard Step 6 — Quote & Coverages (PREMIUM + PDF link)."""
@@ -86,6 +143,16 @@ class CoveragesPage(BasePage):
         price.annual_premium = await self._capture_premium()
         price.pay_in_full_savings = await self._capture_pay_in_full_savings()
         price.quote_number = await self._capture_quote_number()
+
+        # Fail-loud: a quote without a premium is NOT a quote. Stop here
+        # (page state preserved for diagnostics) instead of advancing and
+        # letting the flow report success with price=None.
+        if not price.annual_premium:
+            await self.screenshot("step6_no_premium_captured")
+            raise RuntimeError(
+                "Step 6: no qualifying premium found on Quote & Coverages — "
+                "refusing to advance/report success without a price"
+            )
 
         self._log_captured(price)
 
@@ -167,37 +234,14 @@ class CoveragesPage(BasePage):
     # ------------------------------------------------------------------
 
     async def _capture_premium(self) -> Optional[str]:
-        """Return the first dollar amount with >= 4 digits (i.e. >= $1,000).
-
-        We scan the page text and pick the first cents-bearing dollar
-        amount whose integer part has at least 4 digits — this filters
-        out coverage line items like "$582.00" while still matching
-        "$18,941.00" or "$1,234.56".
-        """
+        """Read the body text and delegate to `pick_premium` (anchored to
+        'Due Today'; see its docstring for the ordering pitfall)."""
         try:
             page_text = await self.page.inner_text("body")
         except Exception as e:
             print(f"    [GEICO] WARN: could not read page text: {e}")
             return None
-
-        for match in PREMIUM_RE.finditer(page_text):
-            digits_only = match.group(1).replace(",", "").replace(".", "")
-            # Reject $0.00 / $0,000.00 etc. — these are rating-engine glitches
-            # and should NOT propagate as a "valid" premium to the orchestrator.
-            try:
-                amount = float(match.group(1).replace(",", ""))
-            except ValueError:
-                continue
-            if amount <= 0:
-                continue
-            integer_part = match.group(1).split(".")[0].replace(",", "")
-            if len(integer_part) >= PREMIUM_MIN_DIGITS:
-                return f"${match.group(1)}"
-
-        # No qualifying premium found. Do NOT fall back to "any small amount"
-        # — that path historically returned $0.00 on glitches. Let the caller
-        # treat None as a real failure.
-        return None
+        return pick_premium(page_text)
 
     # ------------------------------------------------------------------
     # "Save $X by paying in full"

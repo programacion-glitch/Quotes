@@ -239,7 +239,14 @@ class AdditionalBusinessPage(BasePage):
     # ------------------------------------------------------------------
 
     async def _click_next(self) -> None:
-        """Click Next and wait for Step 5b (DriveEasy Pro)."""
+        """Click Next and wait for Step 5b (DriveEasy Pro) OR Step 6 directly.
+
+        DriveEasy Pro is DYNAMIC: GEICO skips it server-side for ineligible
+        quotes and lands straight on 'Quote & Coverages'. Waiting for the
+        DriveEasy title exclusively killed the flow on those quotes; the
+        downstream DriveEasyProPage.skip_to_coverages() already handles both
+        outcomes.
+        """
         print("    [GEICO] Step 5: Clicking Next...")
         await self.remove_overlays()
         try:
@@ -250,13 +257,13 @@ class AdditionalBusinessPage(BasePage):
             raise RuntimeError(f"Failed to click Next on Step 5: {e}") from e
 
         try:
-            await self.page.wait_for_function(
-                "() => document.title.includes('DriveEasy Pro')",
-                timeout=20_000,
+            matched = await self.wait_for_any_title(
+                ["DriveEasy Pro", "Quote & Coverages"], timeout_ms=20_000
             )
-            print("    [GEICO] Step 5 -> Step 5b (DriveEasy Pro) loaded")
-        except Exception as e:
+            print(f"    [GEICO] Step 5 -> '{matched}' loaded")
+        except TimeoutError as e:
             await self.screenshot("step5_to_step5b_navigation_error")
             raise RuntimeError(
-                f"Step 5 submit did not advance to DriveEasy Pro: {e}"
+                f"Step 5 submit did not advance to DriveEasy Pro or "
+                f"Quote & Coverages: {e}"
             ) from e
