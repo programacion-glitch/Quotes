@@ -518,6 +518,13 @@ class VehicleSummaryPage(BasePage):
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         await self.remove_overlays()
 
+        # The summary mounts a beat after the entry submit settles — wait
+        # for its marker before clicking (live YKZ 2026-06-11: the click
+        # ran with the entry form still on screen).
+        await self.page.locator("gds-button").filter(
+            has_text="Looks Good"
+        ).last.wait_for(state="visible", timeout=30_000)
+
         await self.click_button("Looks Good")
 
         # Dynamic outcome wait: drivers title (instant on success),
