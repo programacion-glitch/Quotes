@@ -258,7 +258,7 @@ class AdditionalBusinessPage(BasePage):
 
         try:
             matched = await self.wait_for_any_title(
-                ["DriveEasy Pro", "Quote & Coverages"], timeout_ms=20_000
+                ["DriveEasy Pro", "Quote & Coverages"], timeout_ms=60_000
             )
             print(f"    [GEICO] Step 5 -> '{matched}' loaded")
         except TimeoutError as e:
