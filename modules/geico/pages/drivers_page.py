@@ -80,8 +80,26 @@ class DriverPlaceholderPage(BasePage):
         await self.remove_overlays()
 
         await self._select_license_state(owner_driver)
+        await self._answer_certificate_of_responsibility()
         await self._answer_has_cdl(owner_driver)
         await self._click_next()
+
+    async def _answer_certificate_of_responsibility(self) -> None:
+        """Conditional (live SOLANO 2026-06-11): 'Do they need a Certificate
+        of Responsibility...?' (SR-22-style filing). BlueQuotes don't carry
+        it; default No."""
+        from modules.geico.pages.base_page import _flex_text_regex
+        try:
+            grp = self.page.locator("gds-radio-button-group").filter(
+                has_text=_flex_text_regex("Certificate of Responsib")
+            )
+            if await self.field_exists(grp, wait_ms=1_500):
+                print("    [GEICO] Step 4: Certificate of Responsibility -> No")
+                await self.click_question_radio(
+                    "Certificate of Responsib", "No"
+                )
+        except Exception as e:
+            self.note_warning(f"certificate-of-responsibility radio failed: {e}")
 
     async def _wait_for_placeholder_content(self) -> None:
         """Wait until the owner-placeholder form has actually mounted.
@@ -191,9 +209,25 @@ class AddDriverPage(BasePage):
         await self._fill_date_of_birth(driver)
         await self._select_license_state(driver)
         await self._answer_relationship(driver)
+        await self._answer_certificate_of_responsibility()
         await self._answer_has_cdl(driver)
         await self._handle_incidents(driver)
         await self._click_save_and_continue()
+
+    async def _answer_certificate_of_responsibility(self) -> None:
+        """Same SR-22-style conditional as the owner placeholder; default No."""
+        from modules.geico.pages.base_page import _flex_text_regex
+        try:
+            grp = self.page.locator("gds-radio-button-group").filter(
+                has_text=_flex_text_regex("Certificate of Responsib")
+            )
+            if await self.field_exists(grp, wait_ms=1_500):
+                print("    [GEICO] Step 4: Certificate of Responsibility -> No")
+                await self.click_question_radio(
+                    "Certificate of Responsib", "No"
+                )
+        except Exception as e:
+            self.note_warning(f"certificate-of-responsibility radio failed: {e}")
 
     async def _fill_first_name(self, driver: MappedDriver) -> None:
         if not driver.first_name:
@@ -341,12 +375,22 @@ class DriverSummaryPage(BasePage):
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         await self.remove_overlays()
 
-        # Live confirmed pattern: the "Add Driver" action lives in its own
-        # listitem at the bottom of the drivers list. To avoid false matches
-        # against driver-row text that may contain the phrase 'Add Driver'
-        # (e.g. status messages), scope to listitems whose visible text is
-        # EXACTLY 'Add Driver' (trimmed). Among multiple matches, the LAST
-        # one is the add-control (it's appended at the bottom of the list).
+        # Live SOLANO 2026-06-11: the add control is a plain
+        # <li class="add-state"> WITHOUT role=listitem — try it first.
+        direct = self.page.locator("li.add-state", has_text="Add Driver")
+        if await direct.count() > 0:
+            try:
+                await direct.first.click(timeout=10_000)
+                await self.page.wait_for_load_state(
+                    "networkidle", timeout=30_000
+                )
+                return
+            except Exception:
+                pass
+
+        # Fallback (older builds): listitem whose visible text is EXACTLY
+        # 'Add Driver' (trimmed); among multiple matches the LAST one is the
+        # add-control (appended at the bottom of the list).
         candidates = self.page.locator(
             '[role="listitem"]'
         ).filter(has_text="Add Driver")

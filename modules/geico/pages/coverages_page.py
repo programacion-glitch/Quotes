@@ -159,6 +159,16 @@ class CoveragesPage(BasePage):
         pdf_url = await self._extract_pdf_url()
         print(f"    [GEICO] Step 6: PDF URL -> {pdf_url[:80]}...")
 
+        # GEICO shows no 'Quote #' on Step 6; the conversationId in the
+        # PrintQuote URL is the quote's stable identifier (live SOLANO
+        # 2026-06-11) — use it when no explicit number was found.
+        if not price.quote_number:
+            m = re.search(r"conversationId=([A-Za-z0-9-]{8,})", pdf_url)
+            if m:
+                price.quote_number = m.group(1)
+                print(f"    [GEICO] Step 6:   Quote id (conversationId): "
+                      f"{price.quote_number}")
+
         await self._click_next()
         return price, pdf_url
 
@@ -288,32 +298,41 @@ class CoveragesPage(BasePage):
     # ------------------------------------------------------------------
 
     async def _extract_pdf_url(self) -> str:
-        """Find the 'Print Quote Proposal' link and return an ABSOLUTE URL.
+        """Find the 'Print Quote Proposal' control and return an ABSOLUTE URL.
 
-        The href is rendered relative (e.g. `/PrintQuote?doctype=...`).
-        We prepend the sales base URL to make it absolute, so the caller
-        can `fetch()` it directly.
+        Live SOLANO 2026-06-11: the control is a **gds-button with an href
+        attribute**, NOT an <a> — role=link never matches it. The href is
+        relative (`/PrintQuote?doctype=...`); prepend the sales base URL.
         """
+        href = None
         try:
-            link = self.page.get_by_role("link", name="Print Quote Proposal")
-            if await link.count() == 0:
-                await self.screenshot("step6_print_quote_link_missing")
-                raise RuntimeError(
-                    "Step 6: 'Print Quote Proposal' link not found"
-                )
-            href = await link.first.get_attribute("href")
+            # 1. gds-button (or any element) carrying the href.
+            href = await self.page.evaluate(
+                """() => {
+                    const el = Array.from(document.querySelectorAll(
+                        'gds-button, a'
+                    )).find(x => /print quote proposal/i.test(x.textContent || '')
+                                 && x.getAttribute('href'));
+                    return el ? el.getAttribute('href') : null;
+                }"""
+            )
             if not href:
-                await self.screenshot("step6_print_quote_href_empty")
-                raise RuntimeError(
-                    "Step 6: 'Print Quote Proposal' link has no href"
-                )
-        except RuntimeError:
-            raise
+                # 2. legacy <a role=link>.
+                link = self.page.get_by_role("link", name="Print Quote Proposal")
+                if await link.count() > 0:
+                    href = await link.first.get_attribute("href")
         except Exception as e:
             await self.screenshot("step6_print_quote_link_error")
             raise RuntimeError(
                 f"Step 6: failed to extract Print Quote Proposal URL: {e}"
             ) from e
+
+        if not href:
+            await self.screenshot("step6_print_quote_link_missing")
+            raise RuntimeError(
+                "Step 6: 'Print Quote Proposal' control not found "
+                "(gds-button[href] / role=link)"
+            )
 
         if href.startswith("http://") or href.startswith("https://"):
             return href

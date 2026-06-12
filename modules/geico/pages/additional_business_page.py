@@ -186,8 +186,11 @@ class AdditionalBusinessPage(BasePage):
             log_name="Blanket additional insured",
             skip_if_default_no=True,
         )
+        # Live SOLANO 2026-06-11: the question reads 'Is the customer
+        # required to provide proof of insurance/filings to a state or
+        # federal agency?' with Yes/No options.
         await self._set_radio_group(
-            question_substring="filings required",
+            question_substring="proof of insurance/filings",
             value=fields.requires_filings,
             log_name="Filings required",
         )

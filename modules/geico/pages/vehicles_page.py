@@ -137,6 +137,25 @@ class VehicleEntryPage(BasePage):
         # BlueQuote carries no per-vehicle mileage).
         await self._fill_annual_mileage_if_present(vehicle)
 
+        # 6d. Comp/coll can be MERGED into this form (live SOLANO/NUNEZ
+        # 2026-06-11 — the standalone sub-page no longer always exists).
+        # Answer it here when present; CompCollSubPage then no-ops.
+        try:
+            grp = self.page.locator("gds-radio-button-group").filter(
+                has_text=_flex_text_regex("comprehensive or collision coverage")
+            )
+            if await self.field_exists(grp, wait_ms=1_500):
+                print(
+                    f"    [GEICO] Step 3: comp/coll (merged form) -> "
+                    f"{'Yes' if vehicle.has_comp_coll else 'No'}"
+                )
+                await self.click_question_radio(
+                    "comprehensive or collision coverage",
+                    "Yes" if vehicle.has_comp_coll else "No",
+                )
+        except Exception as e:
+            self.note_warning(f"merged comp/coll radio failed: {e}")
+
         # 7. Click Next.
         print("    [GEICO] Step 3: submitting vehicle entry...")
         await self._click_next()
@@ -172,17 +191,21 @@ class VehicleEntryPage(BasePage):
         await self.select_by_options_signature(["1-4000"], choice)
 
     async def _fill_vin_and_decode(self, vin: str) -> None:
-        """Fill VIN textbox and wait 3 s for GEICO's server-side decode.
+        """Fill the VIN and wait for GEICO's server-side decode BY CONDITION
+        (the Year <select> gets a value) instead of a blind 3s sleep.
 
-        After decode, Year/Make/Model auto-populate and the Vehicle Type
-        combobox options reorder, surfacing the decoded type first.
+        VIN input variants seen live: accessible name 'Vehicle Identification
+        Number' (HUMBERTO/NUNEZ) vs id GiveVinPreQuote with aria-label 'vin'
+        and a dashed placeholder (SOLANO 2026-06-11).
         """
         print(f"    [GEICO] Step 3: filling VIN {vin} (waiting for decode)...")
         vin_box = self.page.get_by_role(
             "textbox", name="Vehicle Identification Number"
         )
         if await vin_box.count() == 0:
-            # Fallback: any textbox whose accessible name mentions VIN.
+            vin_box = self.page.locator('[id*="GiveVinPreQuote"]')
+        if await vin_box.count() == 0:
+            # Last resort: any textbox whose accessible name mentions VIN.
             vin_box = self.page.get_by_label("VIN", exact=False)
         await vin_box.first.wait_for(state="visible", timeout=10_000)
         await vin_box.first.fill(vin)
@@ -191,9 +214,22 @@ class VehicleEntryPage(BasePage):
             await vin_box.first.press("Tab")
         except Exception:
             pass
-        # 3-second hold for the VIN decode round-trip (Y/M/M auto-pop +
-        # Vehicle Type combobox reorder with decoded type pre-selected).
-        await self.page.wait_for_timeout(3_000)
+        # Condition-based decode wait: Year auto-populates when the decode
+        # round-trip lands (observable signal). Budget is a cap, not a sleep.
+        try:
+            await self.page.wait_for_function(
+                """() => {
+                    const sel = Array.from(document.querySelectorAll('select'))
+                        .find(s => (s.id || '').includes('GiveYear'));
+                    return sel && sel.value && sel.value !== '';
+                }""",
+                timeout=25_000,
+            )
+        except Exception:
+            self.note_warning(
+                f"VIN decode did not populate Year within 25s (VIN {vin}) — "
+                f"continuing; Vehicle Type may need manual override"
+            )
 
     async def _click_next(self) -> None:
         """Click the Next button at the bottom of the entry form.
@@ -214,13 +250,29 @@ class CompCollSubPage(BasePage):
     """
 
     async def answer(self, want_comp_coll: bool) -> None:
-        """Pick Yes/No on the comp/coll radio and click Next."""
+        """Pick Yes/No on the comp/coll radio and click Next.
+
+        NO-OP when the standalone sub-page doesn't exist: comp/coll is
+        merged into the entry form on current builds (live SOLANO/NUNEZ
+        2026-06-11) and the entry page already answered it — by now the
+        wizard is on the Vehicle Summary, where clicking 'Next' would fail.
+        """
+        await self.page.wait_for_load_state("networkidle", timeout=30_000)
+
+        grp = self.page.locator("gds-radio-button-group").filter(
+            has_text=_flex_text_regex("comprehensive or collision coverage")
+        )
+        if not await self.field_exists(grp, wait_ms=2_000):
+            print(
+                "    [GEICO] Step 3: comp/coll sub-page absent "
+                "(merged into the entry form) — skipping"
+            )
+            return
+
         print(
             f"    [GEICO] Step 3: comp/coll answer -> "
             f"{'Yes' if want_comp_coll else 'No'}"
         )
-        await self.page.wait_for_load_state("networkidle", timeout=30_000)
-
         try:
             await self.click_question_radio(
                 "comprehensive or collision coverage",
@@ -248,25 +300,27 @@ class VehicleSummaryPage(BasePage):
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         await self.remove_overlays()
 
-        # Live confirmed: it renders as a listitem with that visible text.
-        listitem = self.page.locator(
-            '[role="listitem"]:has-text("Add Vehicle or Trailer")'
-        ).first
-        if await listitem.count() > 0:
+        # Live SOLANO 2026-06-11: the add control is a plain
+        # <li class="add-state"> WITHOUT role=listitem.
+        for locator in (
+            self.page.locator('li.add-state', has_text="Add Vehicle or Trailer"),
+            self.page.locator('[role="listitem"]:has-text("Add Vehicle or Trailer")'),
+            self.page.get_by_text("Add Vehicle or Trailer", exact=False),
+        ):
             try:
-                await listitem.click(timeout=10_000)
+                if await locator.count() == 0:
+                    continue
+                await locator.first.click(timeout=10_000)
                 await self.page.wait_for_load_state(
                     "networkidle", timeout=30_000
                 )
                 return
             except Exception:
-                pass
-
-        # Fallback: plain text click.
-        await self.page.get_by_text(
-            "Add Vehicle or Trailer", exact=False
-        ).first.click(timeout=10_000)
-        await self.page.wait_for_load_state("networkidle", timeout=30_000)
+                continue
+        raise RuntimeError(
+            "VehicleSummaryPage.add_another: no 'Add Vehicle or Trailer' "
+            "control found (li.add-state / listitem / text)"
+        )
 
     async def click_looks_good(self) -> None:
         """Click 'Looks Good' and wait for Step 4 ('Drivers & Incidents')."""

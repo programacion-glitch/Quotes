@@ -64,6 +64,17 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _PDF_OUTPUT_DIR = _PROJECT_ROOT / "data" / "output"
 
 
+def addable_drivers(fields: MappedFields) -> list:
+    """Drivers to enter through 'Add a Driver': non-excluded AND not the
+    owner. GEICO's owner placeholder already leaves the owner as an ACTIVE
+    driver (live SOLANO 2026-06-11: Driver Summary showed
+    'OSCAR SOLANO | Owner | Active') — re-adding him duplicates."""
+    return [
+        d for d in fields.drivers
+        if not d.is_excluded and not d.is_owner
+    ]
+
+
 class QuoteFlow:
     """Orchestrates the GEICO quote wizard end-to-end."""
 
@@ -338,16 +349,30 @@ class QuoteFlow:
         await placeholder.fill_owner_placeholder(owner_record)
         result.warnings.extend(placeholder.warnings)
 
-        # Sub-page 2: Add Driver for each non-excluded driver. The page lands
-        # on the entry form for the first one; after Save and Continue it goes
-        # to the Driver Summary. add_another() brings the entry form back.
-        for i, driver in enumerate(non_excluded):
+        # Sub-page 2: Add Driver for each non-excluded NON-OWNER driver
+        # (the placeholder already covers the owner; re-adding duplicates —
+        # live SOLANO 2026-06-11). The wizard lands on the Driver Summary
+        # after the placeholder; add_another() opens the entry form.
+        to_add = addable_drivers(fields)
+        for i, driver in enumerate(to_add):
             print(
-                f"    [GEICO] Step 4: driver {i + 1}/{len(non_excluded)} "
+                f"    [GEICO] Step 4: driver {i + 1}/{len(to_add)} "
                 f"({driver.first_name} {driver.last_name})"
             )
+            summary_nav = DriverSummaryPage(wizard_page)
             if i > 0:
-                await DriverSummaryPage(wizard_page).add_another()
+                await summary_nav.add_another()
+            else:
+                # Excluded-owner quotes land on the entry form right after
+                # the placeholder; ACTIVE-owner quotes land on the Driver
+                # Summary instead (live SOLANO 2026-06-11) — open the form.
+                first_name_box = wizard_page.get_by_role(
+                    "textbox", name="First Name"
+                )
+                if not await summary_nav.field_exists(
+                    first_name_box, wait_ms=2_500
+                ):
+                    await summary_nav.add_another()
             add_form = AddDriverPage(wizard_page)
             await add_form.fill_and_submit(driver)
             result.warnings.extend(add_form.warnings)
