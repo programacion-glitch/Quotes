@@ -359,20 +359,20 @@ class QuoteFlow:
                 f"    [GEICO] Step 4: driver {i + 1}/{len(to_add)} "
                 f"({driver.first_name} {driver.last_name})"
             )
+            # GEICO lands EITHER on the Add Driver form directly (it chains
+            # to the next driver after a save, or right after the placeholder
+            # for excluded-owner quotes) OR on the Driver Summary (active-
+            # owner quotes, and after some saves). Live ABIGAIL/SOLANO
+            # 2026-06-11: assuming one or the other broke both ways — detect
+            # the open form and only click 'Add Driver' when it's NOT open.
             summary_nav = DriverSummaryPage(wizard_page)
-            if i > 0:
+            first_name_box = wizard_page.get_by_role(
+                "textbox", name="First Name"
+            )
+            if not await summary_nav.field_exists(
+                first_name_box, wait_ms=3_000
+            ):
                 await summary_nav.add_another()
-            else:
-                # Excluded-owner quotes land on the entry form right after
-                # the placeholder; ACTIVE-owner quotes land on the Driver
-                # Summary instead (live SOLANO 2026-06-11) — open the form.
-                first_name_box = wizard_page.get_by_role(
-                    "textbox", name="First Name"
-                )
-                if not await summary_nav.field_exists(
-                    first_name_box, wait_ms=2_500
-                ):
-                    await summary_nav.add_another()
             add_form = AddDriverPage(wizard_page)
             await add_form.fill_and_submit(driver)
             result.warnings.extend(add_form.warnings)
