@@ -151,8 +151,8 @@ class VehicleEntryPage(BasePage):
             state = await self.page.evaluate(_JS_READ_ANNUAL_MILEAGE)
         except Exception:
             return
-        if not state:
-            return
+        if not isinstance(state, dict):
+            return  # select absent (JS returned null/unexpected payload)
         if state.get("value"):
             return  # pre-filled — leave it
         texts = [
