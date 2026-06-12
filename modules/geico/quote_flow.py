@@ -35,7 +35,11 @@ from modules.geico.pages.business_owner_page import (
     OwnerVerificationError,
 )
 from modules.geico.pages.coverages_page import CoveragesPage
-from modules.geico.pages.dashboard_page import DashboardPage, EligibilityHaltError
+from modules.geico.pages.dashboard_page import (
+    DashboardPage,
+    EligibilityHaltError,
+    SessionExpiredError,
+)
 from modules.geico.pages.driveeasy_page import DriveEasyProPage
 from modules.geico.pages.drivers_page import (
     AddDriverPage,
@@ -221,6 +225,14 @@ class QuoteFlow:
                 "Reached Final Quote Details. Quote captured but NOT bound "
                 "(no MVR/CLUE pull, no payment)."
             )
+            return result
+
+        except SessionExpiredError as e:
+            # Reused storage_state was dead. Flag it so the client drops the
+            # session file and retries with a fresh login (not a real failure).
+            result.error = str(e)
+            result.session_expired = True
+            result.warnings.append("Reused GEICO session expired; re-login needed.")
             return result
 
         except EligibilityHaltError as e:

@@ -48,3 +48,7 @@ class QuoteResult:
     # This failure is intermittent, so client.py RETRIES it; once retries are
     # exhausted it is promoted to a HALT for manual intervention.
     needs_manual_review: bool = False
+    # True when a reused storage_state was a zombie (authenticated host but
+    # the dashboard widget never loaded / sessionexpireddashboard). The client
+    # DROPS the session file and retries with a fresh login.
+    session_expired: bool = False

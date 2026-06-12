@@ -117,7 +117,7 @@ def _should_retry(result: QuoteResult) -> bool:
     """
     if result.success or result.halted or result.is_stub:
         return False
-    if result.needs_manual_review:
+    if result.needs_manual_review or result.session_expired:
         return True
     return result.step_reached in ("login", "", None)
 
@@ -235,9 +235,19 @@ async def _run_with_browser(config: GEICOConfig, fields) -> QuoteResult:
                     step_reached="",
                 )
 
+            # A dead reused session: drop the file so the retry logs in
+            # fresh (and don't overwrite it with the zombie state below).
+            if getattr(last_result, "session_expired", False):
+                try:
+                    if _SESSION_STATE.exists():
+                        _SESSION_STATE.unlink()
+                        print("    [GEICO] dropped expired session — retry will "
+                              "log in fresh")
+                except Exception as e:
+                    print(f"    [GEICO] WARN: could not drop session: {e}")
             # Persist cookies whenever we got past LOGIN, so the next quote
             # reuses the authenticated session instead of burning an OTP.
-            if last_result.step_reached not in ("login", "", None):
+            elif last_result.step_reached not in ("login", "", None):
                 try:
                     await context.storage_state(path=str(_SESSION_STATE))
                 except Exception as e:

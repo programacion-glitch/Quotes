@@ -29,6 +29,13 @@ class EligibilityHaltError(RuntimeError):
     """Raised when GEICO server-side eligibility check rejects USDOT or ZIP."""
 
 
+class SessionExpiredError(RuntimeError):
+    """A reused storage_state authenticated the host but the dashboard is
+    dead: 'Your session has ended' / sessionexpireddashboard, or the
+    Commercial Auto widget never loads. The client drops the session file
+    and retries with a fresh login."""
+
+
 class DashboardPage(BasePage):
     """GEICO Gateway dashboard — eligibility gate before the quote wizard."""
 
@@ -72,6 +79,22 @@ class DashboardPage(BasePage):
             await self.page.goto(target, wait_until="networkidle", timeout=30_000)
             await label.first.wait_for(state="visible", timeout=15_000)
         except Exception as e:
+            # Distinguish a DEAD session (reused zombie storage_state) from a
+            # real dashboard failure: the former lands on
+            # .../sessionexpireddashboard or shows 'Your session has ended'.
+            # The client drops the session and re-logs in.
+            url = self.page.url.lower()
+            body = ""
+            try:
+                body = (await self.page.inner_text("body"))[:200].lower()
+            except Exception:
+                pass
+            if "sessionexpired" in url or "session has ended" in body:
+                await self.screenshot("dashboard_session_expired")
+                raise SessionExpiredError(
+                    "Reused GEICO session is dead (sessionexpireddashboard / "
+                    "'Your session has ended') — dropping it and re-logging in."
+                ) from e
             await self.screenshot("dashboard_quote_nav_failed")
             raise RuntimeError(
                 f"Could not reach the Commercial Auto dashboard at {target}: {e}"
