@@ -27,6 +27,7 @@ import re
 
 from playwright.async_api import Page
 
+from modules.geico.pages._exceptions import UnderwritingRejectError
 from modules.geico.pages.base_page import BasePage
 from modules.geico.field_mapper import MappedFields
 
@@ -264,6 +265,11 @@ class AdditionalBusinessPage(BasePage):
                 ["DriveEasy Pro", "Quote & Coverages"], budget_ms=60_000
             )
             print(f"    [GEICO] Step 5 -> '{matched}' loaded")
+        except UnderwritingRejectError:
+            # In-wizard FMCSA rejection (live CMC 2026-06-12) — propagate
+            # untouched so quote_flow marks a clean HALT, not a FAILED
+            # navigation error.
+            raise
         except (RuntimeError, TimeoutError) as e:
             await self.screenshot("step5_to_step5b_navigation_error")
             raise RuntimeError(

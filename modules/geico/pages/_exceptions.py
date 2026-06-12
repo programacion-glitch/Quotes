@@ -78,3 +78,10 @@ class SelectVerifyError(GeicoInteractionError):
 
 class FieldNotFoundError(GeicoInteractionError):
     """A find_* primitive could not locate a REQUIRED field within timeout."""
+
+
+class UnderwritingRejectError(RuntimeError):
+    """GEICO rejected the quote INSIDE the wizard with 'We're unable to
+    complete this quote through GEICO' (live YNJ 2026-06-12: the dashboard
+    eligibility passed but the deeper FMCSA underwriting check refused the
+    USDOT at Step 5 -> 6). Definitive HALT, not a bug and not retryable."""

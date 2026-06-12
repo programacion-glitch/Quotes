@@ -156,21 +156,80 @@ class CoveragesPage(BasePage):
 
         self._log_captured(price)
 
-        pdf_url = await self._extract_pdf_url()
-        print(f"    [GEICO] Step 6: PDF URL -> {pdf_url[:80]}...")
+        # Fail-soft: some renders DON'T expose 'Print Quote Proposal' at all
+        # (live ALPHA 2026-06-12 — liability-only new venture). The premium
+        # is already captured; a missing PDF link must not kill the quote.
+        try:
+            pdf_url = await self._extract_pdf_url()
+            print(f"    [GEICO] Step 6: PDF URL -> {pdf_url[:80]}...")
+        except Exception as e:
+            self.note_warning(
+                f"Print Quote Proposal link unavailable on this render — "
+                f"no PDF for this quote ({e})"
+            )
+            pdf_url = ""
 
         # GEICO shows no 'Quote #' on Step 6; the conversationId in the
         # PrintQuote URL is the quote's stable identifier (live SOLANO
         # 2026-06-11) — use it when no explicit number was found.
-        if not price.quote_number:
+        if pdf_url and not price.quote_number:
             m = re.search(r"conversationId=([A-Za-z0-9-]{8,})", pdf_url)
             if m:
                 price.quote_number = m.group(1)
                 print(f"    [GEICO] Step 6:   Quote id (conversationId): "
                       f"{price.quote_number}")
 
+        # A 'Recalculate' can REAPPEAR after the capture (live DIBOLL
+        # 2026-06-12: a floating gds-button.mobile-button sat on top of Next
+        # and intercepted every click — 10s timeout). Resolve it before Next,
+        # and re-capture the premium since a recompute may change it.
+        if await self._resolve_pending_recalculate():
+            new_premium = await self._capture_premium()
+            if new_premium and new_premium != price.annual_premium:
+                self.note_warning(
+                    f"premium changed after pre-Next recalculate: "
+                    f"{price.annual_premium} -> {new_premium}"
+                )
+                price.annual_premium = new_premium
+
         await self._click_next()
         return price, pdf_url
+
+    async def _resolve_pending_recalculate(self) -> bool:
+        """Click any visible 'Recalculate' until none remains (max 3 rounds).
+        Returns True if at least one recompute ran. Mirrors the Progressive
+        lesson: Recalculate races the page and can re-appear after a capture.
+
+        The intercepting variant is a FLOATING `gds-button.mobile-button`
+        (live ABUNDANCE 2026-06-12) that get_by_role missed — locate by
+        element+text and fall back to a JS click (immune to overlap)."""
+        ran = False
+        btn = self.page.locator(
+            'gds-button:has-text("Recalculate"), '
+            'button:has-text("Recalculate")'
+        ).filter(visible=True)
+        for _ in range(3):
+            try:
+                if await btn.count() == 0:
+                    return ran
+                print("    [GEICO] Step 6: pending Recalculate before Next -> clicking")
+                try:
+                    await btn.last.click(timeout=5_000)
+                except Exception:
+                    # Floating/overlapped copy: JS click lands regardless.
+                    await btn.last.evaluate("el => el.click()")
+                ran = True
+                await self.page.wait_for_load_state("networkidle", timeout=30_000)
+                # Recompute round-trip: wait for the button to clear (poll,
+                # capped) rather than a blind sleep.
+                for _ in range(20):  # up to ~10s
+                    if await btn.count() == 0:
+                        break
+                    await self.page.wait_for_timeout(500)
+            except Exception as e:
+                self.note_warning(f"pre-Next Recalculate handling failed: {e}")
+                return ran
+        return ran
 
     # ------------------------------------------------------------------
     # Wait for the premium to be rendered
@@ -184,9 +243,13 @@ class CoveragesPage(BasePage):
         is the most stable signal that the premium has finished loading.
         """
         try:
+            # filter(visible=True): the FIRST cents-amount in DOM order is the
+            # HIDDEN 'Save $963.00 by paying in full' span (slot=description) —
+            # waiting on `.first` for visibility hung 45s on it (live SOLANO
+            # 2026-06-12). Wait for the first VISIBLE amount (the big total).
             await self.page.get_by_text(
                 re.compile(r"\$[\d,]+\.\d{2}")
-            ).first.wait_for(state="visible", timeout=45_000)
+            ).filter(visible=True).first.wait_for(state="visible", timeout=45_000)
         except Exception as e:
             await self.screenshot("step6_premium_not_visible")
             raise RuntimeError(
@@ -357,7 +420,23 @@ class CoveragesPage(BasePage):
             # Use the LAST Next on the page — the Quote panel's primary
             # CTA sits at the bottom; older render fragments at the top
             # can also expose a 'Next' that does nothing useful.
-            await btn.last.click(timeout=10_000)
+            try:
+                await btn.last.click(timeout=10_000)
+            except Exception:
+                # A floating sticky Recalculate can intercept the click and
+                # can RE-RENDER between a resolve and the retry (live
+                # DIBOLL/ABUNDANCE 2026-06-12). Resolve it, then fall back to
+                # a JS click — immune to overlap; the premium is already
+                # captured at this point so advancing is all that's left.
+                await self._resolve_pending_recalculate()
+                try:
+                    await btn.last.click(timeout=5_000)
+                except Exception:
+                    print("    [GEICO] Step 6: Next intercepted — JS click fallback")
+                    await btn.last.evaluate("el => el.click()")
+                    await self.page.wait_for_load_state(
+                        "networkidle", timeout=30_000
+                    )
         except RuntimeError:
             raise
         except Exception as e:

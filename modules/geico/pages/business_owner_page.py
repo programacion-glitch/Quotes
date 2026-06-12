@@ -393,6 +393,12 @@ class BusinessOwnerPage(BasePage):
 
           * SUCCESS  -> the Vehicles form mounts (its first question, the VIN
                         'Do you have it handy?' radio group, becomes visible).
+          * PREFILL  -> 'We found vehicles that might belong to your business'
+                        picker (live ABUNDANCE/RYD 2026-06-12): GEICO offers
+                        DMV-registered vehicles as checkbox cards. The
+                        BlueQuote VINs are the source of truth, so tick
+                        'Quote different vehicle(s)', click Next, and keep
+                        waiting for the normal Vehicles form.
           * VERIFY   -> bounced back to Step 2 with an 'unable to verify'
                         banner + an SSN field. Raise OwnerVerificationError
                         (never auto-fill SSN). Retriable -> HALT.
@@ -401,12 +407,16 @@ class BusinessOwnerPage(BasePage):
         vehicles_marker = self.page.locator("gds-radio-button-group").filter(
             has_text=_flex_text_regex("Do you have it handy")
         )
+        prefill_banner = self.page.get_by_text(
+            "We found vehicles that might belong", exact=False
+        )
         verify_banner = self.page.get_by_text("unable to verify", exact=False)
         ssn_field = self.page.get_by_text("Social Security Number", exact=False)
         hard_error = self.page.get_by_text(
             "There was a problem while processing", exact=False
         )
 
+        prefill_dismissed = False
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             # Success: the Vehicles form's first question is on screen.
@@ -419,6 +429,21 @@ class BusinessOwnerPage(BasePage):
                     return
             except Exception:
                 pass
+
+            # Prefill picker: choose 'Quote different vehicle(s)' once and
+            # let the loop continue toward the normal Vehicles form.
+            if not prefill_dismissed:
+                try:
+                    if (
+                        await prefill_banner.count() > 0
+                        and await prefill_banner.first.is_visible()
+                    ):
+                        await self._dismiss_vehicle_prefill_picker()
+                        prefill_dismissed = True
+                        continue
+                except Exception as e:
+                    self.note_warning(f"vehicle prefill dismiss failed: {e}")
+                    prefill_dismissed = True  # don't loop on a broken dismiss
 
             # Soft verification failure: SSN requested. Never auto-fill it.
             try:
@@ -456,5 +481,24 @@ class BusinessOwnerPage(BasePage):
         await self.screenshot("step2_to_step3_navigation_error")
         raise RuntimeError(
             "Step 2 submit did not reach a known outcome (Vehicles form, "
+            "prefill-picker, "
             f"verification prompt, or error page) within {timeout_s:.0f}s."
         )
+
+    async def _dismiss_vehicle_prefill_picker(self) -> None:
+        """Resolve the 'We found vehicles that might belong to your business'
+        picker (live ABUNDANCE/RYD 2026-06-12): GEICO lists DMV-registered
+        vehicles as checkbox cards plus a 'Quote different vehicle(s)' card.
+        The BlueQuote VINs are the source of truth — tick 'Quote different
+        vehicle(s)' and submit; the normal Vehicles entry form follows."""
+        print(
+            "    [GEICO] Step 2: vehicle prefill picker shown — choosing "
+            "'Quote different vehicle(s)'"
+        )
+        await self.remove_overlays()
+        # The card's text is the clickable label for its hidden checkbox
+        # (same pattern as the dashboard product checkboxes).
+        card = self.page.get_by_text("Quote different vehicle(s)", exact=False)
+        await card.first.click(timeout=10_000)
+        await self.click_button("Next")
+        await self.page.wait_for_load_state("networkidle", timeout=30_000)

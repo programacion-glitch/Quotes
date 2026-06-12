@@ -41,8 +41,10 @@ This file mirrors the multi-class layout of
 same way: placeholder -> add driver -> summary -> (add another | looks good).
 """
 
+import re
+
 from modules.geico.field_mapper import MappedDriver
-from modules.geico.pages.base_page import BasePage
+from modules.geico.pages.base_page import BasePage, _flex_text_regex
 
 
 # Signature for the Driver's License State native <select>. The 50 US-state
@@ -78,6 +80,22 @@ class DriverPlaceholderPage(BasePage):
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         await self._wait_for_placeholder_content()
         await self.remove_overlays()
+
+        # EXCLUDED-owner variant (live 4JR 2026-06-12): GEICO creates NO
+        # owner placeholder — Step 4 opens straight into an Add Driver
+        # accordion (its telltale 'relationship to the business' question,
+        # which the owner placeholder NEVER shows, plus Save And Continue
+        # instead of Next). Skip the placeholder entirely; the driver loop
+        # detects the open form and fills it for the first real driver.
+        rel_q = self.page.locator("gds-radio-button-group").filter(
+            has_text=_flex_text_regex("relationship to the business")
+        ).filter(visible=True)
+        if await self.field_exists(rel_q, wait_ms=2_000):
+            print(
+                "    [GEICO] Step 4: no owner placeholder — Add Driver form "
+                "is already open (excluded owner) — skipping placeholder"
+            )
+            return
 
         await self._select_license_state(owner_driver)
         # An ACTIVE owner-driver's placeholder is a fully-rated driver entry:
@@ -206,22 +224,50 @@ class DriverPlaceholderPage(BasePage):
         2026-06-11). After the click, confirm we left the placeholder (its
         CDL question is gone); retry once if a stale render kept us."""
         print("    [GEICO] Step 4: submitting owner placeholder...")
-        from modules.geico.pages.base_page import _flex_text_regex
         cdl_q = self.page.locator("gds-radio-button-group").filter(
             has_text=_flex_text_regex("does this driver have a CDL")
         ).filter(visible=True)
+
+        # Excluded-owner variant, late-mounting (live 4JR 2026-06-12): the
+        # 'placeholder' is really the FIRST driver's Add Driver accordion —
+        # it grows the relationship/name fields on a round-trip and its
+        # buttons are Save And Continue / Discard Changes; a 'Next' NEVER
+        # exists. Detect by buttons (robust to the mount timing) and bail:
+        # the driver loop fills this open form for the first real driver.
+        next_btn = self.page.locator("gds-button, button").filter(
+            has_text=re.compile(r"^\s*Next\s*$")
+        ).filter(visible=True)
+        save_btn = self.page.locator("gds-button, button").filter(
+            has_text=re.compile(r"^\s*Save\s+and\s+Continue\s*$", re.IGNORECASE)
+        ).filter(visible=True)
+        if (await next_btn.count()) == 0 and await self.field_exists(
+            save_btn, wait_ms=3_000
+        ):
+            print(
+                "    [GEICO] Step 4: no placeholder Next — this is the Add "
+                "Driver accordion (excluded owner). Leaving it to the "
+                "driver loop."
+            )
+            return
         for attempt in (1, 2):
+            # Already advanced? The placeholder AUTO-ADVANCES on a server
+            # round-trip (live YKZ 2026-06-12) — don't fight a missing Next.
+            if await self._placeholder_advanced(cdl_q, wait_ms=1_000):
+                return
             await self.remove_overlays()
             try:
                 await self.click_button("Next")
                 await self.page.wait_for_load_state("networkidle", timeout=30_000)
             except Exception as e:
+                # The click can fail precisely BECAUSE we already advanced
+                # (the Next vanished). Treat that as success.
+                if await self._placeholder_advanced(cdl_q, wait_ms=2_000):
+                    return
                 await self.screenshot("step4_placeholder_next_error")
                 raise RuntimeError(
                     f"Failed to click Next on owner placeholder: {e}"
                 ) from e
-            # Advanced if the placeholder's CDL question is no longer visible.
-            if not await self.field_exists(cdl_q, wait_ms=4_000):
+            if await self._placeholder_advanced(cdl_q, wait_ms=4_000):
                 return
             if attempt == 1:
                 self.note_warning(
@@ -236,6 +282,32 @@ class DriverPlaceholderPage(BasePage):
             f"Owner placeholder did not advance after Next (still showing the "
             f"CDL question). Visible buttons: {debug.get('visible_buttons')}"
         )
+
+    async def _placeholder_advanced(self, cdl_q, *, wait_ms: int) -> bool:
+        """Did the wizard leave the owner placeholder?
+
+        'CDL question gone' alone is AMBIGUOUS: the Add Driver accordion that
+        follows an excluded-owner placeholder has its OWN CDL question, so
+        the old check read a successful advance as 'stuck' and then died
+        hunting a Next that no longer exists (live 4JR/ABIGAIL 2026-06-12).
+        Advanced == the relationship question (Add Driver form) is visible,
+        OR the summary's Add Driver li is on screen, OR the CDL question is
+        gone."""
+        rel_q = self.page.locator("gds-radio-button-group").filter(
+            has_text=_flex_text_regex("relationship to the business")
+        ).filter(visible=True)
+        try:
+            if (await rel_q.count()) > 0 and await rel_q.first.is_visible():
+                return True
+        except Exception:
+            pass
+        try:
+            add_li = self.page.locator("li.add-state", has_text="Add Driver")
+            if (await add_li.count()) > 0 and await add_li.first.is_visible():
+                return True
+        except Exception:
+            pass
+        return not await self.field_exists(cdl_q, wait_ms=wait_ms)
 
 
 class AddDriverPage(BasePage):
@@ -398,23 +470,55 @@ class AddDriverPage(BasePage):
             )
 
     async def _click_save_and_continue(self) -> None:
-        """Click 'Save and Continue' to advance to the Driver Summary page."""
+        """Click 'Save and Continue' to advance to the Driver Summary page.
+
+        The accordion renders a Save and Continue / Discard Changes PAIR and
+        the page can hold TWO copies (MCP-mapped live 2026-06-12) — the
+        first is the inert top fragment, the LAST visible one is the real
+        CTA (same lesson as the duplicated Next buttons). Clicking .first
+        timed out 10s on every multi-driver profile."""
         print("    [GEICO] Step 4: submitting Add Driver form...")
         await self.remove_overlays()
         try:
-            btn = self.page.get_by_role("button", name="Save and Continue")
+            btn = self.page.get_by_role(
+                "button", name="Save and Continue"
+            ).filter(visible=True)
             if await btn.count() == 0:
                 # Some builds label it differently.
-                btn = self.page.get_by_role("button", name="Save & Continue")
+                btn = self.page.get_by_role(
+                    "button", name="Save & Continue"
+                ).filter(visible=True)
             if await btn.count() == 0:
-                btn = self.page.get_by_role("button", name="Continue")
-            await btn.first.click(timeout=10_000)
+                btn = self.page.get_by_role(
+                    "button", name="Continue"
+                ).filter(visible=True)
+            await btn.last.click(timeout=10_000)
             await self.page.wait_for_load_state("networkidle", timeout=30_000)
         except Exception as e:
             await self.screenshot("step4_add_driver_submit_error")
             raise RuntimeError(
                 f"Failed to submit Add Driver form: {e}"
             ) from e
+
+        # Confirm the accordion actually CLOSED (save committed): its First
+        # Name box must leave the screen. During the close animation the old
+        # form stays visible, so the driver-loop's open-form detector read it
+        # as 'form still open' and skipped Add Driver for the NEXT driver —
+        # whose fills then landed on the closing form (live DDH 2026-06-12:
+        # ERIK overwrote OMAR's just-saved accordion and was lost).
+        first_name = self.page.get_by_role("textbox", name="First Name")
+        for _ in range(20):  # ~10s cap, no blind sleep
+            try:
+                if (await first_name.count() == 0
+                        or not await first_name.first.is_visible()):
+                    return
+            except Exception:
+                return
+            await self.page.wait_for_timeout(500)
+        self.note_warning(
+            "Add Driver form still visible 10s after Save and Continue — "
+            "the save may not have committed"
+        )
 
 
 class DriverSummaryPage(BasePage):
@@ -425,13 +529,34 @@ class DriverSummaryPage(BasePage):
     """
 
     async def add_another(self) -> None:
-        """Click 'Add Driver' to start another driver entry."""
+        """Open the Add Driver entry form from the summary.
+
+        Same inline ACCORDION as Add Vehicle (MCP-mapped live 2026-06-12):
+        the reliable opener is the '+' icon `span[data-testid="addIcon"]`
+        inside the <li class="add-state"> — a click on the li itself is
+        swallowed on current builds. Unlike Add Vehicle there is NO chooser:
+        the driver form expands directly."""
         print("    [GEICO] Step 4: adding another driver...")
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         await self.remove_overlays()
 
+        # Preferred: the accordion's + icon (the ONLY interactive element).
+        icon = self.page.locator(
+            'li.add-state [data-testid="addIcon"], '
+            'li.add-state .expandable-form-add-icon'
+        )
+        if await self.field_exists(icon, wait_ms=5_000):
+            try:
+                await icon.first.click(timeout=10_000)
+                await self.page.wait_for_load_state(
+                    "networkidle", timeout=30_000
+                )
+                return
+            except Exception as e:
+                self.note_warning(f"Add Driver + icon click failed: {e}")
+
         # Live SOLANO 2026-06-11: the add control is a plain
-        # <li class="add-state"> WITHOUT role=listitem — try it first.
+        # <li class="add-state"> WITHOUT role=listitem — try it next.
         direct = self.page.locator("li.add-state", has_text="Add Driver")
         if await direct.count() > 0:
             try:

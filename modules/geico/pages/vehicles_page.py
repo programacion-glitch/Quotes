@@ -31,10 +31,18 @@ This file mirrors the multi-class layout of
 can loop in the same way: entry -> comp/coll -> summary -> (add another | done).
 """
 
+import re
+
 from playwright.async_api import Page
 
 from modules.geico.field_mapper import MappedVehicle
 from modules.geico.pages.base_page import BasePage, _flex_text_regex
+
+
+def _digits_only(s: str) -> str:
+    """Strip everything but digits — lets us verify a money field whose value
+    auto-formats to '$1,234' against the raw '1234' we typed."""
+    return re.sub(r"\D", "", s or "")
 
 
 # Find the Annual Mileage <select> (revealed for some vehicle/class combos;
@@ -228,6 +236,15 @@ class VehicleEntryPage(BasePage):
         # was '' at submit — the DCT lesson).
         await self._ensure_entry_required_filled(vehicle)
 
+        # 7b. The Custom Annual Mileage tel input reveals on a SLOW server
+        # round-trip after the mileage select commits (live NUNEZ 2026-06-12
+        # v2: it appeared after the first check and blocked the submit).
+        # Idempotent re-check right before Next.
+        await self._fill_custom_annual_mileage(
+            vehicle.one_way_distance in ("201-300", "301-500", "More than 500"),
+            wait_ms=1_500,
+        )
+
         # 8. Click Next (with one refill+retry cycle if validation blocks).
         print("    [GEICO] Step 3: submitting vehicle entry...")
         await self._click_next(vehicle)
@@ -261,6 +278,36 @@ class VehicleEntryPage(BasePage):
             f"{vehicle.one_way_distance!r}; BlueQuote carries none — review)"
         )
         await self.select_by_options_signature(["1-4000"], choice)
+
+        # 'More than 52000' (and similar top buckets) REVEALS a required
+        # 'Custom Annual Mileage' tel input for the exact number (live NUNEZ
+        # 2026-06-12: it stayed empty -> 'Annual Mileage is Required' blocked
+        # the submit). The reveal is a server round-trip — 2s missed it
+        # (NUNEZ v2), so wait longer here AND re-check in the pre-Next sweep.
+        await self._fill_custom_annual_mileage(long_haul, wait_ms=6_000)
+
+    async def _fill_custom_annual_mileage(
+        self, long_haul: bool, *, wait_ms: int
+    ) -> None:
+        """Fill the revealed 'Custom Annual Mileage' tel input if present
+        and empty. Safe to call repeatedly (no-op once filled)."""
+        custom = self.page.locator('input[id*="GiveCustomAnnualMileage" i]')
+        if not await self.field_exists(custom, wait_ms=wait_ms):
+            return
+        try:
+            current = (await custom.first.input_value()) or ""
+        except Exception:
+            current = ""
+        if current.strip():
+            return  # already filled
+        custom_val = "60000" if long_haul else "30000"
+        print(f"    [GEICO] Step 3: custom annual mileage -> {custom_val}")
+        try:
+            await custom.first.click(timeout=5_000)
+            await custom.first.fill(custom_val)
+            await self.page.keyboard.press("Tab")
+        except Exception as e:
+            self.note_warning(f"custom annual mileage fill failed: {e}")
 
     async def _fill_vin_and_decode(self, vin: str) -> None:
         """Fill the VIN and wait for GEICO's server-side decode BY CONDITION
@@ -304,33 +351,76 @@ class VehicleEntryPage(BasePage):
             )
 
     async def _fill_total_value(self, vehicle: MappedVehicle) -> None:
-        """Fill 'Total value of this vehicle' — revealed and REQUIRED when
-        comp/coll is Yes (live CMC 2026-06-11). Range 1..999,000. When the
-        BlueQuote carries no value, default to $50,000 with a warning so the
-        physical-damage quote still completes (fail-soft on coverage)."""
+        """Fill the money fields that comp/coll=Yes REVEALS. There are up to
+        THREE (not one), all <input type='tel'> with placeholder '$' and —
+        critically — NO accessible name (aria-label and <label> are empty), so
+        get_by_role('textbox', name=...) never matches. They MUST be targeted
+        by id. Real ids mapped live (DIBOLL 2026-06-12, extended DOM dump):
+
+          Id_GiveTotalCustomizationValue_*                   customizations ($0)
+          Id_GiveCostExcludingPermanentlyAttachedEquipment_* cost excl. equip.
+          Id_GiveStatedAmount_*                              total stated value
+
+        Empty -> red 'Please enter a number from 1 to 999,000' -> the form
+        won't advance or let us add another vehicle. fail-soft: stated/cost
+        default to $50,000 (warned) when the BlueQuote carries no value; mods=0."""
         value = vehicle.value or "50000"
         if not vehicle.value:
             self.note_warning(
                 "comp/coll=Yes but BlueQuote has no vehicle value — "
-                "defaulting Total value to $50,000 (review)"
+                "defaulting stated/cost to $50,000 (review)"
             )
-        from modules.geico.pages.base_page import _flex_text_regex
+        # (selector, value, human label). Mods first (0 = no customizations),
+        # then the cost field. GiveStatedAmount is AUTO-DERIVED from the cost
+        # and renders DISABLED (live YKZ 2026-06-12: value='$50,000', disabled)
+        # — _fill_currency skips disabled fields, so we don't fight it.
+        money_fields = [
+            ('[id*="GiveTotalCustomizationValue" i]', "0", "customizations value"),
+            ('[id*="GiveCostExcludingPermanentlyAttachedEquipment" i]',
+             value, "cost excl. permanent equipment"),
+            ('[id*="GiveStatedAmount" i]', value, "total stated value"),
+        ]
+        filled_any = False
+        for selector, val, label in money_fields:
+            if await self._fill_currency(selector, val, label):
+                filled_any = True
+        if not filled_any:
+            self.note_warning(
+                "comp/coll=Yes but no physical-damage value field found "
+                "(GiveStatedAmount / GiveCost... / GiveTotalCustomizationValue)"
+            )
+
+    async def _fill_currency(self, selector: str, value: str, label: str) -> bool:
+        """Fill a GEICO money <input type='tel'>. These auto-format to '$1,234'
+        and carry NO accessible name, so safe_fill's strict read-back ('1234'
+        != '$1,234') falsely fails and its click() blows up on the disabled
+        auto-derived ones. So: skip absent/disabled fields, fill, blur, and
+        verify by DIGITS only. Returns True if the field was present & filled."""
+        box = self.page.locator(selector).first
+        if not await self.field_exists(box, wait_ms=3_000):
+            return False
         try:
-            box = self.page.get_by_role(
-                "textbox", name=_flex_text_regex("Total value of this vehicle")
-            )
-            if await box.count() == 0:
-                box = self.page.locator(
-                    '[id*="GiveVehicleValue" i], [id*="TotalValue" i], '
-                    '[id*="VehicleValue" i]'
+            if not await box.is_enabled():
+                # Auto-derived (e.g. StatedAmount mirrors the cost field).
+                print(f"    [GEICO] Step 3: {label} auto-derived (disabled) — skipping")
+                return True
+        except Exception:
+            pass
+        try:
+            print(f"    [GEICO] Step 3: {label} -> ${value}")
+            await box.click(timeout=5_000)
+            await box.fill(value)
+            await self.page.keyboard.press("Tab")
+            seen = (await box.input_value()) or ""
+            if _digits_only(seen) != _digits_only(value):
+                self.note_warning(
+                    f"{label}: read back {seen!r} for {value!r} (verify by digits "
+                    f"mismatched — review)"
                 )
-            if await self.field_exists(box, wait_ms=4_000):
-                print(f"    [GEICO] Step 3: Total value -> ${value}")
-                await self.safe_fill(box.first, value)
-            else:
-                self.note_warning("comp/coll=Yes but Total value field absent")
+            return True
         except Exception as e:
-            self.note_warning(f"Total value fill failed: {e}")
+            self.note_warning(f"{label} fill failed: {e}")
+            return False
 
     async def _set_distance(self, vehicle: MappedVehicle) -> None:
         """Set the one-way distance via its id-stable select. When the
@@ -481,6 +571,17 @@ class CompCollSubPage(BasePage):
         """
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
 
+        # If the entry submit already landed us on the Vehicle Summary, the
+        # merged comp/coll was answered on the entry form and there is NO
+        # 'Next' here — only 'Looks Good'/'Add Vehicle'. Clicking 'Next' would
+        # raise 'Could not click Next' (live YKZ 2026-06-12). Bail out.
+        if await self._on_vehicle_summary():
+            print(
+                "    [GEICO] Step 3: already on Vehicle Summary "
+                "(comp/coll merged into entry) — skipping sub-page"
+            )
+            return
+
         grp = self.page.locator("gds-radio-button-group").filter(
             has_text=_flex_text_regex("comprehensive or collision coverage")
         )
@@ -504,9 +605,36 @@ class CompCollSubPage(BasePage):
             self.note_warning(f"comp/coll radio click failed: {e}")
 
         await self.remove_overlays()
-        # Last visible Next (two on the page; the top one is inert).
+        # Answering comp/coll AUTO-ADVANCES to the Vehicle Summary on a server
+        # round-trip (live YKZ 2026-06-12) — there is NO 'Next' to click, and
+        # forcing one raised 'Could not click Next'. Poll for the summary
+        # first; only click 'Next' if the subpage genuinely stays put.
+        for _ in range(24):  # ~12s
+            if await self._on_vehicle_summary():
+                return
+            await self.page.wait_for_timeout(500)
         await self.click_button("Next")
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
+
+    async def _on_vehicle_summary(self) -> bool:
+        """True when the 'Vehicles and Trailers' summary is on screen — a
+        'Looks Good' gds-button or the 'Add Vehicle or Trailer' control is
+        visible. Uses the SAME proven selectors as add_another/click_looks_good
+        (a combined CSS+:text() string silently failed to match — 2026-06-12)."""
+        try:
+            looks_good = self.page.locator("gds-button").filter(
+                has_text="Looks Good"
+            )
+            if await looks_good.count() > 0 and await looks_good.first.is_visible():
+                return True
+            add_veh = self.page.get_by_text(
+                "Add Vehicle or Trailer", exact=False
+            )
+            if await add_veh.count() > 0 and await add_veh.first.is_visible():
+                return True
+        except Exception:
+            pass
+        return False
 
 
 class VehicleSummaryPage(BasePage):
@@ -517,15 +645,31 @@ class VehicleSummaryPage(BasePage):
     """
 
     async def add_another(self) -> None:
-        """Click 'Add Vehicle or Trailer' to start another vehicle entry."""
+        """Open the entry form for the NEXT vehicle from the summary.
+
+        Real flow (MCP-mapped live ON THE GO 2026-06-12 — the old
+        'click the li' approach silently did NOTHING, the handler does not
+        live on the <li>):
+
+          1. The add control is an inline ACCORDION:
+             <li class="add-state"> whose ONLY interactive element is the
+             '+' icon `span[data-testid="addIcon"]` (tabindex=0). Clicking
+             the li/text is swallowed — the accordion never expands.
+          2. Clicking the icon expands a chooser question
+             'What would the customer like to add?' whose gds-radio-buttons
+             are LABELED Vehicle/Trailer but carry values Yes/No
+             (Vehicle == value 'Yes').
+          3. The accordion has its OWN Cancel/Next pair; clicking that Next
+             mounts the vehicle entry form (VIN-handy question appears).
+
+        The Dashboard drawer re-expands at this point and intercepts
+        right-side clicks — remove_overlays() collapses it.
+        """
         print("    [GEICO] Step 3: adding another vehicle...")
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
-        await self.remove_overlays()
 
-        # The summary mounts a beat AFTER the entry submit settles — wait
-        # for its marker before hunting the add control (live DDH
-        # 2026-06-11: an instant count()==0 raised while the entry form was
-        # still on screen).
+        # The summary mounts a beat AFTER the entry submit settles (live DDH
+        # 2026-06-11: instant count()==0 raised with the form still up).
         try:
             await self.page.locator("gds-button").filter(
                 has_text="Looks Good"
@@ -533,28 +677,75 @@ class VehicleSummaryPage(BasePage):
         except Exception:
             pass
 
-        # Live SOLANO 2026-06-11: the add control is a plain
-        # <li class="add-state"> WITHOUT role=listitem.
-        for locator in (
-            self.page.locator('li.add-state', has_text="Add Vehicle or Trailer"),
-            self.page.locator('[role="listitem"]:has-text("Add Vehicle or Trailer")'),
-            self.page.get_by_text("Add Vehicle or Trailer", exact=False),
-        ):
+        vin_q = self.page.locator("gds-radio-button-group").filter(
+            has_text=_flex_text_regex("have it handy")
+        ).filter(visible=True)
+
+        last_stage = "start"
+        for attempt in (1, 2):
             try:
-                if not await self.field_exists(locator, wait_ms=3_000):
-                    continue
-                await locator.first.click(timeout=10_000)
-                await self.page.wait_for_load_state(
-                    "networkidle", timeout=30_000
+                last_stage = await self._expand_add_accordion_and_pick_vehicle()
+                # Success condition: the next vehicle's entry form mounted.
+                if await self.field_exists(vin_q, wait_ms=15_000):
+                    return
+            except Exception as e:
+                self.note_warning(
+                    f"add-vehicle accordion attempt {attempt} failed at "
+                    f"{last_stage!r}: {e}"
                 )
-                return
-            except Exception:
-                continue
-        await self.screenshot("step3_add_vehicle_control_missing")
+            if attempt == 1:
+                print("    [GEICO] Step 3: entry form did not mount — retrying "
+                      "the add-vehicle accordion once...")
+        await self.screenshot("step3_add_vehicle_failed")
+        debug = await self.dump_debug_context("add_vehicle_failed")
         raise RuntimeError(
-            "VehicleSummaryPage.add_another: no 'Add Vehicle or Trailer' "
-            "control found (li.add-state / listitem / text)"
+            f"VehicleSummaryPage.add_another: vehicle entry form never "
+            f"mounted (last stage: {last_stage}). Visible buttons: "
+            f"{debug.get('visible_buttons')}"
         )
+
+    async def _expand_add_accordion_and_pick_vehicle(self) -> str:
+        """One pass of: + icon -> 'Vehicle' -> accordion Next.
+        Returns the last stage reached (for diagnostics)."""
+        await self.remove_overlays()  # collapses the intercepting drawer too
+
+        # 1. Expand via the + icon — unless the chooser is ALREADY open
+        #    (retry path, or a prior partial click).
+        chooser = self.page.locator("gds-radio-button-group").filter(
+            has_text=_flex_text_regex("What would the customer like to add")
+        )
+        if not await self.field_exists(chooser, wait_ms=1_500):
+            icon = self.page.locator(
+                'li.add-state [data-testid="addIcon"], '
+                'li.add-state .expandable-form-add-icon'
+            )
+            if not await self.field_exists(icon, wait_ms=5_000):
+                raise RuntimeError(
+                    "add-state '+' icon (data-testid=addIcon) not found"
+                )
+            await icon.first.click(timeout=10_000)
+            if not await self.field_exists(chooser, wait_ms=10_000):
+                return "icon-clicked-no-chooser"
+
+        # 2. Pick 'Vehicle'. Labels are Vehicle/Trailer, values Yes/No —
+        #    Vehicle == 'Yes' (GDS reuses the Yes/No component with custom
+        #    labels). Real pointer click on the host: a JS shadow click left
+        #    the radio visually marked but unregistered (live 2026-06-12).
+        vehicle_radio = chooser.first.locator(
+            'gds-radio-button[value="Yes"]'
+        )
+        await vehicle_radio.first.click(timeout=10_000)
+
+        # 3. The accordion's OWN Next (it renders a Cancel/Next pair).
+        await self.remove_overlays()  # drawer may have re-expanded again
+        next_btn = self.page.locator("gds-button, button").filter(
+            has_text=re.compile(r"^\s*Next\s*$")
+        ).filter(visible=True)
+        if await next_btn.count() == 0:
+            return "vehicle-picked-no-next"
+        await next_btn.last.click(timeout=10_000)
+        await self.page.wait_for_load_state("networkidle", timeout=30_000)
+        return "accordion-next-clicked"
 
     async def click_looks_good(self) -> None:
         """Click 'Looks Good' and wait for Step 4 ('Drivers & Incidents')."""

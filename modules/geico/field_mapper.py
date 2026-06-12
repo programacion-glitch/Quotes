@@ -97,8 +97,8 @@ class MappedVehicle:
     has_personal_use: bool = False
     has_comp_coll: bool = False
     value: Optional[str] = None           # BlueQuote market value; REQUIRED by
-                                          # GEICO ('Total value of this vehicle')
-                                          # when comp/coll is Yes.
+                                          # GEICO ('Total stated value of this
+                                          # vehicle') when comp/coll is Yes.
     garaging_zip: Optional[str] = None
     is_financed_or_leased: str = "Owned"  # "Owned" | "Leased" | "Financed"
 
@@ -161,6 +161,12 @@ class MappedFields:
     # ---- Per-vehicle and per-driver lists ----
     vehicles: List[MappedVehicle] = field(default_factory=list)
     drivers: List[MappedDriver] = field(default_factory=list)
+    # Trailer units skipped from the Add VEHICLE flow (live DIBOLL
+    # 2026-06-12: a trailer VIN never decodes -> Year/Make/Model stay empty
+    # -> the entry form blocks). One human-readable line each; quote_flow
+    # surfaces them as warnings. Quoting trailers needs the Add TRAILER
+    # accordion path (chooser value 'No'), not yet mapped.
+    skipped_trailers: List[str] = field(default_factory=list)
 
     # ---- Pass-through coverages ----
     coverages: CoveragesProfile = field(default_factory=CoveragesProfile)
@@ -511,10 +517,20 @@ def map_profile_to_fields(
     coverages = profile.coverages_detail
     fallback_zip = applicant.zip_code
     requested = profile.coverages   # list of codes like ["AL","GL","APD"]
+    skipped_trailers: List[str] = []
     if units.vehicles:
+        # Trailers can't go through the Add VEHICLE flow (their VIN never
+        # decodes; the form blocks on empty Year/Make/Model). Skip + warn.
+        powered = [v for v in units.vehicles if not v.is_trailer]
+        for t in units.vehicles:
+            if t.is_trailer:
+                skipped_trailers.append(
+                    f"trailer unit skipped (Add Trailer flow not mapped): "
+                    f"{t.trailer_type or 'UNKNOWN TYPE'} VIN {t.vin or '?'}"
+                )
         mapped_vehicles = [
             _map_vehicle(v, fallback_zip, coverages, requested)
-            for v in units.vehicles
+            for v in powered
         ]
     else:
         count = max(units.count, len(units.trailer_types))
@@ -585,4 +601,5 @@ def map_profile_to_fields(
         vehicles=mapped_vehicles,
         drivers=mapped_drivers,
         coverages=coverages,
+        skipped_trailers=skipped_trailers,
     )

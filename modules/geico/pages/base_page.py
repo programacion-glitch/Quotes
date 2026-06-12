@@ -118,9 +118,14 @@ _JS_NATIVE_SELECT = """
 
 # Probe the real checked state of the `answer` radio inside a
 # gds-radio-button-group (evaluated ON the group element). aria-checked does
-# NOT exist on gds radios — the truth is the shadow input.checked / the
-# host's 'checked' attribute (diag live 2026-06-11,
-# logs/diag_step1_radios.json). Returns true/false, null when unreadable.
+# NOT exist on gds radios. The checked TRUTH varies by variant: page-level
+# groups commit the shadow input.checked, but ACCORDION groups (Add Driver's
+# Relationship/CDL — MCP-mapped live 2026-06-12) set ONLY the host's
+# 'checked' attribute while the shadow input stays false. The old probe
+# returned input.checked unconditionally when the input existed, reading
+# those as unchecked -> 3 useless retries + WARN per radio. Accept a
+# POSITIVE from any source; report false only when sources are readable
+# and none is positive. Returns true/false, null when unreadable.
 _JS_GROUP_RADIO_STATE = """
     (g, answer) => {
         const want = (answer || '').trim().toLowerCase();
@@ -130,12 +135,13 @@ _JS_GROUP_RADIO_STATE = """
             || btns.find(x =>
                 ((x.innerText || '').trim().toLowerCase() === want));
         if (!b) return null;
+        if (b.hasAttribute('checked')) return true;
         const i = b.shadowRoot
             && b.shadowRoot.querySelector('input[type=radio]');
-        if (i) return i.checked;
-        if (b.hasAttribute('checked')) return true;
+        if (i && i.checked) return true;
         const aria = b.getAttribute('aria-checked');
-        if (aria !== null) return aria === 'true';
+        if (aria === 'true') return true;
+        if (i || aria !== null) return false;
         return null;
     }
 """
@@ -170,6 +176,23 @@ _JS_GDS_GROUP_READY = """
 # bisect hit-test: the Yes card moved x=551 -> 668 on collapse).
 _JS_COLLAPSE_DRAWER = """
     () => {
+        // Deterministic (MCP-mapped 2026-06-12): the drawer is
+        // #consolidated-summary-component; class 'extended' = expanded, and
+        // while expanded its 'div.panel.active' INTERCEPTS pointer events on
+        // the wizard's right-side buttons (Next, the add-accordion's Next) —
+        // Playwright clicks time out or silently miss. It RE-EXPANDS on every
+        // step transition, so collapse must run before each critical click,
+        // not once per wizard. Toggle = the .icon-chevron-left span.
+        const comp = document.querySelector('#consolidated-summary-component');
+        if (comp && comp.className.includes('extended')) {
+            const chevron = comp.querySelector('.icon-chevron-left');
+            if (chevron) {
+                (chevron.closest('span, div') || chevron).click();
+                return 'collapsed';
+            }
+        }
+        if (comp) return 'absent';  // present but already collapsed
+        // Fallback heuristic for older renders (pre-mapping).
         const panel = Array.from(document.querySelectorAll('div.panel'))
             .find(p => p.offsetParent !== null
                 && (p.textContent || '').includes('Rated State')
@@ -228,6 +251,14 @@ _JS_STEP_BLOCKERS = """
         if (body.includes('There was a problem while processing')) {
             return {kind: 'server-error'};
         }
+        // In-wizard underwriting rejection (live YNJ 2026-06-12): the
+        // dashboard eligibility passed but the deeper FMCSA check refused
+        // the USDOT at a later step. Terminal HALT, never advances.
+        if (body.includes("unable to complete this quote through GEICO")) {
+            const m = body.match(/quote number \\(([A-Z0-9]+)\\)/i);
+            return {kind: 'underwriting-reject',
+                    detail: m ? m[1] : ''};
+        }
         const err = Array.from(document.querySelectorAll(
             '[class*="error" i], [role="alert"]'
         )).filter(el => el.offsetParent !== null)
@@ -259,7 +290,36 @@ _JS_DEBUG_DUMP = """
                  first_options: Array.from(s.options).slice(0, 4)
                      .map(o => (o.text || '').trim()),
              }));
-        return {visible_buttons, visible_questions, visible_selects};
+        // Text/number/tel inputs, walking shadow roots (GDS wraps inputs in
+        // web components). This is what teaches the real selector when a
+        // by-label/role match misses (e.g. the comp/coll 'Total stated value'
+        // and 'customizations' money fields — live DIBOLL 2026-06-12).
+        const inputs = [];
+        const walk = (root) => {
+            let list;
+            try { list = root.querySelectorAll('input'); } catch (e) { return; }
+            list.forEach(el => {
+                const t = (el.type || '').toLowerCase();
+                if (['hidden','radio','checkbox','button','submit'].includes(t)) return;
+                if (!vis(el)) return;
+                let lbl = '';
+                try { if (el.labels && el.labels.length) lbl = txt(el.labels[0]); } catch (e) {}
+                inputs.push({
+                    id: el.id || '', name: el.name || '', type: t,
+                    placeholder: el.placeholder || '',
+                    aria: el.getAttribute('aria-label') || '',
+                    label: (lbl || '').slice(0, 70),
+                });
+            });
+            try {
+                root.querySelectorAll('*').forEach(el => {
+                    if (el.shadowRoot) walk(el.shadowRoot);
+                });
+            } catch (e) {}
+        };
+        walk(document);
+        const visible_inputs = inputs.slice(0, 40);
+        return {visible_buttons, visible_questions, visible_selects, visible_inputs};
     }
 """
 
@@ -920,13 +980,17 @@ class BasePage:
     # ============================================================
 
     async def remove_overlays(self) -> None:
-        """Remove invisible modal overlays that intercept clicks."""
+        """Remove invisible modal overlays that intercept clicks. Also
+        collapses the Dashboard drawer: it re-expands on EVERY step transition
+        and its active panel intercepts pointer events on right-side buttons
+        (MCP-mapped live 2026-06-12) — it IS the overlay that matters."""
         await self.page.evaluate("""
             () => {
                 document.querySelectorAll('.modalOverlay, .modal-backdrop, [class*="overlay"]')
                     .forEach(el => el.remove());
             }
         """)
+        await self.collapse_dashboard_drawer()
 
     async def collapse_dashboard_drawer(self) -> None:
         """Collapse the wizard's right-hand Dashboard drawer if expanded.
@@ -1049,6 +1113,16 @@ class BasePage:
                         "GEICO transient server error page ('There was a "
                         "problem while processing...') — re-run this quote "
                         "later."
+                    )
+                if blocker.get("kind") == "underwriting-reject":
+                    from modules.geico.pages._exceptions import (
+                        UnderwritingRejectError,
+                    )
+                    qn = blocker.get("detail") or "unknown"
+                    raise UnderwritingRejectError(
+                        f"GEICO refused the quote in-wizard ('We're unable "
+                        f"to complete this quote through GEICO' — FMCSA "
+                        f"underwriting, quote number {qn}). HALT."
                     )
 
             if asyncio.get_event_loop().time() >= deadline:

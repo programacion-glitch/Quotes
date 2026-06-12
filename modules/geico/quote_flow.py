@@ -27,6 +27,7 @@ from playwright.async_api import Page, BrowserContext
 from modules.geico.field_mapper import MappedDriver, MappedFields
 from modules.gmail_api_otp_reader import GmailAPIOTPReader
 from modules.geico.pdf_downloader import download_geico_pdf, quote_pdf_filename
+from modules.geico.pages._exceptions import UnderwritingRejectError
 from modules.geico.pages.additional_business_page import AdditionalBusinessPage
 from modules.geico.pages.base_page import BasePage
 from modules.geico.pages.business_class_page import BusinessClassPage
@@ -104,6 +105,12 @@ class QuoteFlow:
     async def run(self, fields: MappedFields) -> QuoteResult:
         """Execute the full quote flow up to FINAL QUOTE DETAILS (no payment)."""
         result = QuoteResult()
+        # Trailer units are excluded from the Add VEHICLE flow (their VIN
+        # never decodes -> the entry form blocks). Surface each skip so the
+        # operator sees the quote covers fewer units than the BlueQuote.
+        for skip in getattr(fields, "skipped_trailers", []):
+            result.warnings.append(skip)
+            print(f"    [GEICO] WARN: {skip}")
         # Per-quote slug so batch screenshots don't overwrite each other
         # (geico_error_vehicles.png held ON THE GO's form while debugging
         # DIBOLL's failure, 2026-06-11).
@@ -252,6 +259,25 @@ class QuoteFlow:
             result.error = str(e)
             result.session_expired = True
             result.warnings.append("Reused GEICO session expired; re-login needed.")
+            return result
+
+        except UnderwritingRejectError as e:
+            # In-wizard FMCSA underwriting rejection (live YNJ 2026-06-12):
+            # the dashboard eligibility passed but a later step refused the
+            # USDOT. Same handling as an eligibility HALT — never retry.
+            result.error = f"GEICO underwriting HALT: {e}"
+            result.halted = True
+            result.warnings.append(
+                "GEICO refused the quote in-wizard (FMCSA underwriting — "
+                "USDOT registered after 5/14). Not eligible at this time."
+            )
+            try:
+                base = BasePage(self.page)
+                result.screenshot_path = await base.screenshot(
+                    f"underwriting_halt_{result.step_reached}"
+                )
+            except Exception:
+                pass
             return result
 
         except EligibilityHaltError as e:
@@ -454,6 +480,11 @@ class QuoteFlow:
                     print(f"      select: id={s.get('id')!r} "
                           f"value={s.get('value')!r} "
                           f"first_options={s.get('first_options')}")
+                for inp in ctx.get("visible_inputs", []):
+                    print(f"      input: id={inp.get('id')!r} "
+                          f"type={inp.get('type')!r} "
+                          f"placeholder={inp.get('placeholder')!r} "
+                          f"aria={inp.get('aria')!r} label={inp.get('label')!r}")
                 for b in ctx.get("visible_buttons", [])[:10]:
                     print(f"      button: {b!r}")
             except Exception:

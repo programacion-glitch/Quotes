@@ -45,6 +45,62 @@ def _is_live_gateway(url: str) -> bool:
     return _host_is_gateway(url) and "sessionexpired" not in url.lower()
 
 
+def _is_authenticated_gateway(url: str) -> bool:
+    """A POSITIVELY-authenticated gateway page: live gateway host AND a real
+    app path (e.g. /Dashboard, /quote) — NOT the bare root.
+
+    Why the path matters: a fresh (cookieless) navigation to the login entry
+    point momentarily sits at `https://gateway.geico.com/` BEFORE bouncing to
+    the b2clogin sign-in form. The bare root is therefore ambiguous and must
+    NOT be read as authenticated (live 2026-06-12: doing so won a race against
+    the bounce and skipped credential entry, landing on 'Sign up or sign in'
+    at /quote — 'widget never visible'). An authenticated session always
+    resolves to an app path like /Dashboard."""
+    if not _is_live_gateway(url):
+        return False
+    try:
+        path = (urlparse(url).path or "").strip("/")
+    except Exception:
+        return False
+    return path != ""
+
+
+def _classify_landing(
+    url: str, username_visible: bool, auth_marker_visible: bool = False
+) -> str:
+    """Classify the page we just landed/navigated to. Pure decision so the
+    control flow can RE-CHECK after every navigation instead of assuming a
+    login form is present (live 2026-06-12: a re-login navigation actually
+    loaded the authenticated dashboard, but the old code waited for Username
+    anyway and timed out 156s/quote).
+
+    Returns:
+      'login_form'      — the Username box is visible: we are NOT logged in
+                          (the b2c sign-in page), enter credentials.
+      'authenticated'   — a live gateway APP page (path or dashboard marker):
+                          we're in, skip credentials.
+      'session_expired' — gateway served a sessionexpired page, no form yet:
+                          re-navigate to /dashboard to revive the session.
+      'unknown'         — none of the above (still bouncing / loading — keep
+                          polling; this covers the transient bare gateway root).
+
+    The Username form WINS: an authenticated dashboard never renders it, so
+    its presence means we're on the sign-in page no matter the URL. A bare
+    gateway root with neither form nor marker stays 'unknown' so the poller
+    waits for the bounce to resolve instead of guessing 'authenticated'."""
+    if username_visible:
+        return "login_form"
+    if _is_authenticated_gateway(url):
+        return "authenticated"
+    if auth_marker_visible and _is_live_gateway(url):
+        # Bare gateway root but the logged-in dashboard chrome is on screen
+        # ('Welcome to your dashboard' / Commercial Auto widget): authenticated.
+        return "authenticated"
+    if "sessionexpired" in (url or "").lower():
+        return "session_expired"
+    return "unknown"
+
+
 class LoginPage(BasePage):
     """GEICO Azure B2C login + email-MFA flow."""
 
@@ -54,6 +110,61 @@ class LoginPage(BasePage):
         super().__init__(page)
         self.otp_reader = otp_reader
         self.login_url = login_url
+
+    async def _resolve_landing(
+        self, *, timeout_ms: int = 30_000, expired_grace_ms: int = 3_000
+    ) -> str:
+        """Poll the current page until it resolves to a terminal landing:
+        'authenticated' (live gateway) or 'login_form' (Username visible).
+
+        Returns the first of those two seen. A sessionexpired page is a
+        DEAD END (it never becomes a form on its own), so once we've seen it
+        persistently for `expired_grace_ms` with no form, return early as
+        'session_expired' instead of burning the full timeout — the grace
+        tolerates a transient sessionexpired URL flashing mid-bounce. If
+        nothing resolves before the deadline, returns the best fallback seen
+        ('session_expired' or 'unknown'). No blind sleeps."""
+        import asyncio
+        now = asyncio.get_event_loop().time()
+        deadline = now + timeout_ms / 1000
+        username_box = self.page.get_by_role("textbox", name="Username")
+        # Logged-in dashboard chrome — lets us accept an authenticated bare
+        # gateway root (no app path yet) without a false positive.
+        auth_marker = self.page.locator(
+            "#labelForCommercialAuto, "
+            "text=Welcome to your dashboard"
+        )
+        fallback = "unknown"
+        expired_since = None  # time we first saw a sustained sessionexpired
+        while asyncio.get_event_loop().time() < deadline:
+            url = self.page.url
+            username_visible = False
+            try:
+                if await username_box.count() > 0:
+                    username_visible = await username_box.first.is_visible()
+            except Exception:
+                username_visible = False
+            auth_marker_visible = False
+            if not username_visible:
+                try:
+                    if await auth_marker.count() > 0:
+                        auth_marker_visible = await auth_marker.first.is_visible()
+                except Exception:
+                    auth_marker_visible = False
+            state = _classify_landing(url, username_visible, auth_marker_visible)
+            if state in ("authenticated", "login_form"):
+                return state
+            if state == "session_expired":
+                fallback = "session_expired"
+                t = asyncio.get_event_loop().time()
+                if expired_since is None:
+                    expired_since = t
+                elif (t - expired_since) * 1000 >= expired_grace_ms:
+                    return "session_expired"
+            else:
+                expired_since = None  # still bouncing/loading — reset grace
+            await self.page.wait_for_timeout(500)
+        return fallback
 
     async def login(self, username: str, password: str) -> bool:
         """Full login flow: credentials -> MFA email -> OTP -> gateway.
@@ -72,29 +183,39 @@ class LoginPage(BasePage):
             # /quote 404'd). A genuinely-authenticated session would skip the
             # username field; we detect that by the wait timing out AND the
             # gateway dashboard being present, handled in the poll below.
-            print("    [GEICO] Waiting for the sign-in form...")
+            print("    [GEICO] Resolving the landing page...")
             username_box = self.page.get_by_role("textbox", name="Username")
-            try:
-                await username_box.wait_for(state="visible", timeout=30_000)
-            except Exception:
-                # No sign-in form. Accept only a LIVE gateway (the
-                # session-expired page also has no form — false positive).
-                if _is_live_gateway(self.page.url):
-                    print(f"    [GEICO] Already authenticated -> {self.page.url}")
-                    return True
-                if "sessionexpired" in self.page.url.lower():
-                    # Stale cookies (another browser took the single agent
-                    # session). Force a fresh ecams -> b2c bounce and log in
-                    # with credentials.
-                    print("    [GEICO] Session expired page — forcing re-login...")
+            state = await self._resolve_landing(timeout_ms=30_000)
+
+            if state == "session_expired":
+                # Reused cookies hit a sessionexpired page with no form. A
+                # re-navigation to /dashboard often REVIVES the authenticated
+                # session (live 2026-06-12: the dashboard loaded fully logged
+                # in). So re-resolve and accept a live gateway BEFORE demanding
+                # credentials — the old code waited for Username here and burned
+                # 156s/quote timing out on a page where we were already in.
+                print("    [GEICO] Session expired URL — re-navigating to /dashboard...")
+                try:
                     await self.page.goto(
                         "https://gateway.geico.com/dashboard",
                         wait_until="networkidle",
                         timeout=45_000,
                     )
-                    await username_box.wait_for(state="visible", timeout=30_000)
-                else:
-                    raise
+                except Exception:
+                    pass
+                state = await self._resolve_landing(timeout_ms=30_000)
+
+            if state == "authenticated":
+                print(f"    [GEICO] Already authenticated -> {self.page.url}")
+                return True
+
+            if state != "login_form":
+                # Neither authenticated nor a usable sign-in form within the
+                # budget — a genuine failure (caught below -> screenshot).
+                raise RuntimeError(
+                    f"Login landing did not resolve (state={state}, "
+                    f"url={self.page.url})"
+                )
 
             print("    [GEICO] Entering credentials...")
             await username_box.fill(username)
