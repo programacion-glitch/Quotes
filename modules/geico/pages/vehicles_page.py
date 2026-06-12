@@ -100,6 +100,19 @@ class VehicleEntryPage(BasePage):
         print("    [GEICO] Step 3: filling vehicle entry form...")
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
 
+        # The entry form for vehicle N>1 mounts a beat AFTER add_another's
+        # networkidle (live DDH 8-vehicle 2026-06-11: the VIN-handy radio
+        # read unchecked because its group wasn't hydrated yet). Wait for the
+        # VIN-handy question to be VISIBLE before touching it.
+        vin_q = self.page.locator("gds-radio-button-group").filter(
+            has_text=_flex_text_regex("have it handy")
+        ).filter(visible=True)
+        if not await self.field_exists(vin_q, wait_ms=20_000):
+            self.note_warning(
+                "vehicle entry form's VIN-handy question never became "
+                "visible — proceeding (click_question_radio will retry)"
+            )
+
         # 1. Radio "Do you have VIN handy?"
         if vehicle.vin:
             await self.click_question_radio("Do you have it handy", "Yes")
