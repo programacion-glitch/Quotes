@@ -15,7 +15,11 @@ Designed to be driven on an interval (ScheduleWakeup / /loop) so the moment
 GEICO restores the product, the RPA quotes automatically.
 
 Usage:
-    python scripts/watch_and_quote.py <pdf>
+    python scripts/watch_and_quote.py <pdf-or-folder>
+
+When the argument is a FOLDER, every eligible Blue Quote in it is quoted
+via the batch runner the moment the product returns (the user's goal is to
+quote ALL eligible ones, not just one).
 """
 
 import asyncio
@@ -84,9 +88,9 @@ async def _product_available() -> bool:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("usage: watch_and_quote.py <pdf>")
+        print("usage: watch_and_quote.py <pdf-or-folder>")
         return 3
-    pdf = Path(sys.argv[1])
+    target = Path(sys.argv[1])
 
     print("[watch] checking GEICO Commercial Auto product availability...")
     available = asyncio.run(_product_available())
@@ -95,14 +99,27 @@ def main() -> int:
               "dashboard; no quote attempted.")
         return 2
 
-    print("PRODUCT_UP — Commercial Auto is back! Running the RPA quote...")
-    # Import here so the cheap down-path doesn't load the full quote stack.
+    print("PRODUCT_UP — Commercial Auto is back! Running the RPA...")
+
+    # FOLDER -> quote every eligible via the isolated subprocess batch runner
+    # (the user's goal: quote ALL the eligible ones the moment it's possible).
+    if target.is_dir():
+        import subprocess
+        batch = ROOT / "scripts" / "batch_geico.py"
+        print(f"[watch] launching batch over {target}")
+        proc = subprocess.run(
+            [sys.executable, "-u", str(batch), str(target)],
+            cwd=str(ROOT),
+        )
+        return proc.returncode
+
+    # Single PDF.
     from modules.pdf_extractor import BlueQuotePDFExtractor
     from modules.document_ai_extractor import DocumentAIExtractor
     from modules.quote_profile import QuoteProfile
     from modules.geico.client import GEICOClient
 
-    raw = BlueQuotePDFExtractor(str(pdf)).extract()
+    raw = BlueQuotePDFExtractor(str(target)).extract()
     ex = object.__new__(DocumentAIExtractor)
     applicant, commodity, coverages, units, drivers, cov_detail = \
         ex._map_blue_quote_to_profile(raw)
@@ -112,7 +129,7 @@ def main() -> int:
     )
     result = GEICOClient.create_quote(profile, effective_date=None)
     print("\n" + "=" * 60)
-    print(f"RESULT ({pdf.name})")
+    print(f"RESULT ({target.name})")
     print("=" * 60)
     print(f"  success       : {result.success}")
     print(f"  step_reached  : {result.step_reached}")
