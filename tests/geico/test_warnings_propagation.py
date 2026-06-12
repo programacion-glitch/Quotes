@@ -30,7 +30,12 @@ async def test_select_failure_lands_in_page_warnings(mock_page):
 
 
 async def test_vehicle_distance_select_failure_warns(mock_page, mock_locator):
-    mock_page.evaluate = AsyncMock(return_value=NO_MATCH)
+    # Select-finder JS reports no matching <select>; every OTHER evaluate
+    # (radio probes, validation-blocker check, mileage reader) returns None.
+    def _evaluate(js, *args):
+        return NO_MATCH if "findSelect" in js else None
+
+    mock_page.evaluate = AsyncMock(side_effect=_evaluate)
     # Radios verify as checked so the flow reaches the distance select.
     mock_locator.is_checked = AsyncMock(return_value=True)
     page_obj = VehicleEntryPage(mock_page)

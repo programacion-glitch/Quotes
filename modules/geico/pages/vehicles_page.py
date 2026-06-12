@@ -156,9 +156,15 @@ class VehicleEntryPage(BasePage):
         except Exception as e:
             self.note_warning(f"merged comp/coll radio failed: {e}")
 
-        # 7. Click Next.
+        # 7. Re-verify required selects JUST BEFORE Next: a late decode
+        # re-render can wipe values committed earlier (live SOLANO
+        # validation 2026-06-11: distance read back '51-100' at set time,
+        # was '' at submit — the DCT lesson).
+        await self._ensure_entry_required_filled(vehicle)
+
+        # 8. Click Next (with one refill+retry cycle if validation blocks).
         print("    [GEICO] Step 3: submitting vehicle entry...")
-        await self._click_next()
+        await self._click_next(vehicle)
 
     async def _fill_annual_mileage_if_present(self, vehicle: MappedVehicle) -> None:
         """Fill the Annual Mileage <select> when GEICO reveals it.
@@ -231,15 +237,72 @@ class VehicleEntryPage(BasePage):
                 f"continuing; Vehicle Type may need manual override"
             )
 
-    async def _click_next(self) -> None:
+    async def _ensure_entry_required_filled(self, vehicle: MappedVehicle) -> None:
+        """Refill the entry form's required selects when a late re-render
+        wiped them (distance / annual mileage). Idempotent."""
+        try:
+            distance_empty = await self.page.evaluate(
+                """() => {
+                    const sel = Array.from(document.querySelectorAll('select'))
+                        .find(s => (s.id || '').includes('FarthestOneWayDistance'));
+                    return sel ? (!sel.value || sel.value === '') : false;
+                }"""
+            )
+        except Exception:
+            distance_empty = False
+        if distance_empty:
+            self.note_warning(
+                f"distance select reset by a late re-render — refilling "
+                f"{vehicle.one_way_distance!r}"
+            )
+            try:
+                await self.select_by_options_signature(
+                    _DISTANCE_OPTIONS_SIGNATURE, vehicle.one_way_distance
+                )
+            except Exception as e:
+                self.note_warning(f"distance refill failed: {e}")
+        # Annual mileage helper already skips when pre-filled.
+        await self._fill_annual_mileage_if_present(vehicle)
+
+    async def _click_next(self, vehicle: MappedVehicle) -> None:
         """Click the Next button at the bottom of the entry form.
 
-        click_button targets the LAST visible Next: the wizard renders two
-        and the top one is inert (live NUNEZ 2026-06-11 — .first never
-        advanced the page)."""
-        await self.remove_overlays()
-        await self.click_button("Next")
-        await self.page.wait_for_load_state("networkidle", timeout=30_000)
+        click_button targets the LAST visible Next (the top one is inert —
+        live NUNEZ 2026-06-11). After the click, a visible validation banner
+        means the submit was REFUSED: refill the required selects once and
+        retry; if still blocked, fail fast with the banner text instead of
+        timing out downstream."""
+        for attempt in (1, 2):
+            await self.remove_overlays()
+            await self.click_button("Next")
+            await self.page.wait_for_load_state("networkidle", timeout=30_000)
+            try:
+                blocker = await self.page.evaluate(
+                    """() => {
+                        const err = Array.from(document.querySelectorAll(
+                            '[class*="error" i], [role="alert"]'
+                        )).filter(el => el.offsetParent !== null)
+                         .map(el => (el.innerText || '').trim())
+                         .find(t => /make a selection|is required/i.test(t));
+                        return err || null;
+                    }"""
+                )
+            except Exception:
+                blocker = None
+            if not blocker:
+                return
+            if attempt == 1:
+                self.note_warning(
+                    f"vehicle entry submit refused ({blocker!r}) — "
+                    f"refilling required selects and retrying"
+                )
+                await self._ensure_entry_required_filled(vehicle)
+            else:
+                await self.screenshot("step3_entry_submit_refused")
+                raise RuntimeError(
+                    f"Vehicle entry submit refused by validation after "
+                    f"refill: {blocker!r}"
+                )
 
 
 class CompCollSubPage(BasePage):
