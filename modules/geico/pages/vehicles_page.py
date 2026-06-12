@@ -196,10 +196,13 @@ class VehicleEntryPage(BasePage):
         await self.page.wait_for_timeout(3_000)
 
     async def _click_next(self) -> None:
-        """Click the Next button at the bottom of the entry form."""
+        """Click the Next button at the bottom of the entry form.
+
+        click_button targets the LAST visible Next: the wizard renders two
+        and the top one is inert (live NUNEZ 2026-06-11 — .first never
+        advanced the page)."""
         await self.remove_overlays()
-        btn = self.page.get_by_role("button", name="Next")
-        await btn.first.click(timeout=10_000)
+        await self.click_button("Next")
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
 
 
@@ -227,8 +230,8 @@ class CompCollSubPage(BasePage):
             self.note_warning(f"comp/coll radio click failed: {e}")
 
         await self.remove_overlays()
-        next_btn = self.page.get_by_role("button", name="Next")
-        await next_btn.first.click(timeout=10_000)
+        # Last visible Next (two on the page; the top one is inert).
+        await self.click_button("Next")
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
 
 

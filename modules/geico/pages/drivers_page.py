@@ -155,8 +155,8 @@ class DriverPlaceholderPage(BasePage):
         print("    [GEICO] Step 4: submitting owner placeholder...")
         await self.remove_overlays()
         try:
-            btn = self.page.get_by_role("button", name="Next")
-            await btn.first.click(timeout=10_000)
+            # Last visible Next (the wizard renders two; the top is inert).
+            await self.click_button("Next")
             await self.page.wait_for_load_state("networkidle", timeout=30_000)
         except Exception as e:
             await self.screenshot("step4_placeholder_next_error")

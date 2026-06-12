@@ -250,8 +250,8 @@ class AdditionalBusinessPage(BasePage):
         print("    [GEICO] Step 5: Clicking Next...")
         await self.remove_overlays()
         try:
-            btn = self.page.get_by_role("button", name="Next")
-            await btn.first.click(timeout=10_000)
+            # Last visible Next (the wizard renders two; the top is inert).
+            await self.click_button("Next")
         except Exception as e:
             await self.screenshot("step5_next_click_error")
             raise RuntimeError(f"Failed to click Next on Step 5: {e}") from e
