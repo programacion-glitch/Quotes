@@ -38,6 +38,7 @@ from modules.geico.pages.coverages_page import CoveragesPage
 from modules.geico.pages.dashboard_page import (
     DashboardPage,
     EligibilityHaltError,
+    ProductUnavailableError,
     SessionExpiredError,
 )
 from modules.geico.pages.driveeasy_page import DriveEasyProPage
@@ -225,6 +226,24 @@ class QuoteFlow:
                 "Reached Final Quote Details. Quote captured but NOT bound "
                 "(no MVR/CLUE pull, no payment)."
             )
+            return result
+
+        except ProductUnavailableError as e:
+            # GEICO pulled the Commercial Auto product from the dashboard
+            # (FMCSA changes). A definitive HALT — not retryable, not a bug.
+            result.error = f"GEICO product HALT: {e}"
+            result.halted = True
+            result.warnings.append(
+                "GEICO temporarily removed Commercial Auto/Trucking from the "
+                "dashboard — cannot quote until restored."
+            )
+            try:
+                base = BasePage(self.page)
+                result.screenshot_path = await base.screenshot(
+                    "product_unavailable"
+                )
+            except Exception:
+                pass
             return result
 
         except SessionExpiredError as e:

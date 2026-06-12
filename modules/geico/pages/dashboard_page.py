@@ -36,6 +36,14 @@ class SessionExpiredError(RuntimeError):
     and retries with a fresh login."""
 
 
+class ProductUnavailableError(RuntimeError):
+    """GEICO removed the Commercial Auto/Trucking product from the dashboard
+    (live 2026-06-11 night: a FMCSA-changes banner appeared and the Check
+    Eligibility section dropped to 4 products, no Commercial Auto). Quoting
+    is impossible until GEICO restores it — a HALT, not a bug, and NOT
+    retryable."""
+
+
 class DashboardPage(BasePage):
     """GEICO Gateway dashboard — eligibility gate before the quote wizard."""
 
@@ -120,6 +128,32 @@ class DashboardPage(BasePage):
                 return
             if attempt == 1:
                 await self.page.wait_for_timeout(2_000)
+
+        # The dashboard loaded but Commercial Auto is GONE. Distinguish a
+        # GEICO product withdrawal (FMCSA banner + Check Eligibility present
+        # without Commercial Auto — live 2026-06-11 night) from a real
+        # failure, so the operator gets a clear HALT, not a vague timeout.
+        page_text = ""
+        try:
+            page_text = (await self.page.inner_text("body")).lower()
+        except Exception:
+            pass
+        fmcsa_banner = (
+            "fmcsa" in page_text
+            and "temporarily" in page_text
+            and "commercial auto" in page_text
+        )
+        eligibility_present = "check eligibility" in page_text
+        if fmcsa_banner or (eligibility_present
+                            and "commercial auto" not in page_text):
+            await self.screenshot("dashboard_commercial_auto_unavailable")
+            raise ProductUnavailableError(
+                "GEICO has temporarily REMOVED the Commercial Auto/Trucking "
+                "product from the dashboard (FMCSA-changes banner: 'not able "
+                "to accept risks with a USDOT registered after 5/14'). "
+                "Quoting is impossible until GEICO restores the product."
+            )
+
         await self.screenshot("dashboard_quote_nav_failed")
         debug = await self.dump_debug_context("dashboard_no_widget")
         raise RuntimeError(
