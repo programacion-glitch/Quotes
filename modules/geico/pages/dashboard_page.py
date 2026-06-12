@@ -59,30 +59,51 @@ class DashboardPage(BasePage):
         new_page = await self._click_start_new_quote(context)
         return new_page
 
+    # The Commercial Auto eligibility widget: its label id, with the visible
+    # product text as a tolerant fallback (a fresh login lands on /Dashboard
+    # and the widget on /quote can render in a layout where the bare id isn't
+    # is_visible() yet — live 2026-06-11).
+    _WIDGET = "#labelForCommercialAuto, label:has-text('Commercial Auto')"
+
+    async def _widget_ready(self, *, timeout_ms: int) -> bool:
+        """True once the Commercial Auto widget is on screen. Polls (no blind
+        sleep); scrolls it into view so a narrow render counts as visible."""
+        import asyncio
+        deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+        loc = self.page.locator(self._WIDGET).first
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                if await loc.count() > 0:
+                    try:
+                        await loc.scroll_into_view_if_needed(timeout=1_500)
+                    except Exception:
+                        pass
+                    if await loc.is_visible():
+                        return True
+            except Exception:
+                pass
+            await self.page.wait_for_timeout(500)
+        return False
+
     async def _ensure_on_quote_dashboard(self) -> None:
         """Make sure we're on the dashboard page that exposes the
-        'Commercial Auto' eligibility widget (#labelForCommercialAuto).
+        'Commercial Auto' eligibility widget.
 
-        After login GEICO may land on gateway.geico.com/dashboard, but the
-        eligibility widget lives on /quote. If the label isn't present
-        quickly, navigate to /quote explicitly.
+        After login GEICO lands on gateway.geico.com/Dashboard, but the
+        eligibility widget lives on /quote. Navigate there (twice if needed —
+        a fresh-login dashboard can need a beat) and wait for the widget by a
+        TOLERANT locator (id or product text) with a generous budget.
         """
-        label = self.page.locator("#labelForCommercialAuto")
-        try:
-            if await label.count() > 0 and await label.first.is_visible():
-                return
-        except Exception:
-            pass
+        if await self._widget_ready(timeout_ms=3_000):
+            return
         target = "https://gateway.geico.com/quote"
-        print(f"    [GEICO] Commercial Auto widget not here; navigating to {target}")
-        try:
-            await self.page.goto(target, wait_until="networkidle", timeout=30_000)
-            await label.first.wait_for(state="visible", timeout=15_000)
-        except Exception as e:
-            # Distinguish a DEAD session (reused zombie storage_state) from a
-            # real dashboard failure: the former lands on
-            # .../sessionexpireddashboard or shows 'Your session has ended'.
-            # The client drops the session and re-logs in.
+        for attempt in (1, 2):
+            print(f"    [GEICO] Navigating to {target} (attempt {attempt})...")
+            try:
+                await self.page.goto(target, wait_until="networkidle", timeout=30_000)
+            except Exception:
+                pass
+            # Dead-session check first (reused zombie storage_state).
             url = self.page.url.lower()
             body = ""
             try:
@@ -94,11 +115,18 @@ class DashboardPage(BasePage):
                 raise SessionExpiredError(
                     "Reused GEICO session is dead (sessionexpireddashboard / "
                     "'Your session has ended') — dropping it and re-logging in."
-                ) from e
-            await self.screenshot("dashboard_quote_nav_failed")
-            raise RuntimeError(
-                f"Could not reach the Commercial Auto dashboard at {target}: {e}"
-            ) from e
+                )
+            if await self._widget_ready(timeout_ms=30_000):
+                return
+            if attempt == 1:
+                await self.page.wait_for_timeout(2_000)
+        await self.screenshot("dashboard_quote_nav_failed")
+        debug = await self.dump_debug_context("dashboard_no_widget")
+        raise RuntimeError(
+            f"Could not reach the Commercial Auto dashboard at {target} "
+            f"(widget never visible). Visible buttons: "
+            f"{debug.get('visible_buttons')}"
+        )
 
     async def _select_commercial_auto(self) -> None:
         """
