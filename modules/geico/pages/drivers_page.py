@@ -405,13 +405,13 @@ class DriverSummaryPage(BasePage):
         # objects). Previous wait_for_text was strict-mode-prone when the
         # phrase also appears in a breadcrumb / sidebar / step indicator.
         try:
-            # 60s: GEICO step transitions can exceed 20s under load.
-            await self.page.wait_for_function(
-                "() => document.title.includes('Additional Business Info')",
-                timeout=60_000,
+            # Dynamic outcome wait: success title instant; validation or
+            # server-error fail fast; 60s only as worst-case cap.
+            await self.wait_for_step_outcome(
+                ["Additional Business Info"], budget_ms=60_000
             )
             print("    [GEICO] Step 4: reached Step 5 (Additional Business Info).")
-        except Exception as e:
+        except (RuntimeError, TimeoutError) as e:
             await self.screenshot("step4_no_transition_to_step5")
             raise RuntimeError(
                 f"Step 4 did not advance to 'Additional Business Info': {e}"

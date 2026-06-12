@@ -348,13 +348,12 @@ class CoveragesPage(BasePage):
             ) from e
 
         try:
-            # Coverage recompute on advance can be slow — 30s is intentional.
-            await self.page.wait_for_function(
-                "() => document.title.includes('Final Quote Details')",
-                timeout=30_000,
+            # Dynamic outcome wait; 60s cap (coverage recompute is slow).
+            await self.wait_for_step_outcome(
+                ["Final Quote Details"], budget_ms=60_000
             )
             print("    [GEICO] Step 6 -> Step 7 (Final Quote Details) loaded")
-        except Exception as e:
+        except (RuntimeError, TimeoutError) as e:
             await self.screenshot("step6_to_step7_navigation_error")
             raise RuntimeError(
                 f"Step 6 submit did not advance to Final Quote Details: {e}"

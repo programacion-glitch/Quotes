@@ -15,17 +15,17 @@ from modules.geico.pages.coverages_page import CoveragesPage
 
 async def test_step5_next_waits_for_either_driveeasy_or_coverages(mock_page):
     page_obj = AdditionalBusinessPage(mock_page)
-    page_obj.wait_for_any_title = AsyncMock(return_value="Quote & Coverages")
+    page_obj.wait_for_step_outcome = AsyncMock(return_value="Quote & Coverages")
     await page_obj._click_next()
-    page_obj.wait_for_any_title.assert_awaited_once()
-    candidates = page_obj.wait_for_any_title.await_args.args[0]
+    page_obj.wait_for_step_outcome.assert_awaited_once()
+    candidates = page_obj.wait_for_step_outcome.await_args.args[0]
     assert "DriveEasy Pro" in candidates
     assert "Quote & Coverages" in candidates
 
 
 async def test_step5_next_raises_when_neither_title_appears(mock_page):
     page_obj = AdditionalBusinessPage(mock_page)
-    page_obj.wait_for_any_title = AsyncMock(side_effect=TimeoutError("none"))
+    page_obj.wait_for_step_outcome = AsyncMock(side_effect=TimeoutError("none"))
     with pytest.raises(RuntimeError):
         await page_obj._click_next()
 

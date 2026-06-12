@@ -430,18 +430,16 @@ class BusinessClassPage(BasePage):
             raise RuntimeError(f"Could not click Next on Step 1: {e}") from e
 
     async def _wait_for_step2(self) -> None:
-        """Wait until the wizard's document.title reflects Step 2.
-
-        60s: GEICO's backend can take >20s on step transitions under load
-        (live WHITE CASTLE 2026-06-11 — form complete, no errors, just slow).
-        """
+        """Dynamic outcome wait: Step 2 title (instant on success), visible
+        validation (fail fast — the form refused), or GEICO's server-error
+        page (fail fast — transient). 60s is only the worst-case cap for
+        GEICO's slow backend (live WHITE CASTLE 2026-06-11)."""
         try:
-            await self.page.wait_for_function(
-                "() => document.title.includes('Business & Owner Info')",
-                timeout=60_000,
+            await self.wait_for_step_outcome(
+                ["Business & Owner Info"], budget_ms=60_000
             )
             print("    [GEICO] Step 1 complete -> Step 2 loaded")
-        except Exception as e:
+        except (RuntimeError, TimeoutError) as e:
             await self.screenshot("step1_post_next")
             raise RuntimeError(
                 f"Step 2 (Business & Owner Info) did not load after Next: {e}"

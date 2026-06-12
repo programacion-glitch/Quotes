@@ -257,11 +257,11 @@ class AdditionalBusinessPage(BasePage):
             raise RuntimeError(f"Failed to click Next on Step 5: {e}") from e
 
         try:
-            matched = await self.wait_for_any_title(
-                ["DriveEasy Pro", "Quote & Coverages"], timeout_ms=60_000
+            matched = await self.wait_for_step_outcome(
+                ["DriveEasy Pro", "Quote & Coverages"], budget_ms=60_000
             )
             print(f"    [GEICO] Step 5 -> '{matched}' loaded")
-        except TimeoutError as e:
+        except (RuntimeError, TimeoutError) as e:
             await self.screenshot("step5_to_step5b_navigation_error")
             raise RuntimeError(
                 f"Step 5 submit did not advance to DriveEasy Pro or "

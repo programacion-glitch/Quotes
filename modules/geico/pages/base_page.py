@@ -212,6 +212,27 @@ _JS_SHADOW_RADIO_CLICK = """
     }
 """
 
+# Blockers that mean a step submit will NEVER advance: a VISIBLE validation
+# message (the form refused the submit) or GEICO's hard server-error page.
+# Probed between title polls so failures surface in ~1 poll instead of
+# burning the whole transition budget.
+_JS_STEP_BLOCKERS = """
+    () => {
+        const body = document.body
+            ? (document.body.textContent || '') : '';
+        if (body.includes('There was a problem while processing')) {
+            return {kind: 'server-error'};
+        }
+        const err = Array.from(document.querySelectorAll(
+            '[class*="error" i], [role="alert"]'
+        )).filter(el => el.offsetParent !== null)
+         .map(el => (el.innerText || '').trim())
+         .find(t => /make a selection|is required|please enter/i.test(t));
+        if (err) return {kind: 'validation', detail: err.slice(0, 160)};
+        return null;
+    }
+"""
+
 # Learning-instrumentation dump: what is actually on screen right now.
 _JS_DEBUG_DUMP = """
     () => {
@@ -914,6 +935,63 @@ class BasePage:
             if s in title:
                 return s
         return title
+
+    async def wait_for_step_outcome(
+        self,
+        success_titles: Sequence[str],
+        *,
+        budget_ms: int = 60_000,
+        interval_ms: int = 500,
+    ) -> str:
+        """Dynamic wait for the REAL outcome of a step submit.
+
+        Polls (no blind sleep) for whichever happens first:
+          * document.title contains any of `success_titles` -> return it
+            (instant on the happy path);
+          * a VISIBLE validation banner -> RuntimeError NOW (the form
+            refused the submit; waiting longer can never succeed);
+          * GEICO's 'There was a problem while processing' page ->
+            RuntimeError NOW (transient server error — re-run later).
+
+        `budget_ms` is the worst-case CAP for GEICO's slow backend (live
+        2026-06-11: legit transitions exceeded 20s under load), never a
+        sleep duration.
+        """
+        import asyncio
+        candidates = list(success_titles)
+        deadline = asyncio.get_event_loop().time() + budget_ms / 1000
+        while True:
+            try:
+                title = await self.page.title()
+            except Exception:
+                title = ""
+            for s in candidates:
+                if s in title:
+                    return s
+
+            try:
+                blocker = await self.page.evaluate(_JS_STEP_BLOCKERS)
+            except Exception:
+                blocker = None
+            if isinstance(blocker, dict):
+                if blocker.get("kind") == "validation":
+                    raise RuntimeError(
+                        f"Step submit refused by form validation: "
+                        f"{blocker.get('detail')!r} (title={title!r})"
+                    )
+                if blocker.get("kind") == "server-error":
+                    raise RuntimeError(
+                        "GEICO transient server error page ('There was a "
+                        "problem while processing...') — re-run this quote "
+                        "later."
+                    )
+
+            if asyncio.get_event_loop().time() >= deadline:
+                raise TimeoutError(
+                    f"wait_for_step_outcome: none of {candidates} appeared "
+                    f"within {budget_ms}ms (title={title!r})"
+                )
+            await self.page.wait_for_timeout(interval_ms)
 
     async def wait_for_navigation(self, timeout: int = 30_000) -> None:
         """Wait for page navigation to complete.

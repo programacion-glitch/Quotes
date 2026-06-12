@@ -274,21 +274,11 @@ class VehicleSummaryPage(BasePage):
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         await self.remove_overlays()
 
-        # Capture the current step title BEFORE clicking so we can wait for it
-        # to actually flip. "Drivers & Incidents" also lives in the persistent
-        # step side-nav, so wait_for_text would match the breadcrumb instantly
-        # and leave us driving the previous step's (stale) DOM — which broke the
-        # owner-placeholder sub-page intermittently.
-        prev_title = await self.page.title()
+        await self.click_button("Looks Good")
 
-        btn = self.page.get_by_role("button", name="Looks Good")
-        await btn.first.click(timeout=10_000)
-
-        # Wait for the wizard's document.title to change away from the vehicles
-        # step — the reliable signal that the drivers content has mounted.
-        try:
-            await self.wait_for_title_change(prev_title, timeout=30_000)
-        except Exception:
-            # As a softer fallback, just wait for the network to settle.
-            await self.page.wait_for_load_state("networkidle", timeout=30_000)
+        # Dynamic outcome wait: drivers title (instant on success),
+        # validation/server-error fail fast; 60s only as worst-case cap.
+        await self.wait_for_step_outcome(
+            ["Drivers & Incidents"], budget_ms=60_000
+        )
         print("    [GEICO] Step 3: reached Step 4 (Drivers & Incidents).")
