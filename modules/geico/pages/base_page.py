@@ -436,10 +436,55 @@ class BasePage:
         loc = self.by_text(text, tag)
         await loc.first.click(timeout=10_000)
 
+    async def wait_for_button_enabled(
+        self, text: str, *, timeout_ms: int = 8_000, interval_ms: int = 300
+    ) -> bool:
+        """Poll until a VISIBLE gds-button/button with `text` is ENABLED.
+
+        GEICO disables a step's Next asynchronously while it processes a
+        field commit + conditional reveal (live SOLANO owner-driver
+        placeholder 2026-06-11 — Next greyed with everything filled). A
+        condition wait, never a sleep: returns True the instant it's
+        enabled, False after the budget."""
+        import asyncio
+        text_l = text.strip().lower()
+        deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+        while True:
+            try:
+                enabled = await self.page.evaluate(
+                    """(label) => {
+                        const norm = s => (s||'').trim().toLowerCase();
+                        const els = Array.from(document.querySelectorAll(
+                            'gds-button, button'
+                        )).filter(b => b.offsetParent !== null
+                                       && norm(b.textContent).includes(label));
+                        if (!els.length) return false;
+                        // Any visible match that is NOT disabled.
+                        return els.some(b =>
+                            !b.hasAttribute('disabled')
+                            && b.getAttribute('aria-disabled') !== 'true'
+                            && !(b.shadowRoot &&
+                                 b.shadowRoot.querySelector(
+                                     'button[disabled], button[aria-disabled=true]'))
+                        );
+                    }""",
+                    text_l,
+                )
+            except Exception:
+                enabled = False
+            if enabled:
+                return True
+            if asyncio.get_event_loop().time() >= deadline:
+                return False
+            await self.page.wait_for_timeout(interval_ms)
+
     async def click_button(self, text: str) -> None:
         """Click a button by visible text. GEICO uses <gds-button> custom
         elements and often renders the same action twice (top + bottom of a
         form), so a plain get_by_role can hit strict-mode or timing flakiness.
+
+        Waits for the button to be ENABLED first (GEICO greys Next while it
+        processes async field commits) so the click isn't a silent no-op.
 
         Strategy:
           1. gds-button with the text — click the LAST visible one (the
@@ -451,6 +496,12 @@ class BasePage:
         wait_for_title_change) — a button's outcome is page-specific.
         """
         await self.remove_overlays()
+        # Wait for the button to become enabled (best-effort: a False return
+        # just means we click anyway — the button may have no disabled state).
+        if not await self.wait_for_button_enabled(text, timeout_ms=8_000):
+            self.note_warning(
+                f"button {text!r} still disabled after 8s — clicking anyway"
+            )
         text_re = _flex_text_regex(text)
 
         # 1. gds-button (visible, last).

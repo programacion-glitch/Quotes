@@ -199,18 +199,43 @@ class DriverPlaceholderPage(BasePage):
             await self.screenshot("step4_placeholder_cdl_error")
 
     async def _click_next(self) -> None:
-        """Click the Next button at the bottom of the placeholder form."""
+        """Click the placeholder Next and VERIFY it advanced.
+
+        click_button waits for Next to be ENABLED (GEICO greys it while it
+        processes CDL=Yes + the driving-history reveal — live SOLANO
+        2026-06-11). After the click, confirm we left the placeholder (its
+        CDL question is gone); retry once if a stale render kept us."""
         print("    [GEICO] Step 4: submitting owner placeholder...")
-        await self.remove_overlays()
-        try:
-            # Last visible Next (the wizard renders two; the top is inert).
-            await self.click_button("Next")
-            await self.page.wait_for_load_state("networkidle", timeout=30_000)
-        except Exception as e:
-            await self.screenshot("step4_placeholder_next_error")
-            raise RuntimeError(
-                f"Failed to click Next on owner placeholder: {e}"
-            ) from e
+        from modules.geico.pages.base_page import _flex_text_regex
+        cdl_q = self.page.locator("gds-radio-button-group").filter(
+            has_text=_flex_text_regex("does this driver have a CDL")
+        ).filter(visible=True)
+        for attempt in (1, 2):
+            await self.remove_overlays()
+            try:
+                await self.click_button("Next")
+                await self.page.wait_for_load_state("networkidle", timeout=30_000)
+            except Exception as e:
+                await self.screenshot("step4_placeholder_next_error")
+                raise RuntimeError(
+                    f"Failed to click Next on owner placeholder: {e}"
+                ) from e
+            # Advanced if the placeholder's CDL question is no longer visible.
+            if not await self.field_exists(cdl_q, wait_ms=4_000):
+                return
+            if attempt == 1:
+                self.note_warning(
+                    "owner placeholder Next did not advance — retrying "
+                    "(waiting for it to enable)"
+                )
+                await self.page.wait_for_timeout(1_000)
+        # Still on the placeholder — surface the real DOM for the next fix.
+        debug = await self.dump_debug_context("placeholder_stuck")
+        await self.screenshot("step4_placeholder_stuck")
+        raise RuntimeError(
+            f"Owner placeholder did not advance after Next (still showing the "
+            f"CDL question). Visible buttons: {debug.get('visible_buttons')}"
+        )
 
 
 class AddDriverPage(BasePage):
