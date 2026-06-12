@@ -83,3 +83,11 @@ data/geico_session.json
 
 # Learned-mappings runtime cache (persists on the data volume / Drive, not in git)
 data/learned_mappings.xlsx
+
+# Client data — NEVER commit (Blue Quote PDFs, extracted profiles, quote PDFs).
+data/input*/
+data/output/*.pdf
+data/output/*.json
+data/output/extracted_*
+# Stray debug screenshots at repo root.
+*_stop.png
