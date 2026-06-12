@@ -80,9 +80,39 @@ class DriverPlaceholderPage(BasePage):
         await self.remove_overlays()
 
         await self._select_license_state(owner_driver)
+        # An ACTIVE owner-driver's placeholder is a fully-rated driver entry:
+        # it needs the DOB or its Next stays DISABLED (live SOLANO 2026-06-11
+        # — Next greyed out with everything else filled). An EXCLUDED owner's
+        # placeholder doesn't ask for it.
+        if not owner_driver.is_excluded:
+            await self._fill_owner_dob(owner_driver)
         await self._answer_certificate_of_responsibility()
         await self._answer_has_cdl(owner_driver)
         await self._click_next()
+
+    async def _fill_owner_dob(self, owner_driver: MappedDriver) -> None:
+        """Fill the owner-driver's DOB on the placeholder if the field is
+        present and empty (active owner-driver only)."""
+        if not owner_driver.date_of_birth:
+            return
+        try:
+            box = self.page.get_by_label("Date of Birth")
+            if await box.count() == 0:
+                box = self.page.locator('[id*="DateOfBirth" i]')
+            if await self.field_exists(box, wait_ms=2_000):
+                current = ""
+                try:
+                    current = (await box.first.input_value()) or ""
+                except Exception:
+                    current = ""
+                if not current.strip():
+                    print(f"    [GEICO] Step 4: owner DOB -> "
+                          f"{owner_driver.date_of_birth}")
+                    await box.first.fill(owner_driver.date_of_birth)
+                    await self.page.keyboard.press("Tab")
+                    await self.page.wait_for_timeout(300)
+        except Exception as e:
+            self.note_warning(f"owner placeholder DOB fill failed: {e}")
 
     async def _answer_certificate_of_responsibility(self) -> None:
         """Conditional (live SOLANO 2026-06-11): 'Do they need a Certificate
