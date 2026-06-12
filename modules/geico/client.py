@@ -29,6 +29,7 @@ from typing import Optional
 
 from modules.quote_profile import QuoteProfile
 from modules.gmail_api_otp_reader import GmailAPIOTPReader
+from modules.geico import stealth
 from modules.geico.field_mapper import map_profile_to_fields
 from modules.geico.quote_flow import QuoteFlow, QuoteResult
 
@@ -178,22 +179,23 @@ async def _run_with_browser(config: GEICOConfig, fields) -> QuoteResult:
             print(f"    [GEICO] Retry {attempt}/{config.max_retries}...")
 
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=config.headless)
+            # Anti-bot hardening (Imperva Incapsula): real Chrome fingerprint
+            # + automation tells scrubbed. The TRUNCATED UA we used to send
+            # got Incapsula to block step submits ('There was a problem while
+            # processing...') while the MCP browser, with a full UA, passed
+            # the identical flow (user-diagnosed 2026-06-11). 1920px wide so
+            # the right-hand Dashboard drawer docks instead of floating over
+            # the form.
+            browser = await pw.chromium.launch(
+                **stealth.launch_kwargs(headless=config.headless)
+            )
             storage_state = (
                 str(_SESSION_STATE) if _SESSION_STATE.exists() else None
             )
-            # 1920px wide: the wizard's right-hand Dashboard sidebar DOCKS at
-            # desktop width; at 1280px it floats as a drawer OVER the form
-            # right when the FMCSA preview loads (user-observed interference,
-            # 2026-06-11).
             context = await browser.new_context(
-                viewport={"width": 1920, "height": 1080},
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36"
-                ),
-                storage_state=storage_state,
+                **stealth.context_kwargs(storage_state=storage_state)
             )
+            await stealth.apply_stealth(context)
             # Bound EVERY protocol call: a wedged renderer makes unbounded
             # calls hang the quote forever (Progressive live 2026-06-10).
             # Explicit per-call timeouts still override this default.
