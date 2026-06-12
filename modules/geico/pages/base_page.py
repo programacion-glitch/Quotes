@@ -87,15 +87,18 @@ _JS_NATIVE_SELECT = """
                 {found: true, value: sel.value, text: current()}
             );
         }
-        // action === 'set': match by value attribute first, then by text.
+        // action === 'set': match by value attribute first, then by text
+        // (case-insensitive: the City select offers 'NEW CANEY' while the
+        // BlueQuote brings 'New Caney' — live DDH 2026-06-11).
         const desired = args.value;
+        const low = (s) => norm(s).toLowerCase();
         let chosen = null;
         for (const opt of sel.options) {
             if (opt.value === desired) { chosen = opt; break; }
         }
         if (!chosen) {
             for (const opt of sel.options) {
-                if (norm(opt.text) === norm(desired)) { chosen = opt; break; }
+                if (low(opt.text) === low(desired)) { chosen = opt; break; }
             }
         }
         if (!chosen) {
@@ -535,10 +538,11 @@ class BasePage:
         )
 
     def _select_value_committed(self, desired: str, payload: dict) -> bool:
-        """True when the read-back state matches the desired option."""
-        want = (desired or "").strip()
+        """True when the read-back state matches the desired option
+        (text compare is case-insensitive — DDH 'New Caney' vs 'NEW CANEY')."""
+        want = (desired or "").strip().lower()
         return (
-            (payload.get("text") or "").strip() == want
+            (payload.get("text") or "").strip().lower() == want
             or (payload.get("value") or "") == desired
         )
 

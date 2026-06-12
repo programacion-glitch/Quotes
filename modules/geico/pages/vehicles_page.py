@@ -60,6 +60,30 @@ _JS_READ_ANNUAL_MILEAGE = """
 _DISTANCE_OPTIONS_SIGNATURE = ["0-25", "More than 500"]
 _VEHICLE_TYPE_OPTIONS_SIGNATURE = ["Dump Truck", "Tractor", "Pickup Truck"]
 
+# Canonical order of GEICO's one-way-distance buckets. Pickups expose a
+# TRIMMED set (starts at '101-200' — live ON THE GO 2026-06-11), so the
+# desired bucket may be absent and the nearest at-or-above must be used.
+_DISTANCE_ORDER = ["0-25", "26-50", "51-100", "101-200", "201-300",
+                   "301-500", "More than 500"]
+
+
+def nearest_distance_option(desired: str, options: list) -> str:
+    """The desired bucket when available; otherwise the nearest available
+    bucket at-or-above it; otherwise the first real option."""
+    real = [o for o in options if o and "select" not in o.lower()]
+    if desired in real:
+        return desired
+    try:
+        start = _DISTANCE_ORDER.index(desired)
+    except ValueError:
+        start = 0
+        if desired not in _DISTANCE_ORDER:
+            return real[0] if real else desired
+    for bucket in _DISTANCE_ORDER[start:]:
+        if bucket in real:
+            return bucket
+    return real[-1] if real else desired
+
 
 class VehicleEntryPage(BasePage):
     """The 'Tell us about the vehicle' page with the VIN entry form.
@@ -98,25 +122,52 @@ class VehicleEntryPage(BasePage):
                 except Exception as e:
                     self.note_warning(f"Vehicle Type select failed: {e}")
 
+        # 3b. VIN-decoded PICKUPS leave the Vehicle Type EMPTY and required
+        # ('Which of the following best describes...' — live ON THE GO
+        # 2026-06-11); tractors arrive pre-selected. Fill from the BlueQuote
+        # type when the decode didn't pick one.
+        if vehicle.vin and vehicle.vehicle_type:
+            try:
+                type_empty = await self.page.evaluate(
+                    """() => {
+                        const sel = Array.from(document.querySelectorAll('select'))
+                            .find(s => (s.id || '').includes('OtherVehicleType'));
+                        return sel ? (!sel.value || sel.value === '') : false;
+                    }"""
+                )
+                if type_empty:
+                    print(f"    [GEICO] Step 3: Vehicle Type empty post-decode "
+                          f"-> {vehicle.vehicle_type}")
+                    await self.select_by_js(
+                        "OtherVehicleType", vehicle.vehicle_type
+                    )
+            except Exception as e:
+                self.note_warning(f"post-decode Vehicle Type set failed: {e}")
+
         # 4. Garaging address is auto-populated; leave it.
 
-        # 5. Farthest one-way distance combobox.
-        print(
-            f"    [GEICO] Step 3: one-way distance -> {vehicle.one_way_distance}"
-        )
-        try:
-            await self.select_by_options_signature(
-                _DISTANCE_OPTIONS_SIGNATURE,
-                vehicle.one_way_distance,
-            )
-        except Exception as e:
-            self.note_warning(f"distance select failed: {e}")
+        # 5. Farthest one-way distance combobox (id-stable across variants;
+        # the option SET differs per vehicle type, so pick the nearest
+        # available bucket when the desired one is absent).
+        await self._set_distance(vehicle)
 
         # 6. Radio "Is this vehicle ever used for personal use?"
         await self.click_question_radio(
             "ever used for personal use",
             "Yes" if vehicle.has_personal_use else "No",
         )
+
+        # 6a. Conditional (pickup variant, live ON THE GO 2026-06-11):
+        # "Does the customer have any customizations?" -> No.
+        try:
+            grp = self.page.locator("gds-radio-button-group").filter(
+                has_text=_flex_text_regex("have any customizations")
+            )
+            if await self.field_exists(grp, wait_ms=1_500):
+                print("    [GEICO] Step 3: customizations -> No")
+                await self.click_question_radio("have any customizations", "No")
+        except Exception as e:
+            self.note_warning(f"customizations radio failed: {e}")
 
         # 6b. Conditional (live NUNEZ 2026-06-11): "Was the customer's
         # vehicle purchased in the last 45 days?" — fleet units on a
@@ -237,30 +288,70 @@ class VehicleEntryPage(BasePage):
                 f"continuing; Vehicle Type may need manual override"
             )
 
+    async def _set_distance(self, vehicle: MappedVehicle) -> None:
+        """Set the one-way distance via its id-stable select. When the
+        desired bucket is absent from this variant's option set, fall back
+        to the nearest available bucket at-or-above (warned)."""
+        from modules.geico.pages._exceptions import SelectVerifyError
+        desired = vehicle.one_way_distance
+        print(f"    [GEICO] Step 3: one-way distance -> {desired}")
+        try:
+            await self.select_by_js("FarthestOneWayDistance", desired)
+            return
+        except SelectVerifyError as e:
+            pick = nearest_distance_option(desired, e.available_options)
+            if pick != desired:
+                self.note_warning(
+                    f"distance {desired!r} unavailable for this vehicle "
+                    f"type — using nearest bucket {pick!r}"
+                )
+                try:
+                    await self.select_by_js("FarthestOneWayDistance", pick)
+                    return
+                except Exception as e2:
+                    self.note_warning(f"distance fallback failed: {e2}")
+            else:
+                self.note_warning(f"distance select failed: {e}")
+        except Exception as e:
+            self.note_warning(f"distance select failed: {e}")
+
     async def _ensure_entry_required_filled(self, vehicle: MappedVehicle) -> None:
         """Refill the entry form's required selects when a late re-render
-        wiped them (distance / annual mileage). Idempotent."""
+        wiped them (distance / vehicle type / annual mileage). Idempotent."""
         try:
-            distance_empty = await self.page.evaluate(
+            state = await self.page.evaluate(
                 """() => {
-                    const sel = Array.from(document.querySelectorAll('select'))
-                        .find(s => (s.id || '').includes('FarthestOneWayDistance'));
-                    return sel ? (!sel.value || sel.value === '') : false;
+                    const get = (frag) => Array.from(
+                        document.querySelectorAll('select')
+                    ).find(s => (s.id || '').includes(frag));
+                    const dist = get('FarthestOneWayDistance');
+                    const type_ = get('OtherVehicleType');
+                    return {
+                        distance_empty: dist ? (!dist.value) : false,
+                        type_empty: type_ ? (!type_.value) : false,
+                    };
                 }"""
             )
         except Exception:
-            distance_empty = False
-        if distance_empty:
+            state = {}
+        if isinstance(state, dict) and state.get("distance_empty"):
             self.note_warning(
                 f"distance select reset by a late re-render — refilling "
                 f"{vehicle.one_way_distance!r}"
             )
+            await self._set_distance(vehicle)
+        if (isinstance(state, dict) and state.get("type_empty")
+                and vehicle.vehicle_type):
+            self.note_warning(
+                f"vehicle type empty at submit — setting "
+                f"{vehicle.vehicle_type!r}"
+            )
             try:
-                await self.select_by_options_signature(
-                    _DISTANCE_OPTIONS_SIGNATURE, vehicle.one_way_distance
+                await self.select_by_js(
+                    "OtherVehicleType", vehicle.vehicle_type
                 )
             except Exception as e:
-                self.note_warning(f"distance refill failed: {e}")
+                self.note_warning(f"vehicle type refill failed: {e}")
         # Annual mileage helper already skips when pre-filled.
         await self._fill_annual_mileage_if_present(vehicle)
 
@@ -363,6 +454,17 @@ class VehicleSummaryPage(BasePage):
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         await self.remove_overlays()
 
+        # The summary mounts a beat AFTER the entry submit settles — wait
+        # for its marker before hunting the add control (live DDH
+        # 2026-06-11: an instant count()==0 raised while the entry form was
+        # still on screen).
+        try:
+            await self.page.locator("gds-button").filter(
+                has_text="Looks Good"
+            ).last.wait_for(state="visible", timeout=30_000)
+        except Exception:
+            pass
+
         # Live SOLANO 2026-06-11: the add control is a plain
         # <li class="add-state"> WITHOUT role=listitem.
         for locator in (
@@ -371,7 +473,7 @@ class VehicleSummaryPage(BasePage):
             self.page.get_by_text("Add Vehicle or Trailer", exact=False),
         ):
             try:
-                if await locator.count() == 0:
+                if not await self.field_exists(locator, wait_ms=3_000):
                     continue
                 await locator.first.click(timeout=10_000)
                 await self.page.wait_for_load_state(
@@ -380,6 +482,7 @@ class VehicleSummaryPage(BasePage):
                 return
             except Exception:
                 continue
+        await self.screenshot("step3_add_vehicle_control_missing")
         raise RuntimeError(
             "VehicleSummaryPage.add_another: no 'Add Vehicle or Trailer' "
             "control found (li.add-state / listitem / text)"
