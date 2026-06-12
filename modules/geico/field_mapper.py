@@ -96,6 +96,9 @@ class MappedVehicle:
     one_way_distance: str = "51-100"
     has_personal_use: bool = False
     has_comp_coll: bool = False
+    value: Optional[str] = None           # BlueQuote market value; REQUIRED by
+                                          # GEICO ('Total value of this vehicle')
+                                          # when comp/coll is Yes.
     garaging_zip: Optional[str] = None
     is_financed_or_leased: str = "Owned"  # "Owned" | "Leased" | "Financed"
 
@@ -394,6 +397,21 @@ def _distance_bucket(radius_miles: Optional[str]) -> str:
     return "More than 500"
 
 
+def _parse_value_amount(raw: Optional[str]) -> Optional[str]:
+    """Digits-only vehicle value for GEICO's 'Total value' field, clamped to
+    its 1..999,000 range. '$45,000' / '45000.00' -> '45000'. None when the
+    BlueQuote carries no value (liability-only)."""
+    if not raw:
+        return None
+    digits = re.sub(r"[^\d]", "", str(raw).split(".")[0])
+    if not digits:
+        return None
+    amount = int(digits)
+    if amount <= 0:
+        return None
+    return str(min(amount, 999_000))
+
+
 def _financed_or_leased(has_loan: Optional[str]) -> str:
     """Map BlueQuote has_loan string to GEICO ownership option."""
     raw = (has_loan or "").strip().lower()
@@ -425,6 +443,9 @@ def _map_vehicle(
         # No code list available — fall back to checking deductibles are TRUTHY
         # (mirrors Progressive's coverages_rates_page guard `if coverages.comp_deductible:`).
         has_comp_coll = bool(coverages.comp_deductible) or bool(coverages.coll_deductible)
+    # The per-vehicle market value (BlueQuote 'Value' column). REQUIRED by
+    # GEICO's 'Total value of this vehicle' field when comp/coll is Yes.
+    has_comp_coll = has_comp_coll or bool(v.value)
     return MappedVehicle(
         vin=v.vin,
         year=v.year,
@@ -434,6 +455,7 @@ def _map_vehicle(
         one_way_distance=_distance_bucket(v.radius_miles),
         has_personal_use=False,
         has_comp_coll=has_comp_coll,
+        value=_parse_value_amount(v.value),
         garaging_zip=v.garaging_zip or fallback_zip,
         is_financed_or_leased=_financed_or_leased(v.has_loan),
     )

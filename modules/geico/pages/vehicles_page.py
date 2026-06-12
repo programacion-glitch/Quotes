@@ -217,6 +217,8 @@ class VehicleEntryPage(BasePage):
                     "comprehensive or collision coverage",
                     "Yes" if vehicle.has_comp_coll else "No",
                 )
+                if vehicle.has_comp_coll:
+                    await self._fill_total_value(vehicle)
         except Exception as e:
             self.note_warning(f"merged comp/coll radio failed: {e}")
 
@@ -300,6 +302,35 @@ class VehicleEntryPage(BasePage):
                 f"VIN decode did not populate Year within 25s (VIN {vin}) — "
                 f"continuing; Vehicle Type may need manual override"
             )
+
+    async def _fill_total_value(self, vehicle: MappedVehicle) -> None:
+        """Fill 'Total value of this vehicle' — revealed and REQUIRED when
+        comp/coll is Yes (live CMC 2026-06-11). Range 1..999,000. When the
+        BlueQuote carries no value, default to $50,000 with a warning so the
+        physical-damage quote still completes (fail-soft on coverage)."""
+        value = vehicle.value or "50000"
+        if not vehicle.value:
+            self.note_warning(
+                "comp/coll=Yes but BlueQuote has no vehicle value — "
+                "defaulting Total value to $50,000 (review)"
+            )
+        from modules.geico.pages.base_page import _flex_text_regex
+        try:
+            box = self.page.get_by_role(
+                "textbox", name=_flex_text_regex("Total value of this vehicle")
+            )
+            if await box.count() == 0:
+                box = self.page.locator(
+                    '[id*="GiveVehicleValue" i], [id*="TotalValue" i], '
+                    '[id*="VehicleValue" i]'
+                )
+            if await self.field_exists(box, wait_ms=4_000):
+                print(f"    [GEICO] Step 3: Total value -> ${value}")
+                await self.safe_fill(box.first, value)
+            else:
+                self.note_warning("comp/coll=Yes but Total value field absent")
+        except Exception as e:
+            self.note_warning(f"Total value fill failed: {e}")
 
     async def _set_distance(self, vehicle: MappedVehicle) -> None:
         """Set the one-way distance via its id-stable select. When the
