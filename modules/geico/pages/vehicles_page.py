@@ -316,44 +316,68 @@ class VehicleEntryPage(BasePage):
             self.note_warning(f"distance select failed: {e}")
 
     async def _ensure_entry_required_filled(self, vehicle: MappedVehicle) -> None:
-        """Refill the entry form's required selects when a late re-render
-        wiped them (distance / vehicle type / annual mileage). Idempotent."""
+        """Generic pre-Next sweep: every VISIBLE empty <select> on the entry
+        form gets filled — late decode re-renders wipe committed values and
+        vehicle-type variants reveal selects we have no mapping for (live
+        2026-06-11: distance reset on SOLANO; TypeOfTrailerHitch revealed
+        for pickups on ON THE GO). Known ids get their proper value; unknown
+        ones get the first real option WITH a warning (fail-soft + review).
+        """
         try:
-            state = await self.page.evaluate(
-                """() => {
-                    const get = (frag) => Array.from(
-                        document.querySelectorAll('select')
-                    ).find(s => (s.id || '').includes(frag));
-                    const dist = get('FarthestOneWayDistance');
-                    const type_ = get('OtherVehicleType');
-                    return {
-                        distance_empty: dist ? (!dist.value) : false,
-                        type_empty: type_ ? (!type_.value) : false,
-                    };
-                }"""
+            empty = await self.page.evaluate(
+                """() => Array.from(document.querySelectorAll('select'))
+                    .filter(s => s.offsetParent !== null && !s.disabled
+                                 && (!s.value || s.value === ''))
+                    .map(s => ({
+                        id: s.id || '',
+                        options: Array.from(s.options)
+                            .map(o => (o.text || '').trim())
+                            .filter(t => t),
+                    }))"""
             )
         except Exception:
-            state = {}
-        if isinstance(state, dict) and state.get("distance_empty"):
-            self.note_warning(
-                f"distance select reset by a late re-render — refilling "
-                f"{vehicle.one_way_distance!r}"
-            )
-            await self._set_distance(vehicle)
-        if (isinstance(state, dict) and state.get("type_empty")
-                and vehicle.vehicle_type):
-            self.note_warning(
-                f"vehicle type empty at submit — setting "
-                f"{vehicle.vehicle_type!r}"
-            )
+            empty = []
+        if not isinstance(empty, list):
+            return
+
+        for sel in empty:
+            sid = sel.get("id", "")
             try:
-                await self.select_by_js(
-                    "OtherVehicleType", vehicle.vehicle_type
-                )
+                if "FarthestOneWayDistance" in sid:
+                    self.note_warning(
+                        f"distance empty at submit — refilling "
+                        f"{vehicle.one_way_distance!r}"
+                    )
+                    await self._set_distance(vehicle)
+                elif "OtherVehicleType" in sid and vehicle.vehicle_type:
+                    self.note_warning(
+                        f"vehicle type empty at submit — setting "
+                        f"{vehicle.vehicle_type!r}"
+                    )
+                    await self.select_by_js(
+                        "OtherVehicleType", vehicle.vehicle_type
+                    )
+                elif "TypeOfTrailerHitch" in sid:
+                    # Pickup conditional (ON THE GO 2026-06-11). BlueQuotes
+                    # carry no hitch info; 'None' is the safe default.
+                    print("    [GEICO] Step 3: trailer hitch -> None")
+                    await self.select_by_js("TypeOfTrailerHitch", "None")
+                elif "AnnualMileage" in sid:
+                    await self._fill_annual_mileage_if_present(vehicle)
+                else:
+                    real = [o for o in sel.get("options", [])
+                            if "select" not in o.lower()]
+                    if not real:
+                        continue
+                    self.note_warning(
+                        f"unmapped required select {sid!r} — defaulting to "
+                        f"{real[0]!r} (review)"
+                    )
+                    await self.select_by_js(
+                        sid.split("_")[1] if "_" in sid else sid, real[0]
+                    )
             except Exception as e:
-                self.note_warning(f"vehicle type refill failed: {e}")
-        # Annual mileage helper already skips when pre-filled.
-        await self._fill_annual_mileage_if_present(vehicle)
+                self.note_warning(f"sweep fill for {sid!r} failed: {e}")
 
     async def _click_next(self, vehicle: MappedVehicle) -> None:
         """Click the Next button at the bottom of the entry form.

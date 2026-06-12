@@ -154,7 +154,8 @@ _JS_GDS_GROUP_READY = """
         try { re = new RegExp(src, 'i'); } catch (e) { return true; }
         const gs = Array.from(
             document.querySelectorAll('gds-radio-button-group')
-        ).filter(g => re.test(g.textContent || ''));
+        ).filter(g => g.offsetParent !== null
+                      && re.test(g.textContent || ''));
         if (!gs.length) return false;
         const btns = Array.from(gs[0].querySelectorAll('gds-radio-button'));
         return btns.length > 0 && btns.every(
@@ -198,7 +199,8 @@ _JS_SHADOW_RADIO_CLICK = """
         try { re = new RegExp(args.src, 'i'); } catch (e) { return 'bad-regex'; }
         const gs = Array.from(
             document.querySelectorAll('gds-radio-button-group')
-        ).filter(g => re.test(g.textContent || ''));
+        ).filter(g => g.offsetParent !== null
+                      && re.test(g.textContent || ''));
         if (!gs.length) return 'no-group';
         const want = (args.answer || '').trim().toLowerCase();
         const btns = Array.from(gs[0].querySelectorAll('gds-radio-button'));
@@ -660,7 +662,13 @@ class BasePage:
         answer = answer.strip()
         q_re = _flex_text_regex(question_substring)
 
-        gds_group = self.page.locator("gds-radio-button-group").filter(has_text=q_re)
+        # VISIBLE matches only: repeated sub-forms (second vehicle entry)
+        # leave the previous form's identical question HIDDEN in the DOM and
+        # a bare .first grabs it (live DDH 2026-06-11 — the 'duplicados
+        # ocultos' lesson).
+        gds_group = self.page.locator("gds-radio-button-group").filter(
+            has_text=q_re
+        ).filter(visible=True)
 
         # Wait for the question group to render before probing (the SPA may
         # not have painted it yet right after a step transition — an immediate
@@ -685,7 +693,9 @@ class BasePage:
         # strategy is VERIFIED and, on an unchecked read, the NEXT strategy
         # runs — never re-hammer the one that just failed.
         answer_re = re.compile(rf"^\s*{re.escape(answer)}\s*$")
-        grp = self.page.get_by_role("group").filter(has_text=q_re)
+        grp = self.page.get_by_role("group").filter(has_text=q_re).filter(
+            visible=True
+        )
         strategies = [
             # 1. value attribute match (Yes/No and most labels).
             gds_group.locator(f'gds-radio-button[value="{answer}"]'),
