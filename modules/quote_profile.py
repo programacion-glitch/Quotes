@@ -190,3 +190,40 @@ class QuoteProfile:
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "QuoteProfile":
+        """Reconstruct a QuoteProfile from the dict produced by to_dict().
+
+        Inverse of to_dict(): rebuilds every nested dataclass. Tolerates
+        missing keys (falls back to dataclass defaults) so an empty dict
+        yields a default profile.
+        """
+        data = dict(data or {})
+
+        units_data = dict(data.get("units", {}) or {})
+        units = UnitsProfile(
+            count=units_data.get("count", 0),
+            trailer_types=list(units_data.get("trailer_types", []) or []),
+            vehicles=[VehicleProfile(**v) for v in units_data.get("vehicles", []) or []],
+        )
+
+        conf_data = dict(data.get("extraction_confidence", {}) or {})
+        extraction_confidence = ExtractionConfidence(
+            overall=conf_data.get("overall", "high"),
+            flags=[ConfidenceFlag(**f) for f in conf_data.get("flags", []) or []],
+        )
+
+        return cls(
+            applicant=ApplicantProfile(**(data.get("applicant", {}) or {})),
+            commodity=data.get("commodity", ""),
+            coverages=list(data.get("coverages", []) or []),
+            coverages_detail=CoveragesProfile(**(data.get("coverages_detail", {}) or {})),
+            units=units,
+            drivers=[DriverProfile(**d) for d in data.get("drivers", []) or []],
+            loss_run=LossRunProfile(**(data.get("loss_run", {}) or {})),
+            iftas=IftasProfile(**(data.get("iftas", {}) or {})),
+            app=AppProfile(**(data.get("app", {}) or {})),
+            documents_present=list(data.get("documents_present", []) or []),
+            extraction_confidence=extraction_confidence,
+        )
