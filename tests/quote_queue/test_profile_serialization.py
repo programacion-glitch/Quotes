@@ -52,3 +52,23 @@ def test_from_dict_on_empty_defaults():
     assert restored.units.count == 0
     assert restored.drivers == []
     assert restored.extraction_confidence.overall == "high"
+
+
+def test_from_dict_ignores_unknown_keys():
+    # A blob from a newer schema carries a field this dataclass doesn't know.
+    data = QuoteProfile().to_dict()
+    data["applicant"]["some_future_field"] = "ignored"
+    data["units"]["vehicles"] = [{"vin": "X", "some_future_field": 1}]
+    # Must NOT raise TypeError on unknown keys.
+    restored = QuoteProfile.from_dict(data)
+    assert restored.applicant.business_name == ""
+    assert restored.units.vehicles[0].vin == "X"
+
+
+def test_from_dict_preserves_none_optionals():
+    p = QuoteProfile()
+    p.coverages_detail.comp_deductible = None
+    p.coverages_detail.coll_deductible = None
+    restored = QuoteProfile.from_dict(json.loads(json.dumps(p.to_dict())))
+    assert restored.coverages_detail.comp_deductible is None
+    assert restored.coverages_detail.coll_deductible is None

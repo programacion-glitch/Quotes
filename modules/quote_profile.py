@@ -8,6 +8,17 @@ from dataclasses import dataclass, field, asdict
 from typing import List, Optional
 
 
+def _only_fields(dc_cls, data: dict) -> dict:
+    """Keep only keys that are declared fields of the dataclass dc_cls.
+
+    Makes deserialization tolerant of unknown keys (e.g. a JSON blob written
+    by a newer schema and read back by older code), instead of raising
+    TypeError on an unexpected keyword argument.
+    """
+    valid = dc_cls.__dataclass_fields__
+    return {k: v for k, v in (data or {}).items() if k in valid}
+
+
 @dataclass
 class DriverProfile:
     """Data extracted for a single driver."""
@@ -197,7 +208,9 @@ class QuoteProfile:
 
         Inverse of to_dict(): rebuilds every nested dataclass. Tolerates
         missing keys (falls back to dataclass defaults) so an empty dict
-        yields a default profile.
+        yields a default profile. Also ignores unrecognized keys so a blob
+        written by a newer schema can be read back by older code without
+        raising TypeError.
         """
         data = dict(data or {})
 
@@ -205,25 +218,25 @@ class QuoteProfile:
         units = UnitsProfile(
             count=units_data.get("count", 0),
             trailer_types=list(units_data.get("trailer_types", []) or []),
-            vehicles=[VehicleProfile(**v) for v in units_data.get("vehicles", []) or []],
+            vehicles=[VehicleProfile(**_only_fields(VehicleProfile, v)) for v in units_data.get("vehicles", []) or []],
         )
 
         conf_data = dict(data.get("extraction_confidence", {}) or {})
         extraction_confidence = ExtractionConfidence(
             overall=conf_data.get("overall", "high"),
-            flags=[ConfidenceFlag(**f) for f in conf_data.get("flags", []) or []],
+            flags=[ConfidenceFlag(**_only_fields(ConfidenceFlag, f)) for f in conf_data.get("flags", []) or []],
         )
 
         return cls(
-            applicant=ApplicantProfile(**(data.get("applicant", {}) or {})),
+            applicant=ApplicantProfile(**_only_fields(ApplicantProfile, data.get("applicant", {}) or {})),
             commodity=data.get("commodity", ""),
             coverages=list(data.get("coverages", []) or []),
-            coverages_detail=CoveragesProfile(**(data.get("coverages_detail", {}) or {})),
+            coverages_detail=CoveragesProfile(**_only_fields(CoveragesProfile, data.get("coverages_detail", {}) or {})),
             units=units,
-            drivers=[DriverProfile(**d) for d in data.get("drivers", []) or []],
-            loss_run=LossRunProfile(**(data.get("loss_run", {}) or {})),
-            iftas=IftasProfile(**(data.get("iftas", {}) or {})),
-            app=AppProfile(**(data.get("app", {}) or {})),
+            drivers=[DriverProfile(**_only_fields(DriverProfile, d)) for d in data.get("drivers", []) or []],
+            loss_run=LossRunProfile(**_only_fields(LossRunProfile, data.get("loss_run", {}) or {})),
+            iftas=IftasProfile(**_only_fields(IftasProfile, data.get("iftas", {}) or {})),
+            app=AppProfile(**_only_fields(AppProfile, data.get("app", {}) or {})),
             documents_present=list(data.get("documents_present", []) or []),
             extraction_confidence=extraction_confidence,
         )
