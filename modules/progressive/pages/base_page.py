@@ -74,6 +74,31 @@ class BasePage:
             print(f"    [Progressive] screenshot failed: {e}")
             return None
 
+    async def save_page_pdf(
+        self, name: str, *, output_dir: str = "data/quote_pdfs"
+    ) -> Optional[str]:
+        """Imprime la página ACTUAL a un PDF (la 'impresión' para el correo).
+
+        Usa page.pdf() de Chromium (solo headless). Si se corre headed, page.pdf()
+        lanza excepción → fallback a un screenshot full-page (.png). Devuelve el
+        path de lo que se escribió, o None si ambos fallan.
+        """
+        base = Path(output_dir) / f"progressive_quote_{name}"
+        pdf_path = base.with_suffix(".pdf")
+        try:
+            base.parent.mkdir(parents=True, exist_ok=True)
+            await self.page.pdf(path=str(pdf_path), print_background=True)
+            return str(pdf_path)
+        except Exception as e:
+            print(f"    [Progressive] page.pdf() no disponible ({e}); fallback a PNG")
+            png_path = base.with_suffix(".png")
+            try:
+                await self.page.screenshot(path=str(png_path), full_page=True)
+                return str(png_path)
+            except Exception as e2:
+                print(f"    [Progressive] captura de página de precio falló: {e2}")
+                return None
+
     async def dump_debug_context(self, label: str) -> dict[str, Any]:
         """Collect URL, pageName, title, visible button labels for error context."""
         try:
