@@ -112,6 +112,57 @@ class QuoteQueueStore:
             ).fetchall()
             return [self._row_to_job(r) for r in rows]
 
+    def claim_next(self, mga, lease_seconds: float = 900) -> Optional[QuoteJob]:
+        """Reclama atómicamente el job más viejo elegible para `mga`.
+
+        Elegible = pending, o deferred cuyo retry_after ya venció. Marca
+        claimed, fija lease_until e incrementa attempts. None si no hay.
+        """
+        now = time.time()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM quote_jobs WHERE mga=? AND ("
+                "  status=? OR (status=? AND (retry_after IS NULL OR retry_after<=?))"
+                ") ORDER BY created_at ASC, id ASC LIMIT 1",
+                (mga, JobStatus.PENDING.value, JobStatus.DEFERRED.value, now),
+            ).fetchone()
+            if row is None:
+                return None
+            self._conn.execute(
+                "UPDATE quote_jobs SET status=?, lease_until=?, "
+                "attempts=attempts+1, updated_at=? WHERE id=?",
+                (JobStatus.CLAIMED.value, now + lease_seconds, now, row["id"]),
+            )
+            self._conn.commit()
+            return self._get_job_locked(row["id"])
+
+    def mark_running(self, job_id, lease_seconds: float = 900) -> None:
+        """Marca running y extiende el lease mientras corre el quote."""
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE quote_jobs SET status=?, lease_until=?, updated_at=? WHERE id=?",
+                (JobStatus.RUNNING.value, now + lease_seconds, now, job_id),
+            )
+            self._conn.commit()
+
+    def mark_terminal(self, job_id, status, premium=None, quote_number=None,
+                      pdf_path=None, screenshot_path=None, error=None) -> None:
+        """Marca un estado terminal (quoted/failed/halted) y guarda resultado."""
+        status = JobStatus(status)
+        if status not in TERMINAL_STATUSES:
+            raise ValueError(f"{status} no es un estado terminal")
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE quote_jobs SET status=?, premium=?, quote_number=?, "
+                "pdf_path=?, screenshot_path=?, error=?, lease_until=NULL, "
+                "updated_at=? WHERE id=?",
+                (status.value, premium, quote_number, pdf_path,
+                 screenshot_path, error, now, job_id),
+            )
+            self._conn.commit()
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
