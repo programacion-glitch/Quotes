@@ -261,6 +261,7 @@ def build_analysis_email(
     mga_list: List[Dict[str, str]],
     original_subject: str,
     confirmation_keyword: str = "APROBAR",
+    rpa_quotes_section: str = "",
 ) -> Dict[str, str]:
     """
     Build HTML analysis summary email for human review before MGA dispatch.
@@ -445,6 +446,7 @@ def build_analysis_email(
     # -- Render template --
     body = template.format(
         warnings_banner=warnings_banner,
+        rpa_quotes_section=rpa_quotes_section,
         business_name=profile.applicant.business_name or "N/A",
         owner_name=profile.applicant.owner_name or "N/A",
         usdot=profile.applicant.usdot or "N/A",
