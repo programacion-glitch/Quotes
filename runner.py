@@ -51,6 +51,9 @@ def main():
     stop = threading.Event()
     threads = []
     for mga in sorted(orch.rpa_mgas):
+        if mga not in create_fns:
+            print(f"  [runner] WARNING: sin create_quote para {mga}, se omite")
+            continue
         worker = QuoteWorker(mga, store, create_quote=create_fns[mga], email_sender=sender)
         t = threading.Thread(target=_worker_loop, args=(worker, stop), name=f"worker-{mga}", daemon=True)
         t.start()
