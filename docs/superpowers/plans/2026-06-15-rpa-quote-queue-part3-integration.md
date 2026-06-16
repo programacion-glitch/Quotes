@@ -974,3 +974,11 @@ git commit -m "feat(runner): entrypoint con monitor de inbox + QuoteWorker por M
 - **Doble-cotización evitada**: `_dispatch_to_mgas` saltea los MGA-RPA; el quote lo corre sólo el worker.
 - **`_pending_approvals`** (gate APROBAR → MGAs-por-email) queda intacto y en memoria — su reemplazo durable es trabajo futuro, fuera de alcance.
 - **Adjuntos originales a disco** (`data/submissions/<id>/`) en vez de bytes en la DB — mantiene `context_json` chico. Limpieza de esa carpeta = trabajo futuro.
+
+## Errata (refinamientos hechos durante la ejecución)
+
+1. **Task 4 — NO borrar el bloque Step 6 (`_pending_approvals`).** El reemplazo en `_process_submission` cambia SOLO el envío del análisis (Step 5): build con marcador/“” + rama encolar-o-enviar. El bloque "Step 8: auto vs manual `_pending_approvals`" que sigue queda INTACTO (el gate APROBAR → MGAs-por-email no se toca).
+2. **Task 4 — fallback anti-pérdida.** Si todos los MGA-RPA elegibles caen en el rate-limit (`recently_quoted >= 3`), `queued` queda vacío y nadie mandaría el correo. Fix: si `not queued`, enviar el análisis al instante (con `RPA_SECTION_MARKER` reemplazado por “”). Commit `6f95d61`.
+3. **Task 5 — guard en el runner.** `for mga in rpa_mgas:` saltea con WARNING si `mga not in create_fns` (evita KeyError en startup ante un MGA desconocido). Commit `6a16b28`.
+
+**Ejecutado 2026-06-16, subagent-driven:** commits e4c8d70..6a16b28. Suite: 464 passed, 2 failed (las 2 pre-existentes de rule_engine). pyflakes limpio en `modules/quote_queue/` + `runner.py`. Validación LIVE (correo real → quote → correo con PDF) y tuning de tokens de `classify_result` para Progressive = pendiente.
