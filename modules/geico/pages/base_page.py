@@ -380,6 +380,30 @@ class BasePage:
             print(f"    Screenshot failed: {e}")
             return None
 
+    async def save_page_pdf(
+        self, name: str, output_dir: str = "data/quote_pdfs"
+    ) -> Optional[str]:
+        """Imprime la página ACTUAL a un PDF (la 'impresión' de la página de precio).
+
+        page.pdf() de Chromium funciona solo headless; headed cae a PNG full-page.
+        Devuelve el path escrito o None.
+        """
+        base = Path(output_dir) / f"geico_quote_{name}"
+        pdf_path = base.with_suffix(".pdf")
+        try:
+            base.parent.mkdir(parents=True, exist_ok=True)
+            await self.page.pdf(path=str(pdf_path), print_background=True)
+            return str(pdf_path)
+        except Exception as e:
+            print(f"    [GEICO] page.pdf() no disponible ({e}); fallback a PNG")
+            png_path = base.with_suffix(".png")
+            try:
+                await self.page.screenshot(path=str(png_path), full_page=True)
+                return str(png_path)
+            except Exception as e2:
+                print(f"    [GEICO] captura de página de precio falló: {e2}")
+                return None
+
     # ============================================================
     # Familia A — Localización tolerante
     # ============================================================
