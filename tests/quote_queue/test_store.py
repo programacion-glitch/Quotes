@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from modules.quote_queue.models import JobStatus
@@ -99,7 +101,7 @@ def test_deferred_claimable_once_retry_after_passed(store):
 
 
 def test_reclaim_stale_returns_expired_leases_to_pending(store):
-    job_id = store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111")
+    store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111")
     store.claim_next("PROGRESSIVE")  # claimed, lease en el futuro
     # forzar un lease vencido: reclamar con now muy adelantado
     count = store.reclaim_stale(now=__import__("time").time() + 100000)
@@ -157,9 +159,6 @@ def test_try_claim_submission_email_creates_row_if_absent(store):
     # sin save previo: igual debe poder reclamar una vez
     assert store.try_claim_submission_email("sub-2") is True
     assert store.try_claim_submission_email("sub-2") is False
-
-
-import threading
 
 
 def test_recently_quoted_counts_jobs_in_window(store):
