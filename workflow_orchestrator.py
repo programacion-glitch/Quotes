@@ -6,6 +6,8 @@ Coordinates the complete email auto-response workflow.
 
 import sys
 import json
+import hashlib
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 import tempfile
@@ -26,6 +28,21 @@ from modules.drive_manager import DriveManager
 from modules.document_ai_extractor import DocumentAIExtractor
 from modules.rule_engine import RuleEngine
 from modules.analysis_email_builder import build_analysis_email
+from modules.quote_queue.store import QuoteQueueStore
+from modules.quote_queue.messages import RPA_SECTION_MARKER
+
+
+# Cola durable compartida entre el orquestador (productor) y el runner (workers).
+QUOTE_DB_PATH = Path(__file__).resolve().parent / "data" / "quote_queue.db"
+SUBMISSIONS_DIR = Path(__file__).resolve().parent / "data" / "submissions"
+
+
+def _rpa_mgas_enabled(config) -> set:
+    """MGAs que cotizan por RPA. Progressive siempre; GEICO detrás de flag."""
+    mgas = {"PROGRESSIVE"}
+    if str(config.get("rule_engine.geico_queue_enabled", False)).lower() in ("true", "1", "yes"):
+        mgas.add("GEICO")
+    return mgas
 
 
 class QuoteWorkflowOrchestrator:
@@ -80,6 +97,10 @@ class QuoteWorkflowOrchestrator:
         # Pending approvals: stores data needed to dispatch after confirmation
         # Key: original subject, Value: dict with all data needed
         self._pending_approvals = {}
+
+        # Cola de cotización RPA (durable). Productor: este orquestador.
+        self.quote_store = QuoteQueueStore(QUOTE_DB_PATH)
+        self.rpa_mgas = _rpa_mgas_enabled(self.config)
 
     def process_email(self, email_data: Dict):
         """
@@ -202,8 +223,12 @@ class QuoteWorkflowOrchestrator:
             except Exception as e:
                 print(f"  Rule engine error: {e}")
 
-        # Step 7: Send analysis email
-        print(f"\nStep 5: Sending analysis summary...")
+        # Step 5: build the analysis email. If an RPA MGA (Progressive, and
+        # GEICO if enabled) is eligible, QUEUE the quote and let the worker send
+        # this email later — with the price-page PDF attached and the RPA
+        # section filled in. Otherwise send it now, as before.
+        print(f"\nStep 5: Analysis summary...")
+        eligible_rpa = self._eligible_rpa_mgas(evaluations, mga_list)
         analysis = build_analysis_email(
             profile=profile,
             commodity=commodity,
@@ -212,26 +237,48 @@ class QuoteWorkflowOrchestrator:
             mga_list=mga_list,
             original_subject=subject,
             confirmation_keyword=self.confirmation_keyword,
+            rpa_quotes_section=(RPA_SECTION_MARKER if eligible_rpa else ""),
         )
-
         summary_to = self.test_email_override or self.summary_email
-        email_sender = EmailSender(self.email_address, self.email_password)
 
-        if self.dry_run:
-            print(f"  DRY RUN - Would send analysis to: {summary_to}")
-            print(f"  Subject: {analysis['subject']}")
+        if eligible_rpa and not self.dry_run:
+            submission_id = self._submission_id(email_data, profile)
+            attachment_paths = self._persist_attachments(submission_id, attachments)
+            self.quote_store.save_submission_context(submission_id, json.dumps({
+                "recipient": summary_to,
+                "subject": analysis["subject"],
+                "body_html": analysis["body"],
+                "attachment_paths": attachment_paths,
+            }))
+            eff_date = self._effective_date_from_subject(subject)
+            now = time.time()
+            queued = []
+            for mga in sorted(eligible_rpa):
+                if self.quote_store.recently_quoted(
+                        mga, profile.applicant.usdot or "", now - 86400) >= 3:
+                    print(f"  [queue] SKIP {mga}: USDOT cotizado >=3x en 24h")
+                    continue
+                self.quote_store.enqueue(
+                    submission_id, mga, json.dumps(profile.to_dict()),
+                    eff_date, profile.applicant.usdot or "")
+                queued.append(mga)
+            print(f"  [queue] Encolado {submission_id}: {queued} "
+                  f"(el correo de análisis sale al terminar la cotización)")
         else:
-            success = email_sender.send_email(
-                to_email=summary_to,
-                subject=analysis['subject'],
-                body=analysis['body'],
-                is_html=analysis.get('is_html', False),
-                attachments=attachments,
-            )
-            if success:
-                print(f"  Analysis sent to {summary_to}")
+            email_sender = EmailSender(self.email_address, self.email_password)
+            if self.dry_run:
+                print(f"  DRY RUN - Would send analysis to: {summary_to}")
             else:
-                print(f"  Failed to send analysis email")
+                if email_sender.send_email(
+                    to_email=summary_to,
+                    subject=analysis["subject"],
+                    body=analysis["body"],
+                    is_html=analysis.get("is_html", False),
+                    attachments=attachments,
+                ):
+                    print(f"  Analysis sent to {summary_to}")
+                else:
+                    print(f"  Failed to send analysis email")
 
         # Step 8: If auto mode, dispatch immediately. If manual, store and wait.
         if self.approval_mode == "auto":
@@ -312,13 +359,11 @@ class QuoteWorkflowOrchestrator:
 
         for mga in mga_list_eligible:
             mga_name = mga['mga']
-            print(f"\n  Processing MGA: {mga_name}")
-
-            # PROGRESSIVE: web automation instead of email
-            if mga_name.upper() == "PROGRESSIVE":
-                self._dispatch_to_progressive(profile, subject)
-                mgas_contacted += 1
+            # Los MGA-RPA (Progressive, GEICO) los cotiza el QuoteWorker desde la
+            # cola — NO se dispatchan por email acá.
+            if mga_name.upper() in self.rpa_mgas:
                 continue
+            print(f"\n  Processing MGA: {mga_name}")
 
             # Validate documents
             validation = self.attachment_validator.validate_for_mga(attachments, mga_name)
@@ -395,6 +440,51 @@ class QuoteWorkflowOrchestrator:
                     print(f"    [Progressive] Screenshot: {result.screenshot_path}")
         except Exception as e:
             print(f"    [Progressive] Unexpected error: {e}")
+
+    def _eligible_rpa_mgas(self, evaluations, mga_list) -> set:
+        """MGA-RPA habilitados que quedaron elegibles para esta submission."""
+        eval_by_name = {ev.mga_name: ev for ev in evaluations}
+        out = set()
+        for m in mga_list:
+            name = m["mga"]
+            if name.upper() not in self.rpa_mgas:
+                continue
+            ev = eval_by_name.get(name)
+            if ev is None or ev.eligible:   # sin reglas específicas = elegible para RPA
+                out.add(name.upper())
+        return out
+
+    @staticmethod
+    def _submission_id(email_data: dict, profile) -> str:
+        """ID estable: Message-ID si existe, si no hash(subject+usdot)."""
+        raw = email_data.get("raw_message")
+        msg_id = raw.get("Message-ID") if raw else None
+        if msg_id:
+            return msg_id.strip()
+        usdot = (profile.applicant.usdot or "").strip()
+        subject = email_data.get("subject", "")
+        return "sub-" + hashlib.sha1(f"{subject}|{usdot}".encode("utf-8")).hexdigest()[:16]
+
+    def _persist_attachments(self, submission_id: str, attachments: list) -> list:
+        """Escribe los adjuntos originales a disco y devuelve sus paths."""
+        safe = "".join(c if c.isalnum() else "_" for c in submission_id)[:40]
+        out_dir = SUBMISSIONS_DIR / safe
+        out_dir.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for att in attachments:
+            data = att.get("data")
+            fname = att.get("filename") or "attachment.pdf"
+            if not data:
+                continue
+            p = out_dir / fname
+            p.write_bytes(data)
+            paths.append(str(p))
+        return paths
+
+    def _effective_date_from_subject(self, subject: str):
+        import re
+        m = re.search(r'[Ee]ffective\s+date[:\s]+(\d{1,2}/\d{1,2}/\d{4})', subject)
+        return m.group(1) if m else None
 
     def _send_not_found_email(self, email_data, commodity, sender_name, business_name, subject):
         """Send 'not found' email when commodity can't be matched."""

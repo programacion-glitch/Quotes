@@ -94,3 +94,9 @@ data/output/extracted_*
 
 # Quote PDFs generated at runtime (client data, not tracked in git)
 data/quote_pdfs/
+
+# Quote queue database and WAL files (runtime, not tracked in git)
+data/quote_queue.db
+data/quote_queue.db-wal
+data/quote_queue.db-shm
+data/submissions/
