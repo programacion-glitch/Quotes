@@ -262,8 +262,23 @@ class QuoteWorkflowOrchestrator:
                     submission_id, mga, json.dumps(profile.to_dict()),
                     eff_date, profile.applicant.usdot or "")
                 queued.append(mga)
-            print(f"  [queue] Encolado {submission_id}: {queued} "
-                  f"(el correo de análisis sale al terminar la cotización)")
+            if not queued:
+                # Todos los MGA-RPA quedaron rate-limited (>=3x/día): no se encoló
+                # nada y ningún worker mandará el correo. Enviarlo ahora (sin la
+                # sección RPA) para no perder la submission en silencio.
+                body = analysis["body"].replace(RPA_SECTION_MARKER, "")
+                EmailSender(self.email_address, self.email_password).send_email(
+                    to_email=summary_to,
+                    subject=analysis["subject"],
+                    body=body,
+                    is_html=analysis.get("is_html", False),
+                    attachments=attachments,
+                )
+                print(f"  [queue] Nada encolado (rate-limit); análisis enviado "
+                      f"al instante sin sección RPA")
+            else:
+                print(f"  [queue] Encolado {submission_id}: {queued} "
+                      f"(el correo de análisis sale al terminar la cotización)")
         else:
             email_sender = EmailSender(self.email_address, self.email_password)
             if self.dry_run:
