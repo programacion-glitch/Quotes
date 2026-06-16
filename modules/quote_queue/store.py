@@ -255,6 +255,20 @@ class QuoteQueueStore:
             self._conn.commit()
             return cur.rowcount == 1
 
+    def recently_quoted(self, mga, usdot, since_epoch: float) -> int:
+        """Cuántos jobs se crearon para (mga, usdot) desde since_epoch.
+
+        Para honrar 'no re-cotizar el mismo USDOT >3x/día': el caller pasa
+        since_epoch = now - 86400 y chequea el conteo < 3 antes de encolar.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM quote_jobs "
+                "WHERE mga=? AND usdot=? AND created_at>=?",
+                (mga, usdot, since_epoch),
+            ).fetchone()
+            return row[0]
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()

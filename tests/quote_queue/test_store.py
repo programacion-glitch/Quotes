@@ -157,3 +157,54 @@ def test_try_claim_submission_email_creates_row_if_absent(store):
     # sin save previo: igual debe poder reclamar una vez
     assert store.try_claim_submission_email("sub-2") is True
     assert store.try_claim_submission_email("sub-2") is False
+
+
+import threading
+
+
+def test_recently_quoted_counts_jobs_in_window(store):
+    now = __import__("time").time()
+    store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111")
+    store.enqueue("sub-2", "PROGRESSIVE", "{}", None, "111")
+    store.enqueue("sub-3", "PROGRESSIVE", "{}", None, "999")  # otro USDOT
+    # ventana de 24h
+    assert store.recently_quoted("PROGRESSIVE", "111", now - 86400) == 2
+    assert store.recently_quoted("PROGRESSIVE", "999", now - 86400) == 1
+    assert store.recently_quoted("GEICO", "111", now - 86400) == 0
+    # ventana en el futuro → nada cuenta
+    assert store.recently_quoted("PROGRESSIVE", "111", now + 86400) == 0
+
+
+def test_concurrent_claims_never_double_claim(store):
+    # 50 jobs, 4 threads reclamando: cada job se reclama exactamente una vez.
+    for i in range(50):
+        store.enqueue(f"sub-{i}", "PROGRESSIVE", "{}", None, str(i))
+
+    claimed_ids = []
+    lock = threading.Lock()
+
+    def worker():
+        while True:
+            job = store.claim_next("PROGRESSIVE")
+            if job is None:
+                return
+            with lock:
+                claimed_ids.append(job.id)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(claimed_ids) == 50
+    assert len(set(claimed_ids)) == 50  # sin duplicados
+
+
+def test_save_context_after_claim_preserves_email_sent(store):
+    # Invariante anti doble-envío: re-guardar contexto tras reclamar el email
+    # NO debe permitir un segundo envío.
+    store.save_submission_context("sub-1", "{}")
+    assert store.try_claim_submission_email("sub-1") is True
+    store.save_submission_context("sub-1", '{"updated": true}')
+    assert store.try_claim_submission_email("sub-1") is False
