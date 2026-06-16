@@ -162,6 +162,23 @@ class QuoteFlow:
             result.price = await rates_page.customize_and_capture(fields)
             result.warnings.extend(rates_page.warnings)
 
+            # Fail-loud: reaching RATES without a real premium is NOT a valid
+            # quote (mirrors GEICO G5). Don't capture a PDF, advance to FINAL
+            # DETAILS, or report success with premium=None (live CMC 2026-06-10:
+            # reached 'rates' and falsely reported success=True / premium=None).
+            if not (result.price and result.price.annual_premium):
+                result.error = (
+                    "Reached RATES but captured no premium (premium=None) — "
+                    "not a valid quote; refusing to report success."
+                )
+                try:
+                    result.screenshot_path = await rates_page.screenshot(
+                        "rates_no_premium"
+                    )
+                except Exception:
+                    pass
+                return result  # success stays False
+
             # Imprimir la página RATES completa (donde se ve el premium) a PDF —
             # es la "impresión" que se adjunta al correo. Se captura ACÁ, antes
             # de proceed_to_final_details() que navega fuera de RATES.
