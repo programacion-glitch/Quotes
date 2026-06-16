@@ -113,3 +113,47 @@ def test_reclaim_stale_ignores_live_leases(store):
     store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111")
     store.claim_next("PROGRESSIVE")
     assert store.reclaim_stale() == 0  # lease todavía vivo
+
+
+def test_siblings_all_terminal_false_until_all_done(store):
+    store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111")
+    j2 = store.enqueue("sub-1", "GEICO", "{}", None, "111")
+    assert store.siblings_all_terminal("sub-1") is False
+    # uno terminal, el otro no
+    store.claim_next("PROGRESSIVE")
+    p = store.get_jobs("sub-1")[0]
+    store.mark_terminal(p.id, JobStatus.QUOTED, premium="$1")
+    assert store.siblings_all_terminal("sub-1") is False
+    # ambos terminales
+    store.claim_next("GEICO")
+    store.mark_terminal(j2, JobStatus.FAILED, error="boom")
+    assert store.siblings_all_terminal("sub-1") is True
+
+
+def test_siblings_all_terminal_false_for_unknown(store):
+    assert store.siblings_all_terminal("nope") is False
+
+
+def test_submission_context_roundtrip(store):
+    store.save_submission_context("sub-1", '{"subject": "x"}')
+    assert store.get_submission_context("sub-1") == '{"subject": "x"}'
+    # upsert: re-guardar sobreescribe
+    store.save_submission_context("sub-1", '{"subject": "y"}')
+    assert store.get_submission_context("sub-1") == '{"subject": "y"}'
+
+
+def test_get_submission_context_none_for_unknown(store):
+    assert store.get_submission_context("nope") is None
+
+
+def test_try_claim_submission_email_single_winner(store):
+    store.save_submission_context("sub-1", "{}")
+    assert store.try_claim_submission_email("sub-1") is True
+    # segundo intento pierde
+    assert store.try_claim_submission_email("sub-1") is False
+
+
+def test_try_claim_submission_email_creates_row_if_absent(store):
+    # sin save previo: igual debe poder reclamar una vez
+    assert store.try_claim_submission_email("sub-2") is True
+    assert store.try_claim_submission_email("sub-2") is False

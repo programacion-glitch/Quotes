@@ -191,6 +191,70 @@ class QuoteQueueStore:
             self._conn.commit()
             return cur.rowcount
 
+    def siblings_all_terminal(self, submission_id) -> bool:
+        """True si TODOS los jobs de la submission están en estado terminal.
+
+        False si no hay jobs, o si alguno sigue pending/claimed/running/deferred.
+        El manejo del caso "deferred eterno" (mandar el correo igual tras un
+        máximo de espera) vive en el worker, no acá.
+        """
+        terminal = tuple(s.value for s in TERMINAL_STATUSES)
+        placeholders = ",".join("?" * len(terminal))
+        with self._lock:
+            total = self._conn.execute(
+                "SELECT COUNT(*) FROM quote_jobs WHERE submission_id=?",
+                (submission_id,),
+            ).fetchone()[0]
+            if total == 0:
+                return False
+            non_terminal = self._conn.execute(
+                "SELECT COUNT(*) FROM quote_jobs WHERE submission_id=? "
+                f"AND status NOT IN ({placeholders})",
+                (submission_id, *terminal),
+            ).fetchone()[0]
+            return non_terminal == 0
+
+    def save_submission_context(self, submission_id, context_json: str) -> None:
+        """Guarda (upsert) el contexto opaco para armar el correo más tarde."""
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO submissions (submission_id, context_json, email_sent, created_at) "
+                "VALUES (?, ?, 0, ?) "
+                "ON CONFLICT(submission_id) DO UPDATE SET context_json=excluded.context_json",
+                (submission_id, context_json, now),
+            )
+            self._conn.commit()
+
+    def get_submission_context(self, submission_id) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT context_json FROM submissions WHERE submission_id=?",
+                (submission_id,),
+            ).fetchone()
+            return row["context_json"] if row else None
+
+    def try_claim_submission_email(self, submission_id) -> bool:
+        """Reclama el derecho a mandar el correo de esta submission.
+
+        Atómico: solo el primer caller gana (True); el resto recibe False.
+        Crea la fila si no existía (caso sin save_submission_context previo).
+        """
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO submissions (submission_id, email_sent, created_at) "
+                "VALUES (?, 0, ?) ON CONFLICT(submission_id) DO NOTHING",
+                (submission_id, now),
+            )
+            cur = self._conn.execute(
+                "UPDATE submissions SET email_sent=1 "
+                "WHERE submission_id=? AND email_sent=0",
+                (submission_id,),
+            )
+            self._conn.commit()
+            return cur.rowcount == 1
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
