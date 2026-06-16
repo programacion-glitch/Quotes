@@ -208,20 +208,13 @@ class QuoteFlow:
                 )
             except Exception as e:
                 # PrintQuote es intermitente (a veces JSON, a veces el link no
-                # está). Fallback al render full-page de la página de precio
-                # capturado en capture_and_advance — para que el correo SIEMPRE
-                # tenga impresión.
-                render = getattr(coverages_page, "price_pdf_path", None)
-                if render:
-                    result.pdf_path = render
-                    result.warnings.append(
-                        f"PrintQuote no disponible ({e}); se adjunta la impresión "
-                        f"de la página de precio."
-                    )
-                    print(f"    [GEICO] PrintQuote falló; usando render: {render}")
-                else:
-                    result.warnings.append(f"PDF download failed: {e}")
-                    print(f"    [GEICO] WARN: PDF download failed: {e}")
+                # está). NO es fatal: el render full-page de la página final
+                # (Step 10) sirve de fallback confiable. Acá sólo lo registramos.
+                result.warnings.append(
+                    f"PrintQuote no disponible ({e}); se usará la impresión de "
+                    f"Final Quote Details."
+                )
+                print(f"    [GEICO] PrintQuote falló: {e} (fallback en Step 10)")
 
             # ----- Step 10: Final Quote Details (wizard Step 7) — STOP -----
             # FinalDetailsPage.fill_and_stop() fills DL numbers + workers comp +
@@ -232,13 +225,19 @@ class QuoteFlow:
             await final_details.fill_and_stop(fields)
             result.warnings.extend(final_details.warnings)
 
-            # Take a confirmation screenshot of the filled final-details page.
+            # Confirmation screenshot + full-page PDF of the Final Quote Details
+            # page. The PDF is captured HERE (AFTER the coverages→final Next) so
+            # page.pdf()'s re-render can never disturb that transition. It's the
+            # reliable "impresión" fallback when the official PrintQuote failed.
             try:
                 base = BasePage(wizard_page)
                 tag = f"quote_{price.quote_number or 'no_qn'}"
                 result.screenshot_path = await base.screenshot(tag)
+                final_render = await base.save_page_pdf(tag)
+                if not result.pdf_path:
+                    result.pdf_path = final_render
             except Exception:
-                pass  # screenshot is nice-to-have, not critical
+                pass  # screenshot/render is nice-to-have, not critical
 
             result.success = True
             result.is_stub = False
