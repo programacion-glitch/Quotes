@@ -410,6 +410,9 @@ class BusinessOwnerPage(BasePage):
         prefill_banner = self.page.get_by_text(
             "We found vehicles that might belong", exact=False
         )
+        verify_usdot_banner = self.page.get_by_text(
+            "Verify USDOT Number", exact=False
+        )
         verify_banner = self.page.get_by_text("unable to verify", exact=False)
         ssn_field = self.page.get_by_text("Social Security Number", exact=False)
         hard_error = self.page.get_by_text(
@@ -417,6 +420,7 @@ class BusinessOwnerPage(BasePage):
         )
 
         prefill_dismissed = False
+        usdot_verify_dismissed = False
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             # Success: the Vehicles form's first question is on screen.
@@ -429,6 +433,24 @@ class BusinessOwnerPage(BasePage):
                     return
             except Exception:
                 pass
+
+            # 'Verify USDOT Number' interstitial: GEICO found a DIFFERENT USDOT
+            # matching the entered business details and asks to Skip or Update
+            # (live FGF/A&RM/JOMARA 2026-06-16). Keep the BlueQuote's USDOT
+            # (updating would quote a different entity) -> click 'Skip' and keep
+            # waiting for the Vehicles form / prefill picker.
+            if not usdot_verify_dismissed:
+                try:
+                    if (
+                        await verify_usdot_banner.count() > 0
+                        and await verify_usdot_banner.first.is_visible()
+                    ):
+                        await self._skip_usdot_verification()
+                        usdot_verify_dismissed = True
+                        continue
+                except Exception as e:
+                    self.note_warning(f"Verify-USDOT skip failed: {e}")
+                    usdot_verify_dismissed = True
 
             # Prefill picker: choose 'Quote different vehicle(s)' once and
             # let the loop continue toward the normal Vehicles form.
@@ -501,4 +523,22 @@ class BusinessOwnerPage(BasePage):
         card = self.page.get_by_text("Quote different vehicle(s)", exact=False)
         await card.first.click(timeout=10_000)
         await self.click_button("Next")
+
+    async def _skip_usdot_verification(self) -> None:
+        """Resolve GEICO's 'Verify USDOT Number' interstitial (live FGF/A&RM/
+        JOMARA 2026-06-16): GEICO matched the entered business details to a
+        DIFFERENT USDOT and offers 'Skip' / 'Update USDOT Number'. The BlueQuote
+        USDOT is the source of truth (updating would quote a different entity),
+        so click 'Skip' and let the flow continue to the Vehicles form."""
+        self.note_warning(
+            "GEICO 'Verify USDOT Number' interstitial: GEICO matched these "
+            "business details to a different USDOT; kept the BlueQuote's USDOT "
+            "(clicked Skip)."
+        )
+        print(
+            "    [GEICO] Step 2: 'Verify USDOT Number' shown — clicking 'Skip' "
+            "(keep BlueQuote USDOT)"
+        )
+        await self.remove_overlays()
+        await self.click_button("Skip")
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
