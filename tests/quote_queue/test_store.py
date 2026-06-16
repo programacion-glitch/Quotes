@@ -77,3 +77,39 @@ def test_mark_terminal_rejects_non_terminal_status(store):
     job_id = store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111")
     with pytest.raises(ValueError):
         store.mark_terminal(job_id, JobStatus.RUNNING)
+
+
+def test_deferred_not_claimable_until_retry_after(store):
+    job_id = store.enqueue("sub-1", "GEICO", "{}", None, "111")
+    store.claim_next("GEICO")
+    future = __import__("time").time() + 9999
+    store.mark_deferred(job_id, retry_after=future)
+    # todavía no vence → no se reclama
+    assert store.claim_next("GEICO") is None
+
+
+def test_deferred_claimable_once_retry_after_passed(store):
+    job_id = store.enqueue("sub-1", "GEICO", "{}", None, "111")
+    store.claim_next("GEICO")
+    past = __import__("time").time() - 1
+    store.mark_deferred(job_id, retry_after=past)
+    reclaimed = store.claim_next("GEICO")
+    assert reclaimed is not None
+    assert reclaimed.id == job_id
+
+
+def test_reclaim_stale_returns_expired_leases_to_pending(store):
+    job_id = store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111")
+    store.claim_next("PROGRESSIVE")  # claimed, lease en el futuro
+    # forzar un lease vencido: reclamar con now muy adelantado
+    count = store.reclaim_stale(now=__import__("time").time() + 100000)
+    assert count == 1
+    job = store.get_jobs("sub-1")[0]
+    assert job.status == JobStatus.PENDING.value
+    assert job.lease_until is None
+
+
+def test_reclaim_stale_ignores_live_leases(store):
+    store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111")
+    store.claim_next("PROGRESSIVE")
+    assert store.reclaim_stale() == 0  # lease todavía vivo

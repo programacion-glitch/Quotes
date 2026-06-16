@@ -163,6 +163,34 @@ class QuoteQueueStore:
             )
             self._conn.commit()
 
+    def mark_deferred(self, job_id, retry_after: float) -> None:
+        """Marca deferred (re-encolable) con un retry_after (epoch)."""
+        now = time.time()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE quote_jobs SET status=?, retry_after=?, "
+                "lease_until=NULL, updated_at=? WHERE id=?",
+                (JobStatus.DEFERRED.value, retry_after, now, job_id),
+            )
+            self._conn.commit()
+
+    def reclaim_stale(self, now: Optional[float] = None) -> int:
+        """Devuelve a pending los jobs claimed/running con lease vencido.
+
+        Se llama al arrancar el runner para recuperar de un crash a mitad de
+        quote. Devuelve cuántos jobs reclamó.
+        """
+        now = now if now is not None else time.time()
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE quote_jobs SET status=?, lease_until=NULL, updated_at=? "
+                "WHERE status IN (?, ?) AND lease_until IS NOT NULL AND lease_until < ?",
+                (JobStatus.PENDING.value, now, JobStatus.CLAIMED.value,
+                 JobStatus.RUNNING.value, now),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
