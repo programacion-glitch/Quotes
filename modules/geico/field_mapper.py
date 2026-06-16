@@ -29,6 +29,8 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+from modules.progressive.amounts import parse_amount
+
 from modules.quote_profile import (
     CoveragesProfile,
     DriverProfile,
@@ -404,15 +406,18 @@ def _distance_bucket(radius_miles: Optional[str]) -> str:
 
 
 def _parse_value_amount(raw: Optional[str]) -> Optional[str]:
-    """Digits-only vehicle value for GEICO's 'Total value' field, clamped to
-    its 1..999,000 range. '$45,000' / '45000.00' -> '45000'. None when the
-    BlueQuote carries no value (liability-only)."""
-    if not raw:
+    """Vehicle value for GEICO's 'Total value' field, clamped to its
+    1..999,000 range. Uses the latino/US-aware ``parse_amount`` so that
+    '$10.000' (latino: dot = thousands separator) -> 10000 and
+    '$45,000.00' -> 45000. The old naive ``split('.')[0]`` treated the dot as
+    a decimal and scaled latino values down 1000x ('$10.000' -> '10'), which
+    tripped GEICO's 'stated amount <= deductible' validation and wedged the
+    Step-6 Recalculate (live JERO'S/DIBOLL 2026-06-16). None when the BlueQuote
+    carries no usable value (liability-only)."""
+    amount = parse_amount(raw)
+    if amount is None:
         return None
-    digits = re.sub(r"[^\d]", "", str(raw).split(".")[0])
-    if not digits:
-        return None
-    amount = int(digits)
+    amount = int(amount)
     if amount <= 0:
         return None
     return str(min(amount, 999_000))
@@ -451,7 +456,20 @@ def _map_vehicle(
         has_comp_coll = bool(coverages.comp_deductible) or bool(coverages.coll_deductible)
     # The per-vehicle market value (BlueQuote 'Value' column). REQUIRED by
     # GEICO's 'Total value of this vehicle' field when comp/coll is Yes.
-    has_comp_coll = has_comp_coll or bool(v.value)
+    parsed_value = _parse_value_amount(v.value)
+    has_comp_coll = has_comp_coll or bool(parsed_value)
+    # GEICO rejects physical damage when the stated amount is <= the deductible
+    # ("Stated amount cannot be the same or less than selected deductibles" —
+    # live JERO'S/DIBOLL 2026-06-16). A value at/below the deductible (or absent)
+    # cannot carry comp/coll, so quote it liability-only instead of wedging the
+    # Step-6 Recalculate forever.
+    if has_comp_coll:
+        floor = (parse_amount(coverages.comp_deductible)
+                 or parse_amount(coverages.coll_deductible) or 1000)
+        if parsed_value is None or int(parsed_value) <= floor:
+            has_comp_coll = False
+            print(f"    [GEICO] map: vehicle value {v.value!r} <= deductible "
+                  f"{int(floor)} -> liability-only (no comp/coll)")
     return MappedVehicle(
         vin=v.vin,
         year=v.year,
@@ -461,7 +479,7 @@ def _map_vehicle(
         one_way_distance=_distance_bucket(v.radius_miles),
         has_personal_use=False,
         has_comp_coll=has_comp_coll,
-        value=_parse_value_amount(v.value),
+        value=parsed_value,
         garaging_zip=v.garaging_zip or fallback_zip,
         is_financed_or_leased=_financed_or_leased(v.has_loan),
     )
