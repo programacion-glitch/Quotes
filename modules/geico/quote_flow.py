@@ -207,8 +207,21 @@ class QuoteFlow:
                     f"({info['size']} bytes)"
                 )
             except Exception as e:
-                result.warnings.append(f"PDF download failed: {e}")
-                print(f"    [GEICO] WARN: PDF download failed: {e}")
+                # PrintQuote es intermitente (a veces JSON, a veces el link no
+                # está). Fallback al render full-page de la página de precio
+                # capturado en capture_and_advance — para que el correo SIEMPRE
+                # tenga impresión.
+                render = getattr(coverages_page, "price_pdf_path", None)
+                if render:
+                    result.pdf_path = render
+                    result.warnings.append(
+                        f"PrintQuote no disponible ({e}); se adjunta la impresión "
+                        f"de la página de precio."
+                    )
+                    print(f"    [GEICO] PrintQuote falló; usando render: {render}")
+                else:
+                    result.warnings.append(f"PDF download failed: {e}")
+                    print(f"    [GEICO] WARN: PDF download failed: {e}")
 
             # ----- Step 10: Final Quote Details (wizard Step 7) — STOP -----
             # FinalDetailsPage.fill_and_stop() fills DL numbers + workers comp +

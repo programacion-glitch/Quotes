@@ -192,6 +192,13 @@ class CoveragesPage(BasePage):
                 )
                 price.annual_premium = new_premium
 
+        # Imprimir la página Quote & Coverages completa (donde se ve el premium)
+        # a PDF — la "impresión" CONFIABLE para el correo, tomada ANTES del Next
+        # que navega al Step 7. Independiente del endpoint flaky PrintQuote.
+        self.price_pdf_path = await self.save_page_pdf(
+            f"{price.quote_number or 'unknown'}"
+        )
+
         await self._click_next()
         return price, pdf_url
 
