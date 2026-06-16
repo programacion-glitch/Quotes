@@ -59,6 +59,7 @@ class QuoteResult:
     step_reached: str = ""
     error: Optional[str] = None
     screenshot_path: Optional[str] = None
+    pdf_path: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
     assumptions: List[str] = field(default_factory=list)   # offline preflight assumptions (logged for traceability)
     # Quote details (when success)
@@ -160,6 +161,13 @@ class QuoteFlow:
             rates_page = CoveragesRatesPage(wizard_page)
             result.price = await rates_page.customize_and_capture(fields)
             result.warnings.extend(rates_page.warnings)
+
+            # Imprimir la página RATES completa (donde se ve el premium) a PDF —
+            # es la "impresión" que se adjunta al correo. Se captura ACÁ, antes
+            # de proceed_to_final_details() que navega fuera de RATES.
+            result.pdf_path = await rates_page.save_page_pdf(
+                f"quote_{(result.price.quote_number if result.price else None) or 'unknown'}"
+            )
 
             if self.dry_run:
                 result.success = True

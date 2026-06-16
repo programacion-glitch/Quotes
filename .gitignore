@@ -91,3 +91,6 @@ data/output/*.json
 data/output/extracted_*
 # Stray debug screenshots at repo root.
 *_stop.png
+
+# Quote PDFs generated at runtime (client data, not tracked in git)
+data/quote_pdfs/
