@@ -53,6 +53,62 @@ def _first_int(value) -> Optional[int]:
     return int(m.group(0)) if m else None
 
 
+# A radius/distance expression that sometimes leaks into the commodity slot when
+# a BlueQuote's form fields are positionally misaligned (RAFYURY 2026-06-14:
+# '500 MILES' landed in the commodity field, the real commodity 'SAND & GRAVEL'
+# in the destinations field). A commodity is never a pure distance, so these are
+# safe to reject without ever blanking a real commodity.
+_RADIUS_RE = re.compile(
+    r"""^\s*
+        (?:
+            \d{1,4}\s*(?:MILES?|MI|KMS?|KILOMETERS?)   # '500 MILES', '150 MI'
+          | \d{1,4}\s*[-–]\s*\d{1,4}              # '301-500', '101 - 200'
+          | \d{1,4}\+                                  # '500+'
+          | \d{1,4}                                    # bare number '500'
+        )
+        \s*(?:MILES?|MI|RADIUS|ONE\s*WAY)?\s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _looks_like_radius(value: Optional[str]) -> bool:
+    """True if *value* is a radius/distance expression, not a real commodity.
+
+    Matches '500 MILES', '301-500', '500+', bare '500', etc. A legitimate
+    commodity always carries a non-numeric noun ('SAND & GRAVEL', 'PRODUCE'),
+    so this never blanks a real commodity.
+    """
+    if not value:
+        return False
+    return bool(_RADIUS_RE.match(str(value).strip()))
+
+
+def _resolve_commodity(commodities: Optional[str], destinations: Optional[str]) -> str:
+    """Return the real commodity, healing BlueQuote form-field misalignment.
+
+    Normal case: return the commodity as-is. When the commodity slot instead
+    holds a radius/distance (a clear sign the form fields are misaligned), the
+    real commodity has usually shifted into the destinations slot — recover it
+    from there if that holds real (non-radius) text. The recovered value is
+    still validated downstream by the MGA business-class resolver, so a bad
+    guess HALTs loudly rather than producing a wrong class.
+
+    Recovery fires ONLY when the commodity was radius-like — never when it is
+    simply empty, so a genuine destinations value (e.g. a state list) is never
+    mistaken for a commodity.
+    """
+    commodity = (commodities or "").strip()
+    if not commodity:
+        return ""
+    if not _looks_like_radius(commodity):
+        return commodity
+    dest = (destinations or "").strip()
+    if dest and not _looks_like_radius(dest):
+        return dest
+    return ""
+
+
 def _parse_us_address(addr: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Split a US address string into (street, city, state, zip).
 
@@ -528,8 +584,12 @@ class DocumentAIExtractor:
             email=(app_info.get("email") or "").strip() or None,
         )
 
-        # Commodity
-        commodity = app_info.get("commodities") or ""
+        # Commodity. The BlueQuote form fields are read by position; a misaligned
+        # template can drop the operating radius into the commodity slot and the
+        # real commodity into the destinations slot (RAFYURY 2026-06-14). Heal it.
+        commodity = _resolve_commodity(
+            app_info.get("commodities"), app_info.get("destinations")
+        )
 
         # Coverages — two parallel structures:
         #   * `coverages` (List[str]) — short codes for rule_engine compat
@@ -601,9 +661,14 @@ class DocumentAIExtractor:
         # (one value for the whole policy, e.g. "101-200" or "150 MILES"),
         # not per-vehicle. Propagate it to every VehicleProfile so the MGA
         # mappers can bucket the one-way distance correctly.
-        radius_src = (cov_data.get("radius_of_operation")
-                      or app_info.get("destinations")
-                      or None)
+        radius_src = cov_data.get("radius_of_operation")
+        if not radius_src:
+            # destinations is a free-text field that sometimes holds the
+            # commodity instead (see _resolve_commodity) — only treat it as the
+            # radius when it actually reads like one.
+            _dest = app_info.get("destinations")
+            if _dest and _looks_like_radius(_dest):
+                radius_src = _dest
         radius_str = str(radius_src).strip() if radius_src else None
 
         # Build per-vehicle records (VehicleProfile list). These carry VIN,
@@ -789,7 +854,9 @@ class DocumentAIExtractor:
             business_years=business_years,
             is_new_venture=bool(is_nv),
         )
-        profile.commodity = ai_data.get("commodity") or ""
+        profile.commodity = _resolve_commodity(
+            ai_data.get("commodity"), ai_data.get("destinations")
+        )
         profile.coverages = ai_data.get("coverages") or []
         profile.units = UnitsProfile(
             count=ai_data.get("unit_count") or 0,
