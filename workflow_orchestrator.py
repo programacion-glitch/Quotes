@@ -15,8 +15,9 @@ import tempfile
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from modules.email_receiver import EmailReceiver, extract_quote_body
-from modules.email_sender import EmailSender
+from modules.email_receiver import extract_quote_body  # solo el helper de texto
+from modules.email_sender import EmailSender  # aún lo usa _dispatch_to_mgas (SMTP, fuera de alcance)
+from modules.gmail_client import GmailClient
 from modules.pdf_extractor import BlueQuotePDFExtractor
 from modules.comm_tdn_mapper import COMMTDNMapper
 from modules.mga_reader import MGAReader
@@ -93,6 +94,14 @@ class QuoteWorkflowOrchestrator:
         self.approval_mode = self.config.get("rule_engine.approval_mode", "manual")
         self.summary_email = self.config.get("rule_engine.summary_email") or self.email_address
         self.confirmation_keyword = self.config.get("rule_engine.confirmation_keyword", "APROBAR")
+
+        # Transporte Gmail API (reemplaza IMAP/SMTP para el flujo de análisis).
+        self.gmail = GmailClient()
+        self.analysis_to = (self.config.get("email.analysis_to")
+                            or self.summary_email)
+        self.analysis_cc = self.config.get("email.analysis_cc") or None
+        self.label_processed = self.config.get("email.label_processed",
+                                               "Cotizado-Bot")
 
         # Pending approvals: stores data needed to dispatch after confirmation
         # Key: original subject, Value: dict with all data needed
@@ -239,13 +248,18 @@ class QuoteWorkflowOrchestrator:
             confirmation_keyword=self.confirmation_keyword,
             rpa_quotes_section=(RPA_SECTION_MARKER if eligible_rpa else ""),
         )
-        summary_to = self.test_email_override or self.summary_email
+        analysis_to = self.analysis_to
+        analysis_cc = self.analysis_cc
 
         if eligible_rpa and not self.dry_run:
             submission_id = self._submission_id(email_data, profile)
             attachment_paths = self._persist_attachments(submission_id, attachments)
             self.quote_store.save_submission_context(submission_id, json.dumps({
-                "recipient": summary_to,
+                "recipient": analysis_to,
+                "cc": analysis_cc,
+                "thread_id": email_data.get("thread_id"),
+                "in_reply_to": email_data.get("message_id"),
+                "message_id": email_data.get("id"),
                 "subject": analysis["subject"],
                 "body_html": analysis["body"],
                 "attachment_paths": attachment_paths,
@@ -263,37 +277,20 @@ class QuoteWorkflowOrchestrator:
                     eff_date, profile.applicant.usdot or "")
                 queued.append(mga)
             if not queued:
-                # Todos los MGA-RPA quedaron rate-limited (>=3x/día): no se encoló
-                # nada y ningún worker mandará el correo. Enviarlo ahora (sin la
-                # sección RPA) para no perder la submission en silencio.
+                # Todos rate-limited: mandar ahora (sin sección RPA) + etiquetar.
                 body = analysis["body"].replace(RPA_SECTION_MARKER, "")
-                EmailSender(self.email_address, self.email_password).send_email(
-                    to_email=summary_to,
-                    subject=analysis["subject"],
-                    body=body,
-                    is_html=analysis.get("is_html", False),
-                    attachments=attachments,
-                )
-                print(f"  [queue] Nada encolado (rate-limit); análisis enviado "
-                      f"al instante sin sección RPA")
+                self._send_analysis_now(email_data, analysis["subject"], body,
+                                        attachments)
+                print("  [queue] Nada encolado (rate-limit); análisis enviado ya")
             else:
                 print(f"  [queue] Encolado {submission_id}: {queued} "
-                      f"(el correo de análisis sale al terminar la cotización)")
+                      f"(el correo sale al terminar la cotización)")
         else:
-            email_sender = EmailSender(self.email_address, self.email_password)
             if self.dry_run:
-                print(f"  DRY RUN - Would send analysis to: {summary_to}")
+                print(f"  DRY RUN - Would send analysis to: {analysis_to}")
             else:
-                if email_sender.send_email(
-                    to_email=summary_to,
-                    subject=analysis["subject"],
-                    body=analysis["body"],
-                    is_html=analysis.get("is_html", False),
-                    attachments=attachments,
-                ):
-                    print(f"  Analysis sent to {summary_to}")
-                else:
-                    print(f"  Failed to send analysis email")
+                self._send_analysis_now(email_data, analysis["subject"],
+                                        analysis["body"], attachments)
 
         # Step 8: If auto mode, dispatch immediately. If manual, store and wait.
         if self.approval_mode == "auto":
@@ -471,11 +468,11 @@ class QuoteWorkflowOrchestrator:
 
     @staticmethod
     def _submission_id(email_data: dict, profile) -> str:
-        """ID estable: Message-ID si existe, si no hash(subject+usdot)."""
-        raw = email_data.get("raw_message")
-        msg_id = raw.get("Message-ID") if raw else None
+        """ID estable: Message-ID (del dict de GmailClient) si existe, si no
+        hash(subject+usdot)."""
+        msg_id = (email_data.get("message_id") or "").strip()
         if msg_id:
-            return msg_id.strip()
+            return msg_id
         usdot = (profile.applicant.usdot or "").strip()
         subject = email_data.get("subject", "")
         return "sub-" + hashlib.sha1(f"{subject}|{usdot}".encode("utf-8")).hexdigest()[:16]
@@ -501,6 +498,28 @@ class QuoteWorkflowOrchestrator:
         m = re.search(r'[Ee]ffective\s+date[:\s]+(\d{1,2}/\d{1,2}/\d{4})', subject)
         return m.group(1) if m else None
 
+    def _send_analysis_now(self, email_data: dict, subject: str, body: str,
+                           attachments: list) -> None:
+        """Envía el análisis en el hilo (To analysis_to, CC analysis_cc) y
+        etiqueta el correo original. Para los caminos sin cola (sin-RPA,
+        rate-limited)."""
+        ok = self.gmail.send_threaded(
+            to=self.analysis_to,
+            cc=self.analysis_cc,
+            subject=subject,
+            body=body,
+            attachments=attachments,
+            is_html=True,
+            thread_id=email_data.get("thread_id"),
+            in_reply_to=email_data.get("message_id"),
+        )
+        if ok and email_data.get("id"):
+            try:
+                self.gmail.add_label(email_data["id"], self.label_processed)
+            except Exception as e:
+                print(f"  label warn: {e}")
+        print(f"  Analysis sent to {self.analysis_to} (ok={ok})")
+
     def _send_not_found_email(self, email_data, commodity, sender_name, business_name, subject):
         """Send 'not found' email when commodity can't be matched."""
         response = build_email_response(
@@ -511,48 +530,22 @@ class QuoteWorkflowOrchestrator:
             nombre_negocio=business_name,
             original_subject=subject
         )
-        email_sender = EmailSender(self.email_address, self.email_password)
-        recipient = self.test_email_override or email_data.get('sender_email')
-
         if self.dry_run:
-            print(f"  DRY RUN - Would send not-found email to: {recipient}")
+            print(f"  DRY RUN - Would send not-found email")
         else:
-            email_sender.send_email(
-                to_email=recipient,
+            ok = self.gmail.send_threaded(
+                to=self.analysis_to,
+                cc=self.analysis_cc,
                 subject=response['subject'],
-                body=response['body']
+                body=response['body'],
+                is_html=False,
+                thread_id=email_data.get("thread_id"),
+                in_reply_to=email_data.get("message_id"),
             )
+            if ok and email_data.get("id"):
+                try:
+                    self.gmail.add_label(email_data["id"], self.label_processed)
+                except Exception as e:
+                    print(f"  label warn: {e}")
         print(f"{'='*60}\n")
 
-    def start_monitoring(self, check_interval: int = 60):
-        """Start monitoring inbox continuously."""
-        print(f"\n{'='*60}")
-        print(f"H2O QUOTE RPA - AUTO-RESPONSE BOT")
-        print(f"{'='*60}")
-        print(f"Email: {self.email_address}")
-        print(f"Filter: '{self.subject_filter}'")
-        print(f"Approval mode: {self.approval_mode}")
-        print(f"DRY RUN: {self.dry_run}")
-        print(f"Check interval: {check_interval}s")
-        print(f"{'='*60}\n")
-
-        receiver = EmailReceiver(
-            self.email_address,
-            self.email_password
-        )
-
-        receiver.monitor_inbox(
-            subject_filter=self.subject_filter,
-            callback_function=self.process_email,
-            check_interval=check_interval
-        )
-
-
-def main():
-    """Main entry point."""
-    orchestrator = QuoteWorkflowOrchestrator()
-    orchestrator.start_monitoring(check_interval=60)
-
-
-if __name__ == "__main__":
-    main()
