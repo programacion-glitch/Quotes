@@ -59,11 +59,13 @@ def classify_result(result) -> tuple:
 
 
 class QuoteWorker:
-    def __init__(self, mga: str, store, create_quote: Callable, email_sender):
+    def __init__(self, mga: str, store, create_quote: Callable, gmail,
+                 label_processed: str = "Cotizado-Bot"):
         self.mga = mga
         self.store = store
         self.create_quote = create_quote   # (profile, effective_date) -> QuoteResult
-        self.email_sender = email_sender    # objeto con send_email(...)
+        self.gmail = gmail                  # GmailClient (send_threaded/add_label)
+        self.label_processed = label_processed
 
     def run_once(self) -> bool:
         """Procesa un job. Devuelve True si tomó uno, False si la cola estaba vacía."""
@@ -125,16 +127,26 @@ class QuoteWorker:
         ]
         body = ctx["body_html"].replace(RPA_SECTION_MARKER, render_rpa_section(outcomes))
 
+        # Los PDFs de CADA cotización (j.pdf_path) van adjuntos, junto al
+        # BlueQuote original.
         attachments = list(ctx.get("attachment_paths", []))
         attachments += [j.pdf_path for j in jobs if j.pdf_path]
 
-        ok = self.email_sender.send_email(
-            to_email=ctx["recipient"],
+        ok = self.gmail.send_threaded(
+            to=ctx["recipient"],
+            cc=ctx.get("cc"),
             subject=ctx["subject"],
             body=body,
             attachments=attachments,
             is_html=True,
+            thread_id=ctx.get("thread_id"),
+            in_reply_to=ctx.get("in_reply_to"),
         )
+        if ok and ctx.get("message_id"):
+            try:
+                self.gmail.add_label(ctx["message_id"], self.label_processed)
+            except Exception as e:  # etiquetar nunca debe tumbar el envío
+                print(f"    [worker:{self.mga}] label warn: {e}")
         print(f"    [worker:{self.mga}] analysis email for {submission_id} "
               f"sent={ok} (outcomes={len(outcomes)})")
         return ok
