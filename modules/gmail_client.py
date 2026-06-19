@@ -10,6 +10,10 @@ El `service` de Gmail es inyectable (para tests sin red).
 """
 
 import base64
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
 from typing import List, Optional
 
@@ -158,3 +162,56 @@ class GmailClient:
 
         rec(payload)
         return (html or plain), atts
+
+    # ---- enviar ----
+
+    def send_threaded(self, *, to: str, subject: str, body: str,
+                      cc: Optional[str] = None, attachments=None,
+                      is_html: bool = False, thread_id: Optional[str] = None,
+                      in_reply_to: Optional[str] = None) -> bool:
+        """Envía un correo (en el hilo si se da thread_id), con CC y adjuntos.
+
+        attachments: lista de paths (str) o dicts {'filename','data'(bytes)}.
+        """
+        msg = MIMEMultipart()
+        msg["To"] = to
+        if cc:
+            msg["Cc"] = cc
+        msg["Subject"] = subject
+        if in_reply_to:
+            msg["In-Reply-To"] = in_reply_to
+            msg["References"] = in_reply_to
+        msg.attach(MIMEText(body, "html" if is_html else "plain", "utf-8"))
+
+        for att in (attachments or []):
+            if isinstance(att, dict):
+                self._attach_bytes(msg, att.get("filename", "attachment"),
+                                   att.get("data", b""))
+            else:
+                self._attach_path(msg, att)
+
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+        body_req = {"raw": raw}
+        if thread_id:
+            body_req["threadId"] = thread_id
+        self._svc().users().messages().send(
+            userId="me", body=body_req
+        ).execute()
+        print(f"    [Gmail] enviado -> {to}" + (f" (CC {cc})" if cc else ""))
+        return True
+
+    @staticmethod
+    def _attach_bytes(msg, filename: str, data: bytes) -> None:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(data)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition",
+                        f'attachment; filename="{filename}"')
+        msg.attach(part)
+
+    def _attach_path(self, msg, file_path: str) -> None:
+        p = Path(file_path)
+        if not p.exists():
+            print(f"    [Gmail] adjunto no encontrado: {file_path}")
+            return
+        self._attach_bytes(msg, p.name, p.read_bytes())

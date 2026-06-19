@@ -66,3 +66,33 @@ def test_fetch_unread_query_includes_unread_and_subject():
     _, kwargs = svc.users().messages().list.call_args
     assert "is:unread" in kwargs["q"]
     assert "Submission" in kwargs["q"]
+
+
+def test_send_threaded_builds_raw_with_cc_and_thread():
+    svc = MagicMock()
+    sent = {}
+
+    def _send(userId=None, body=None):
+        sent.update(body)
+        call = MagicMock()
+        call.execute.return_value = {"id": "sent1"}
+        return call
+
+    svc.users().messages().send.side_effect = _send
+    client = GmailClient(service=svc)
+
+    ok = client.send_threaded(
+        to="quotes@h2oins.com", cc="programacion@h2oins.com",
+        subject="[ANALISIS] ACME", body="<b>hola</b>", is_html=True,
+        thread_id="thread-m1", in_reply_to="<x@mail>",
+        attachments=[{"filename": "p.pdf", "data": b"%PDF-1.4 x"}],
+    )
+    assert ok is True
+    assert sent["threadId"] == "thread-m1"
+    import base64
+    raw = base64.urlsafe_b64decode(sent["raw"].encode()).decode("utf-8", "replace")
+    assert "To: quotes@h2oins.com" in raw
+    assert "Cc: programacion@h2oins.com" in raw
+    assert "In-Reply-To: <x@mail>" in raw
+    assert "References: <x@mail>" in raw
+    assert "p.pdf" in raw
