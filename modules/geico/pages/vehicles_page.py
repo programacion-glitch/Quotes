@@ -100,6 +100,38 @@ class VehicleEntryPage(BasePage):
     `VehicleSummaryPage.add_another()`.
     """
 
+    async def answer_leading_hazmat_if_present(self, has_hazmat: bool) -> None:
+        """Answer a Hazmat placard question that OPENS the Vehicles step.
+
+        Most business classes ask the Hazmat placard question on Step 1, but some
+        (e.g. BUILDING MATERIALS — live RODRIGUEZ 2026-06-17) skip it there and
+        instead OPEN Step 3 with it, so the VIN form ('Do you have it handy?')
+        isn't first and the Step-2->3 wait never sees its marker. Answer it
+        (mirrors Step 1's _answer_hazmat_placard) and click Next to reveal the VIN
+        form. No-op when the question isn't present (the common case).
+        """
+        try:
+            grp = self.page.locator("gds-radio-button-group").filter(
+                has_text=_flex_text_regex("require a hazardous material placard")
+            )
+            if not await self.field_exists(grp, wait_ms=1_500):
+                return
+        except Exception:
+            return
+
+        answer = "Yes" if has_hazmat else "No"
+        print(f"    [GEICO] Step 3: Hazmat placard (opens Vehicles) -> {answer}")
+        try:
+            await self.click_question_radio(
+                "require a hazardous material placard", answer
+            )
+        except Exception as e:
+            self.note_warning(f"Step 3 leading Hazmat radio failed: {e}")
+            return
+        await self.remove_overlays()
+        await self.click_button("Next")
+        await self.page.wait_for_load_state("networkidle", timeout=30_000)
+
     async def fill_and_submit(self, vehicle: MappedVehicle) -> None:
         """Fill the vehicle-entry form and click Next.
 
@@ -608,10 +640,17 @@ class CompCollSubPage(BasePage):
         # Answering comp/coll AUTO-ADVANCES to the Vehicle Summary on a server
         # round-trip (live YKZ 2026-06-12) — there is NO 'Next' to click, and
         # forcing one raised 'Could not click Next'. Poll for the summary
-        # first; only click 'Next' if the subpage genuinely stays put.
-        for _ in range(24):  # ~12s
+        # first; only click 'Next' if the subpage genuinely stays put. GEICO may
+        # instead pop a 'Something's not lining up' interstitial here, overriding
+        # our business class (live NUNEZ 2026-06-17) — handle it and keep polling
+        # (the extra iterations give GEICO room to re-rate with the new class).
+        mismatch_handled = False
+        for _ in range(40):  # ~20s
             if await self._on_vehicle_summary():
                 return
+            if not mismatch_handled and await self._handle_business_class_mismatch():
+                mismatch_handled = True
+                continue
             await self.page.wait_for_timeout(500)
         await self.click_button("Next")
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
@@ -635,6 +674,54 @@ class CompCollSubPage(BasePage):
         except Exception:
             pass
         return False
+
+    async def _handle_business_class_mismatch(self) -> bool:
+        """Resolve GEICO's "Something's not lining up" interstitial (live NUNEZ
+        2026-06-17). After the vehicle/operations data is entered, GEICO may
+        decide the selected business class is wrong and suggest its own (e.g.
+        'Package Delivery' -> 'For-Hire Trucking/General Freight'), offering
+        'Update' or 'Start New Quote' (discard the quote).
+
+        'Update' is NOT a simple dismiss: it routes BACK to Step 1 (Business
+        Class & USDOT) with GEICO's suggested class ALREADY pre-selected in the
+        dropdown, exposing a 'Save And Continue' button. GEICO is the authority
+        on its own rating class, so accept it: click 'Update', then on the
+        bounced Step 1 click 'Save And Continue' to re-submit with the corrected
+        class. Returns True when handled (caller keeps polling for the summary).
+
+        Detection uses the apostrophe-free phrase 'business description should be'
+        (the 'Something's not lining up' heading carries a U+2019 apostrophe GEICO
+        is inconsistent about).
+        """
+        try:
+            banner = self.page.get_by_text(
+                "business description should be", exact=False
+            )
+            if not (
+                await banner.count() > 0 and await banner.first.is_visible()
+            ):
+                return False
+        except Exception:
+            return False
+
+        self.note_warning(
+            "GEICO 'Something's not lining up' interstitial: GEICO overrode the "
+            "selected business class with its own suggestion — accepted it "
+            "(Update -> Save And Continue)."
+        )
+        print(
+            "    [GEICO] Step 3: business class mismatch — 'Update' then "
+            "'Save And Continue' (accept GEICO's suggested class)"
+        )
+        await self.remove_overlays()
+        await self.click_button("Update")
+        await self.page.wait_for_load_state("networkidle", timeout=30_000)
+        # 'Update' bounces to Step 1 with GEICO's class pre-selected; the only
+        # action left is to re-submit it.
+        await self.remove_overlays()
+        await self.click_button("Save And Continue")
+        await self.page.wait_for_load_state("networkidle", timeout=30_000)
+        return True
 
 
 class VehicleSummaryPage(BasePage):

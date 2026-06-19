@@ -360,6 +360,13 @@ class QuoteFlow:
         if not fields.vehicles:
             raise RuntimeError("At least one vehicle is required to quote")
 
+        # Some business classes (e.g. BUILDING MATERIALS) skip the Hazmat placard
+        # question on Step 1 and instead OPEN the Vehicles step with it (live
+        # RODRIGUEZ 2026-06-17). Answer it once, before the first vehicle entry.
+        opener = VehicleEntryPage(wizard_page)
+        await opener.answer_leading_hazmat_if_present(fields.has_hazmat_placard)
+        result.warnings.extend(opener.warnings)
+
         for i, vehicle in enumerate(fields.vehicles):
             print(f"    [GEICO] Vehicle {i + 1}/{len(fields.vehicles)}")
             entry = VehicleEntryPage(wizard_page)

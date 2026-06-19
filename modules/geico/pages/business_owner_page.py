@@ -407,8 +407,21 @@ class BusinessOwnerPage(BasePage):
         vehicles_marker = self.page.locator("gds-radio-button-group").filter(
             has_text=_flex_text_regex("Do you have it handy")
         )
+        # Some business classes open Step 3 with the Hazmat placard question
+        # instead of the VIN form (live RODRIGUEZ 2026-06-17 — BUILDING
+        # MATERIALS, whose Step 1 skipped Hazmat). It is a valid 'reached
+        # Vehicles' signal; the vehicles flow answers it
+        # (VehicleEntryPage.answer_leading_hazmat_if_present).
+        hazmat_marker = self.page.locator("gds-radio-button-group").filter(
+            has_text=_flex_text_regex("require a hazardous material placard")
+        )
+        # The vehicle prefill picker has multiple banner variants ('We found
+        # vehicles that might belong...' live ABUNDANCE/RYD; 'Recently Inspected
+        # Vehicles Found' live RODRIGUEZ 2026-06-17). Detect it by the one
+        # control common to all variants — the 'Quote different vehicle(s)' card,
+        # which is also exactly what _dismiss_vehicle_prefill_picker clicks.
         prefill_banner = self.page.get_by_text(
-            "We found vehicles that might belong", exact=False
+            "Quote different vehicle(s)", exact=False
         )
         verify_usdot_banner = self.page.get_by_text(
             "Verify USDOT Number", exact=False
@@ -430,6 +443,21 @@ class BusinessOwnerPage(BasePage):
                     and await vehicles_marker.first.is_visible()
                 ):
                     print("    [GEICO] Step 2 -> Step 3 (Vehicles) loaded")
+                    return
+            except Exception:
+                pass
+
+            # Success (Hazmat-first variant): Step 3 opened with the Hazmat
+            # placard question instead of the VIN form.
+            try:
+                if (
+                    await hazmat_marker.count() > 0
+                    and await hazmat_marker.first.is_visible()
+                ):
+                    print(
+                        "    [GEICO] Step 2 -> Step 3 (Vehicles) loaded "
+                        "(Hazmat opens the step)"
+                    )
                     return
             except Exception:
                 pass
