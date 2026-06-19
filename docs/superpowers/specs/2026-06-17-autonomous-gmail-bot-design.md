@@ -134,12 +134,40 @@ El monitor y los workers comparten el mismo `QuoteQueueStore` (SQLite WAL).
 ### Cambios en `modules/quote_queue/worker.py`
 
 - `QuoteWorker` recibe el `GmailClient` (en vez de un `EmailSender` SMTP).
+- **REQUISITO — los PDFs de las cotizaciones van ADJUNTOS al correo de análisis.**
+  El worker ya arma la lista de adjuntos así (preservar este comportamiento):
+  `attachments = list(ctx["attachment_paths"])  # BlueQuote original` +
+  `[j.pdf_path for j in jobs if j.pdf_path]  # la impresión de la página de
+  precio de CADA MGA que cotizó`. El correo de análisis debe salir con **una
+  impresión PDF por cada MGA que produjo precio** (Progressive y/o GEICO).
 - `maybe_send_submission_email`: usa
   `gmail.send_threaded(to=ctx["recipient"], cc=ctx["cc"], subject, body,
-  attachments, is_html=True, thread_id=ctx["thread_id"],
-  in_reply_to=ctx["in_reply_to"])`.
+  attachments=attachments, is_html=True, thread_id=ctx["thread_id"],
+  in_reply_to=ctx["in_reply_to"])` — `attachments` acepta paths o dicts bytes.
 - Tras enviar OK: `gmail.add_label(ctx["message_id"], "Cotizado-Bot")`.
 - La firma del contexto la produce el orquestador (arriba).
+- **Captura del PDF de precio:** depende de que `QuoteResult.pdf_path` venga
+  poblado. GEICO ya lo puebla (validado live: 5 quotes hoy con PDF de fallback en
+  Final Quote Details). Progressive **aún NO** lo puebla (ver spec de la cola,
+  sección "Captura de la impresión") — es un pre-requisito para que el correo de
+  Progressive lleve PDF; si falta, el análisis igual sale con el premium y el
+  mensaje "impresión no disponible".
+
+### Captura del PDF de precio de Progressive (in-scope)
+
+Requisito del usuario: **el correo de análisis debe llevar adjunta la impresión
+de cada cotización**. GEICO ya puebla `QuoteResult.pdf_path`. Progressive **no**
+— hay que agregarlo para que su correo lleve PDF:
+
+- `modules/progressive/quote_flow.py`: agregar `pdf_path: Optional[str]` al
+  `QuoteResult` y poblarlo en el step `rates` (la página de precio final).
+- `modules/progressive/pages/coverages_rates_page.py`: al capturar el precio,
+  guardar la **página completa a PDF** con
+  `page.pdf(print_background=True, prefer_css_page_size=True)` (solo Chromium
+  headless, que es el default). Fallback headed: screenshot full-page PNG.
+- Path bajo `data/quote_pdfs/` (gitignored, data de cliente).
+- Si la captura falla, el análisis igual sale con premium + "impresión no
+  disponible" (no bloquea el correo).
 
 ### Config (`.env` / config_manager)
 
