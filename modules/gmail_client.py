@@ -215,3 +215,35 @@ class GmailClient:
             print(f"    [Gmail] adjunto no encontrado: {file_path}")
             return
         self._attach_bytes(msg, p.name, p.read_bytes())
+
+    # ---- etiquetas / leído ----
+
+    def _label_id(self, svc, name: str) -> str:
+        if name in self._label_ids:
+            return self._label_ids[name]
+        labels = (
+            svc.users().labels().list(userId="me").execute().get("labels", [])
+        )
+        for lab in labels:
+            if lab.get("name") == name:
+                self._label_ids[name] = lab["id"]
+                return lab["id"]
+        created = svc.users().labels().create(
+            userId="me",
+            body={"name": name, "labelListVisibility": "labelShow",
+                  "messageListVisibility": "show"},
+        ).execute()
+        self._label_ids[name] = created["id"]
+        return created["id"]
+
+    def add_label(self, message_id: str, label_name: str) -> None:
+        svc = self._svc()
+        lid = self._label_id(svc, label_name)
+        svc.users().messages().modify(
+            userId="me", id=message_id, body={"addLabelIds": [lid]}
+        ).execute()
+
+    def mark_read(self, message_id: str) -> None:
+        self._svc().users().messages().modify(
+            userId="me", id=message_id, body={"removeLabelIds": ["UNREAD"]}
+        ).execute()

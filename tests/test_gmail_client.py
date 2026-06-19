@@ -96,3 +96,57 @@ def test_send_threaded_builds_raw_with_cc_and_thread():
     assert "In-Reply-To: <x@mail>" in raw
     assert "References: <x@mail>" in raw
     assert "p.pdf" in raw
+
+
+def test_add_label_creates_if_missing_then_modifies():
+    svc = MagicMock()
+    svc.users().labels().list().execute.return_value = {"labels": []}
+    svc.users().labels().create().execute.return_value = {"id": "Label_99"}
+    modified = {}
+
+    def _modify(userId=None, id=None, body=None):
+        modified["id"] = id
+        modified["body"] = body
+        call = MagicMock()
+        call.execute.return_value = {}
+        return call
+
+    svc.users().messages().modify.side_effect = _modify
+    client = GmailClient(service=svc)
+    client.add_label("m1", "Cotizado-Bot")
+    assert modified["id"] == "m1"
+    assert modified["body"] == {"addLabelIds": ["Label_99"]}
+
+
+def test_add_label_reuses_existing():
+    svc = MagicMock()
+    svc.users().labels().list().execute.return_value = {
+        "labels": [{"id": "Label_7", "name": "Cotizado-Bot"}]
+    }
+    modified = {}
+    svc.users().messages().modify.side_effect = (
+        lambda userId=None, id=None, body=None: _ret(modified, id, body)
+    )
+    client = GmailClient(service=svc)
+    client.add_label("m2", "Cotizado-Bot")
+    assert modified["body"] == {"addLabelIds": ["Label_7"]}
+    svc.users().labels().create.assert_not_called()
+
+
+def test_mark_read_removes_unread():
+    svc = MagicMock()
+    removed = {}
+    svc.users().messages().modify.side_effect = (
+        lambda userId=None, id=None, body=None: _ret(removed, id, body)
+    )
+    client = GmailClient(service=svc)
+    client.mark_read("m3")
+    assert removed["body"] == {"removeLabelIds": ["UNREAD"]}
+
+
+def _ret(store, id, body):
+    store["id"] = id
+    store["body"] = body
+    call = MagicMock()
+    call.execute.return_value = {}
+    return call
