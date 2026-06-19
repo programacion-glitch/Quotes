@@ -1,4 +1,5 @@
-FROM python:3.11-slim
+# Imagen oficial de Playwright: trae Chromium + todas las libs de sistema.
+FROM mcr.microsoft.com/playwright/python:v1.49.0-jammy
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8 \
@@ -7,20 +8,15 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# System deps for PyMuPDF / pdfplumber
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        libxml2 \
-        libxslt1.1 \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt \
+    && python -m playwright install chromium
 
 COPY modules/ ./modules/
 COPY workflow_orchestrator.py ./
 
-# Config, .env and data are mounted as volumes at runtime
-RUN mkdir -p /app/config /app/data/input /app/data/output /app/logs
+# config/, data/, .env y logs/ entran por volumen / env_file (no se hornean).
+RUN mkdir -p /app/data /app/logs
 
-CMD ["python", "-u", "workflow_orchestrator.py"]
+# Entrypoint: el runner (monitor Gmail + workers por MGA + cola).
+CMD ["python", "-u", "-m", "modules.quote_queue.runner"]
