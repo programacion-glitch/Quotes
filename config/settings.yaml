@@ -193,5 +193,6 @@ rule_engine:
   summary_email: "${EMAIL_USERNAME}"
   # Subject keyword to look for in the confirmation reply
   confirmation_keyword: "APROBAR"
-  # Encender GEICO en la cola RPA (Progressive siempre ON)
-  geico_queue_enabled: true
+  # Encender GEICO en la cola RPA (Progressive siempre ON). Env-driven para
+  # poder togglear GEICO en el contenedor sin editar el yaml (de-risk Incapsula).
+  geico_queue_enabled: "${GEICO_QUEUE_ENABLED}"
