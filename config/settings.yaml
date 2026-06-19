@@ -81,7 +81,12 @@ email:
     #subject_filter: "Submission New Venture"
     subject_filter: "Submission"
     check_interval_seconds: 60
-    
+
+  # Análisis autónomo (Gmail API): destino y etiqueta
+  analysis_to: "${EMAIL_ANALYSIS_TO}"      # default quotes@h2oins.com (.env)
+  analysis_cc: "${EMAIL_ANALYSIS_CC}"      # programacion@h2oins.com (.env)
+  label_processed: "Cotizado-Bot"          # etiqueta al correo original
+
   # IMAP settings (receiving emails)
   imap:
     server: "imap.gmail.com"
@@ -188,3 +193,5 @@ rule_engine:
   summary_email: "${EMAIL_USERNAME}"
   # Subject keyword to look for in the confirmation reply
   confirmation_keyword: "APROBAR"
+  # Encender GEICO en la cola RPA (Progressive siempre ON)
+  geico_queue_enabled: true
