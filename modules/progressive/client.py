@@ -119,7 +119,13 @@ async def _run_with_browser(config: ProgressiveConfig, fields) -> QuoteResult:
             print(f"    [Progressive] Retry {attempt}/{config.max_retries}...")
 
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=config.headless)
+            browser = await pw.chromium.launch(
+                headless=config.headless,
+                # --no-sandbox: Chromium se niega a arrancar como root en el
+                # contenedor sin esto. --disable-dev-shm-usage: evita crashes por
+                # /dev/shm chico. Inofensivos en el host.
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
+            )
             storage_state = (
                 str(_SESSION_STATE) if _SESSION_STATE.exists() else None
             )
