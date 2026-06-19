@@ -150,3 +150,12 @@ def _ret(store, id, body):
     call = MagicMock()
     call.execute.return_value = {}
     return call
+
+
+def test_fetch_unread_includes_after_when_given():
+    svc = _fake_service_with_messages([])
+    client = GmailClient(service=svc)
+    client.fetch_unread("Submission", after_epoch=1750000000)
+    _, kwargs = svc.users().messages().list.call_args
+    assert "after:1750000000" in kwargs["q"]
+    assert "is:unread" in kwargs["q"]

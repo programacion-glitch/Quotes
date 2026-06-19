@@ -7,16 +7,21 @@ Entrypoint:  python -m modules.quote_queue.runner
 
 import threading
 import time
+from pathlib import Path
 
 from modules.config_manager import get_config
 from modules.gmail_client import GmailClient
 from modules.quote_queue.worker import QuoteWorker
 
 
-def poll_once(gmail, orchestrator, subject_filter: str) -> int:
+def poll_once(gmail, orchestrator, subject_filter: str,
+              after_epoch=None) -> int:
     """Un ciclo del monitor: procesa cada no-leído y lo marca leído (siempre,
-    aun si el procesamiento falla, para no reprocesarlo). Devuelve cuántos vio."""
-    emails = gmail.fetch_unread(subject_filter)
+    aun si el procesamiento falla, para no reprocesarlo). Devuelve cuántos vio.
+
+    after_epoch: corte por fecha — solo correos recibidos después de ese epoch.
+    """
+    emails = gmail.fetch_unread(subject_filter, after_epoch=after_epoch)
     for email_data in emails:
         try:
             orchestrator.process_email(email_data)
@@ -53,6 +58,25 @@ def _worker_loop(worker, stop: threading.Event, idle_sleep: float = 5.0):
             stop.wait(idle_sleep)
 
 
+# Corte por fecha: el bot solo procesa correos recibidos DESPUÉS de este epoch.
+# Se fija en la primera corrida (now) y se persiste, para no procesar el backlog
+# de no-leídos viejos y, en un reinicio, no saltear lo que llegó mientras tanto.
+_CUTOFF_FILE = "data/bot_since_epoch.txt"
+
+
+def _load_or_init_cutoff(path: str, now: float) -> float:
+    """Devuelve el epoch de corte persistido; si no existe, lo fija a `now`."""
+    p = Path(path)
+    if p.exists():
+        try:
+            return float(p.read_text(encoding="utf-8").strip())
+        except Exception:
+            pass
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(str(now), encoding="utf-8")
+    return now
+
+
 def run_forever(check_interval: int = 60) -> None:
     config = get_config()
     gmail = GmailClient()
@@ -63,6 +87,11 @@ def run_forever(check_interval: int = 60) -> None:
     store = orchestrator.quote_store
     subject_filter = config.get("email.monitoring.subject_filter", "Submission")
     label = config.get("email.label_processed", "Cotizado-Bot")
+    cutoff = _load_or_init_cutoff(_CUTOFF_FILE, time.time())
+    from datetime import datetime
+    print(f"[runner] corte por fecha: solo correos posteriores a "
+          f"{datetime.fromtimestamp(cutoff).isoformat()} "
+          f"(backlog no-leído anterior NO se toca)")
 
     # Recuperación de crash: jobs colgados vuelven a pending.
     reclaimed = store.reclaim_stale()
@@ -83,7 +112,8 @@ def run_forever(check_interval: int = 60) -> None:
     print(f"[runner] monitoreando '{subject_filter}' cada {check_interval}s")
     try:
         while True:
-            n = poll_once(gmail, orchestrator, subject_filter)
+            n = poll_once(gmail, orchestrator, subject_filter,
+                          after_epoch=cutoff)
             if n:
                 print(f"[monitor] procesados {n} correo(s)")
             time.sleep(check_interval)

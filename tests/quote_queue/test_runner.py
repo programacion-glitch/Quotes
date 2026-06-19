@@ -30,3 +30,22 @@ def test_poll_once_marks_read_even_if_process_raises():
 
     assert n == 1
     gmail.mark_read.assert_called_once_with("m1")
+
+
+def test_poll_once_passes_after_epoch():
+    from unittest.mock import MagicMock
+    gmail = MagicMock()
+    gmail.fetch_unread.return_value = []
+    orch = MagicMock()
+    runner.poll_once(gmail, orch, "Submission", after_epoch=1750000000)
+    _, kwargs = gmail.fetch_unread.call_args
+    assert kwargs.get("after_epoch") == 1750000000
+
+
+def test_load_or_init_cutoff_persists(tmp_path):
+    path = str(tmp_path / "cut.txt")
+    first = runner._load_or_init_cutoff(path, now=1750000000.0)
+    assert first == 1750000000.0
+    # Segunda llamada: reusa el valor persistido (ignora el now nuevo).
+    second = runner._load_or_init_cutoff(path, now=1760000000.0)
+    assert second == 1750000000.0

@@ -67,12 +67,19 @@ class GmailClient:
 
     # ---- recibir ----
 
-    def fetch_unread(self, subject_filter: Optional[str] = None) -> List[dict]:
-        """No-leídos que matchean el filtro de asunto, en el dict del flujo."""
+    def fetch_unread(self, subject_filter: Optional[str] = None,
+                     after_epoch: Optional[float] = None) -> List[dict]:
+        """No-leídos que matchean el filtro de asunto, en el dict del flujo.
+
+        after_epoch: si se da, solo correos recibidos DESPUÉS de ese epoch
+        (término Gmail `after:`), para ignorar el backlog viejo sin tocarlo.
+        """
         svc = self._svc()
         q = "is:unread"
         if subject_filter:
             q += f' subject:"{subject_filter}"'
+        if after_epoch:
+            q += f" after:{int(after_epoch)}"
         resp = (
             svc.users().messages()
             .list(userId="me", q=q, maxResults=25)
