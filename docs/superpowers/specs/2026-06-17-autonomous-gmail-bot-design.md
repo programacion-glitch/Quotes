@@ -147,27 +147,27 @@ El monitor y los workers comparten el mismo `QuoteQueueStore` (SQLite WAL).
 - Tras enviar OK: `gmail.add_label(ctx["message_id"], "Cotizado-Bot")`.
 - La firma del contexto la produce el orquestador (arriba).
 - **Captura del PDF de precio:** depende de que `QuoteResult.pdf_path` venga
-  poblado. GEICO ya lo puebla (validado live: 5 quotes hoy con PDF de fallback en
-  Final Quote Details). Progressive **aún NO** lo puebla (ver spec de la cola,
-  sección "Captura de la impresión") — es un pre-requisito para que el correo de
-  Progressive lleve PDF; si falta, el análisis igual sale con el premium y el
-  mensaje "impresión no disponible".
+  poblado — **ambos MGAs ya lo pueblan** (GEICO: Final Quote Details; Progressive:
+  `quote_flow.py:185` → `save_page_pdf`). Solo verificar. Si la captura falla, el
+  análisis igual sale con el premium y el mensaje "impresión no disponible".
 
-### Captura del PDF de precio de Progressive (in-scope)
+### Captura del PDF de precio (AMBOS MGAs — YA IMPLEMENTADO, solo verificar)
 
 Requisito del usuario: **el correo de análisis debe llevar adjunta la impresión
-de cada cotización**. GEICO ya puebla `QuoteResult.pdf_path`. Progressive **no**
-— hay que agregarlo para que su correo lleve PDF:
+de cada cotización**. Verificado en el código: **ambos MGAs ya pueblan
+`QuoteResult.pdf_path`**, así que NO hace falta implementarlo:
 
-- `modules/progressive/quote_flow.py`: agregar `pdf_path: Optional[str]` al
-  `QuoteResult` y poblarlo en el step `rates` (la página de precio final).
-- `modules/progressive/pages/coverages_rates_page.py`: al capturar el precio,
-  guardar la **página completa a PDF** con
-  `page.pdf(print_background=True, prefer_css_page_size=True)` (solo Chromium
-  headless, que es el default). Fallback headed: screenshot full-page PNG.
-- Path bajo `data/quote_pdfs/` (gitignored, data de cliente).
-- Si la captura falla, el análisis igual sale con premium + "impresión no
-  disponible" (no bloquea el correo).
+- **GEICO:** validado live hoy (5 quotes con PDF de fallback en Final Quote
+  Details).
+- **Progressive:** `modules/progressive/quote_flow.py:185` ya hace
+  `result.pdf_path = await rates_page.save_page_pdf(...)`, y
+  `modules/progressive/pages/base_page.py:save_page_pdf` ya usa
+  `page.pdf(print_background=True)` con fallback a screenshot PNG full-page.
+
+El único trabajo real es que el correo los ADJUNTE: el `QuoteWorker` ya junta
+`[j.pdf_path for j in jobs if j.pdf_path]`; solo hay que pasarlos por
+`GmailClient.send_threaded`. Si la captura falla, el análisis igual sale con
+premium + "impresión no disponible" (no bloquea el correo).
 
 ### Config (`.env` / config_manager)
 
