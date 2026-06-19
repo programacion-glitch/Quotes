@@ -365,7 +365,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 2: GmailClient — send_threaded
+## Task 3: GmailClient — send_threaded
 
 **Files:**
 - Modify: `modules/gmail_client.py`
@@ -485,7 +485,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 3: GmailClient — add_label + mark_read
+## Task 4: GmailClient — add_label + mark_read
 
 **Files:**
 - Modify: `modules/gmail_client.py`
@@ -608,7 +608,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 4: Worker — enviar en hilo + etiquetar
+## Task 5: Worker — enviar en hilo + etiquetar
 
 **Files:**
 - Modify: `modules/quote_queue/worker.py` (`QuoteWorker.__init__` y `maybe_send_submission_email`, ~L61-141)
@@ -769,12 +769,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 5: Orquestador — migrar a GmailClient (contexto, recipients, _submission_id, inline)
+## Task 6: Orquestador — migrar a GmailClient (contexto, recipients, _submission_id, inline)
 
 **Files:**
 - Modify: `workflow_orchestrator.py` (imports L18-19; `__init__` L51-103; `_process_submission` L226-296; `_submission_id` L472-481; `_send_not_found_email` L504-525; `start_monitoring` L527-548)
 
-Cambios: construir un `GmailClient`; leer `analysis_to`/`analysis_cc`/`label_processed`; guardar `thread_id`/`message_id`/`cc` en el contexto; `_submission_id` desde `email_data["message_id"]`; los envíos inline (rate-limit, no-RPA, not-found) por `gmail.send_threaded` + etiqueta. El loop de monitoreo se mueve al runner (Task 6), así que `start_monitoring` se elimina/queda como no usado.
+Cambios: construir un `GmailClient`; leer `analysis_to`/`analysis_cc`/`label_processed`; guardar `thread_id`/`message_id`/`cc` en el contexto; `_submission_id` desde `email_data["message_id"]`; los envíos inline (rate-limit, no-RPA, not-found) por `gmail.send_threaded` + etiqueta. El loop de monitoreo se mueve al runner (Task 7), así que `start_monitoring` se elimina/queda como no usado.
 
 - [ ] **Step 1: Imports + `__init__`**
 
@@ -961,7 +961,7 @@ por:
 
 - [ ] **Step 6: Quitar `start_monitoring`/`main` IMAP**
 
-Eliminar el método `start_monitoring` (L527-548) y la función `main()` + el bloque `if __name__ == "__main__"` (L551-558). El entrypoint pasa a ser `modules/quote_queue/runner.py` (Task 6). (Dejar `process_email` y `_process_submission` intactos salvo lo anterior.)
+Eliminar el método `start_monitoring` (L527-548) y la función `main()` + el bloque `if __name__ == "__main__"` (L551-558). El entrypoint pasa a ser `modules/quote_queue/runner.py` (Task 7). (Dejar `process_email` y `_process_submission` intactos salvo lo anterior.)
 
 - [ ] **Step 7: Compilar + pyflakes**
 
@@ -983,7 +983,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 6: Runner — reclaim_stale + monitor + workers
+## Task 7: Runner — reclaim_stale + monitor + workers
 
 **Files:**
 - Create: `modules/quote_queue/runner.py`
@@ -1152,7 +1152,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 7: Smoke offline + suite completa
+## Task 8: Smoke offline + suite completa
 
 **Files:**
 - Test: (sin archivos nuevos) — correr la suite y un import-smoke del runner.
@@ -1211,14 +1211,14 @@ Estos pasos los corre el operador en este host (tocan la red real). NO son parte
 ## Self-Review (hecho por el autor del plan)
 
 **Cobertura del spec:**
-- GmailClient (fetch/send/label/mark_read) → Tasks 2-3. ✓
-- runner.py (reclaim_stale + monitor + workers) → Task 6. ✓
-- Orquestador a GmailClient + contexto + recipients + _submission_id + inline → Task 5. ✓
-- Worker send_threaded + label + PDFs adjuntos → Task 4. ✓
+- GmailClient (fetch/send/label/mark_read) → Tasks 2-4. ✓
+- runner.py (reclaim_stale + monitor + workers) → Task 7. ✓
+- Orquestador a GmailClient + contexto + recipients + _submission_id + inline → Task 6. ✓
+- Worker send_threaded + label + PDFs adjuntos → Task 5. ✓
 - Config (geico_queue_enabled, analysis_to/cc, label) → Task 1. ✓
 - Captura PDF Progressive → YA implementado (spec corregido); no hay tarea (correcto). ✓
 - Scope gmail.modify→send → verificación LIVE documentada. ✓
 
 **Placeholders:** ninguno — cada step tiene código/comando real.
 
-**Consistencia de tipos/firmas:** `GmailClient.send_threaded(to, subject, body, cc=, attachments=, is_html=, thread_id=, in_reply_to=)` se usa idéntico en worker (Task 4), orquestador (Task 5) y se define en Task 2. `add_label(message_id, label_name)` / `mark_read(message_id)` consistentes. `QuoteWorker.__init__(mga, store, create_quote, gmail, label_processed=)` consistente entre Task 4 (def) y Task 6 (uso). El contexto de submission (`recipient/cc/thread_id/in_reply_to/message_id/subject/body_html/attachment_paths`) es idéntico entre el productor (Task 5) y el consumidor (Task 4). ✓
+**Consistencia de tipos/firmas:** `GmailClient.send_threaded(to, subject, body, cc=, attachments=, is_html=, thread_id=, in_reply_to=)` se define en Task 3 y se usa idéntico en worker (Task 5) y orquestador (Task 6). `add_label(message_id, label_name)` / `mark_read(message_id)` consistentes (def Task 4). `QuoteWorker.__init__(mga, store, create_quote, gmail, label_processed=)` consistente entre Task 5 (def) y Task 7 (uso). El contexto de submission (`recipient/cc/thread_id/in_reply_to/message_id/subject/body_html/attachment_paths`) es idéntico entre el productor (Task 6) y el consumidor (Task 5). ✓
