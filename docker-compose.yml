@@ -6,20 +6,24 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    # The learned-mappings cache (AI decisions: commodity/MTC/tiles/makes) is
-    # written to /app/data/learned_mappings.xlsx — on the ./data volume below, so
-    # it PERSISTS across image rebuilds (it is NOT baked into the image). It is
-    # auto-seeded from the bundled baseline on first run, then grows. To share it
-    # across machines, point ./data (or PROGRESSIVE_LEARNED_BT_PATH) at a synced
-    # Drive folder (Google Drive Desktop / OneDrive / network drive).
-    # environment:
-    #   - PROGRESSIVE_LEARNED_BT_PATH=/app/data/learned_mappings.xlsx
+    environment:
+      # Proxy de IA (clasificador de commodities) = servicio Windows del host.
+      - OPENAI_BASE_URL=http://host.docker.internal:3000/v1
+      # Sin display en el contenedor: ambos MGAs headless (page.pdf() lo soporta).
+      - GEICO_HEADLESS=true
+      - PROGRESSIVE_HEADLESS=true
+      # De-risk Incapsula: Progressive ON, GEICO OFF hasta validar en Linux.
+      # Cambiar a true (o quitar) cuando GEICO pase Incapsula en el contenedor.
+      - GEICO_QUEUE_ENABLED=false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    shm_size: "1gb"            # estabilidad de Chromium
     volumes:
       - ./config:/app/config:ro
-      - ./data:/app/data            # persistent: learned cache + input/output
+      - ./data:/app/data       # token/credenciales/sesiones/cola/PDFs/cutoff (persistente)
       - ./logs:/app/logs
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "workflow_orchestrator.py"]
+      test: ["CMD", "pgrep", "-f", "modules.quote_queue.runner"]
       interval: 60s
       timeout: 10s
       retries: 3
