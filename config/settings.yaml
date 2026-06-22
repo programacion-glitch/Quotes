@@ -180,8 +180,10 @@ ai_extraction:
 # RULE ENGINE
 # ============================================================================
 rule_engine:
-  # Excel sheet name for structured rules
-  sheet_name: "REGLAS"
+  # Hoja de reglas que usa el motor. DEBE ser "REGLAS FINALES" (donde el equipo
+  # edita las reglas vigentes). El RuleEngine ya la usa por default (rule_engine.py),
+  # esto solo alinea el yaml para que no engañe.
+  sheet_name: "REGLAS FINALES"
   # Enable/disable rule evaluation
   enabled: true
   # Halt workflow when AI extraction confidence is low
