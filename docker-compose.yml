@@ -12,9 +12,10 @@ services:
       # Sin display en el contenedor: ambos MGAs headless (page.pdf() lo soporta).
       - GEICO_HEADLESS=true
       - PROGRESSIVE_HEADLESS=true
-      # De-risk Incapsula: Progressive ON, GEICO OFF hasta validar en Linux.
-      # Cambiar a true (o quitar) cuando GEICO pase Incapsula en el contenedor.
-      - GEICO_QUEUE_ENABLED=false
+      # Progressive + GEICO ON. Si Incapsula bloquea el Chromium Linux (página
+      # "There was a problem while processing...") hay que afinar
+      # modules/geico/stealth.py para Linux (UA/headers/canal de Chrome).
+      - GEICO_QUEUE_ENABLED=true
     extra_hosts:
       - "host.docker.internal:host-gateway"
     shm_size: "1gb"            # estabilidad de Chromium
