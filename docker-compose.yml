@@ -20,7 +20,9 @@ services:
       - "host.docker.internal:host-gateway"
     shm_size: "1gb"            # estabilidad de Chromium
     volumes:
-      - ./config:/app/config:ro
+      # RW (no :ro): el sync de reglas de Drive ESCRIBE el xlsx descargado y
+      # refresca el token OAuth (config/oauth_user_token.json) dentro de config/.
+      - ./config:/app/config
       - ./data:/app/data       # token/credenciales/sesiones/cola/PDFs/cutoff (persistente)
       - ./logs:/app/logs
     healthcheck:
