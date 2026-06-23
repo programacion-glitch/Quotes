@@ -5,9 +5,20 @@ worker-thread por MGA), en un solo proceso, sobre la cola durable.
 Entrypoint:  python -m modules.quote_queue.runner
 """
 
+import sys
 import threading
 import time
 from pathlib import Path
+
+# La consola de Windows (cp1252) no puede encodear los emojis/acentos que el bot
+# imprime (⚠️, ✓, ñ, etc.) → UnicodeEncodeError que tumba el proceso. Forzar
+# UTF-8 como hacen los scripts. En Docker ya es UTF-8; esto hace al runner
+# robusto también en el host Windows.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from modules.config_manager import get_config
 from modules.gmail_client import GmailClient
