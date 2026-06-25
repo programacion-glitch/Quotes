@@ -954,6 +954,9 @@ class DocumentAIExtractor:
                       f"(drivers={len(profile.drivers)}, units={profile.units.count})")
             else:
                 print("    Blue Quote: ni form ni IA produjeron datos usables")
+                confidence_flags.append(ConfidenceFlag(
+                    "blue_quote",
+                    "Blue Quote could not be extracted by form parser or AI"))
 
         # Step 3: Extract CDL (AI) — update driver-level data
         if "CDL" in classified:

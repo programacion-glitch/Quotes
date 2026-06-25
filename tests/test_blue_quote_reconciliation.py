@@ -2,6 +2,7 @@
 hace ganar al form."""
 from modules.document_ai_extractor import DocumentAIExtractor
 from modules.extraction_reconciler import ExtractionFields
+from modules.quote_profile import ApplicantProfile, UnitsProfile, DriverProfile
 
 
 def test_ai_fields_returns_extractionfields(monkeypatch):
@@ -51,10 +52,6 @@ def test_ai_fields_returns_none_when_no_business_name(monkeypatch):
     monkeypatch.setattr(ex, "_extract_ai_document", lambda *a, **k: {"business_name": ""})
     fields = ex._extract_blue_quote_ai_fields({"filename": "BQ.pdf", "data": b"x"})
     assert fields is None
-
-
-from modules.quote_profile import ApplicantProfile, UnitsProfile, DriverProfile
-from modules.extraction_reconciler import ExtractionFields
 
 
 def test_extract_all_form_drivers_win(monkeypatch):
