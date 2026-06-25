@@ -8,6 +8,7 @@ con la sección RPA inyectada y los PDFs adjuntos.
 """
 
 import json
+import os
 import time
 from typing import Callable, List
 
@@ -60,12 +61,21 @@ def classify_result(result) -> tuple:
 
 class QuoteWorker:
     def __init__(self, mga: str, store, create_quote: Callable, gmail,
-                 label_processed: str = "Cotizado-Bot"):
+                 label_processed: str = "Cotizado-Bot",
+                 drive_manager=None):
         self.mga = mga
         self.store = store
         self.create_quote = create_quote   # (profile, effective_date) -> QuoteResult
         self.gmail = gmail                  # GmailClient (send_threaded/add_label)
         self.label_processed = label_processed
+        # Subida de la indicación a Drive (best-effort). Se puede desactivar con
+        # DRIVE_UPLOAD_ENABLED=false. El DriveManager se crea perezosamente.
+        self._drive = drive_manager
+        self._drive_failed = False
+        self._upload_enabled = (
+            os.getenv("DRIVE_UPLOAD_ENABLED", "true").strip().lower()
+            in ("1", "true", "yes", "on")
+        )
 
     def run_once(self) -> bool:
         """Procesa un job. Devuelve True si tomó uno, False si la cola estaba vacía."""
@@ -101,8 +111,47 @@ class QuoteWorker:
             job.id, JobStatus(status), premium=premium, quote_number=quote_number,
             pdf_path=pdf_path, screenshot_path=screenshot, error=reason,
         )
+        # Subir la indicación (PDF) a la carpeta del cliente en Drive.
+        if status == "quoted" and pdf_path:
+            self._upload_indication(profile, pdf_path)
         self.maybe_send_submission_email(job.submission_id)
         return True
+
+    def _get_drive(self):
+        """Crea el DriveManager una sola vez (perezoso). Devuelve None si la
+        auth de Drive no está disponible (no debe tumbar el worker)."""
+        if self._drive is not None:
+            return self._drive
+        if self._drive_failed:
+            return None
+        try:
+            from modules.drive_manager import DriveManager
+            dm = DriveManager()
+            if not dm.service:
+                self._drive_failed = True
+                return None
+            self._drive = dm
+            return dm
+        except Exception as e:
+            print(f"    [worker:{self.mga}] DriveManager init warn: {e}")
+            self._drive_failed = True
+            return None
+
+    def _upload_indication(self, profile, pdf_path: str) -> None:
+        if not self._upload_enabled:
+            return
+        try:
+            dm = self._get_drive()
+            if not dm:
+                return
+            dm.upload_quote_indication(
+                business_name=profile.applicant.business_name,
+                usdot=profile.applicant.usdot,
+                pdf_path=pdf_path,
+                carrier=self.mga,
+            )
+        except Exception as e:  # Drive nunca debe tumbar el flujo
+            print(f"    [worker:{self.mga}] drive upload warn: {e}")
 
     def maybe_send_submission_email(self, submission_id: str) -> bool:
         """Si todos los jobs terminaron, manda el correo de análisis UNA vez."""

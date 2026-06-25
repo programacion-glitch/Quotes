@@ -6,16 +6,22 @@ Domain-Wide Delegation impersonation.
 """
 
 import os
+import re
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
+from google.auth.transport.requests import Request
 from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from modules.config_manager import get_config
+
+_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 
 
 def _env_flag(var_name: str, default: bool = False) -> bool:
@@ -37,6 +43,17 @@ class DriveManager:
         self.credentials_path = self.config.get(
             "drive.credentials_path",
             "config/drivequotes-10596e569f01.json",
+        )
+        # Modo de auth de Drive: 'user_oauth' (sube como el usuario dueño de la
+        # carpeta — necesario para carpetas de My Drive, p.ej. quotes@) o
+        # 'service_account' (solo sirve para Shared Drives). Default SA por
+        # compatibilidad; se setea por env DRIVE_AUTH_MODE.
+        self.drive_auth_mode = (
+            os.getenv("DRIVE_AUTH_MODE")
+            or self.config.get("drive.auth_mode", "service_account")
+        ).strip().lower()
+        self.user_token_path = self.config.get(
+            "drive.user_token_path", "data/token.json"
         )
         self.main_folder_id = os.getenv("DRIVE_MAIN_FOLDER_ID")
 
@@ -71,6 +88,9 @@ class DriveManager:
 
     def _authenticate(self):
         """Authenticate with Google Drive API."""
+        if self.drive_auth_mode == "user_oauth":
+            return self._authenticate_user_oauth()
+
         creds_path = Path(self.project_root()) / self.credentials_path
         if not creds_path.exists():
             print(f"⚠️ Drive credentials not found at: {creds_path}")
@@ -120,6 +140,53 @@ class DriveManager:
             return service
         except Exception as e:
             print(f"✗ Failed to authenticate with Google Drive: {e}")
+            return None
+
+    def _authenticate_user_oauth(self):
+        """Auth como USUARIO (OAuth) — sube como el dueño de la carpeta (con
+        cuota). Reusa el token de quotes@ (data/token.json), que debe incluir
+        el scope de Drive (re-consentir con scripts/gmail_oauth_bootstrap.py)."""
+        token_path = Path(self.project_root()) / self.user_token_path
+        if not token_path.exists():
+            print(f"⚠️ Drive (user OAuth): token no encontrado en {token_path}. "
+                  f"Corré scripts/gmail_oauth_bootstrap.py (con scope de Drive).")
+            return None
+        try:
+            creds = UserCredentials.from_authorized_user_file(str(token_path))
+        except Exception as e:
+            print(f"✗ Drive (user OAuth): no se pudo cargar el token: {e}")
+            return None
+
+        if _DRIVE_SCOPE not in (creds.scopes or []):
+            print(f"⚠️ Drive (user OAuth): el token NO tiene scope de Drive "
+                  f"(scopes={creds.scopes}). Re-consentí con scope drive "
+                  f"(scripts/gmail_oauth_bootstrap.py). No se subirá a Drive.")
+            return None
+
+        try:
+            if not creds.valid:
+                if creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                    token_path.write_text(creds.to_json(), encoding="utf-8")
+                else:
+                    print("✗ Drive (user OAuth): token inválido / sin refresh "
+                          "token. Re-consentí.")
+                    return None
+            service = build("drive", "v3", credentials=creds,
+                            cache_discovery=False)
+            about = service.about().get(fields="user(emailAddress)").execute()
+            email = about.get("user", {}).get("emailAddress", "user")
+            self.auth_mode = "user_oauth"
+            self.auth_identity = email
+            print(f"  Drive: Authenticated as {email} (user OAuth)")
+            return service
+        except Exception as e:
+            msg = str(e)
+            if "has not been used" in msg or "is disabled" in msg:
+                print(f"✗ Drive (user OAuth): Drive API deshabilitada en el "
+                      f"proyecto de quotes@. Habilitala. Detalle: {e}")
+            else:
+                print(f"✗ Drive (user OAuth) auth falló: {e}")
             return None
 
     def _is_folder_in_shared_drive(self, folder_id: str) -> Optional[bool]:
@@ -235,6 +302,142 @@ class DriveManager:
             print(f"⚠️ Drive: Could not list existing files in folder '{folder_id}': {e}")
             return None
 
+    @staticmethod
+    def _norm(s: str) -> str:
+        """Normaliza para comparar nombres: solo alfanuméricos en mayúscula."""
+        return "".join(ch for ch in (s or "").upper() if ch.isalnum())
+
+    def _find_client_folder(self, business_name: str, usdot: str) -> Optional[str]:
+        """Busca la carpeta del cliente en main_folder_id. Match por NÚMERO de
+        DOT donde sea que aparezca (USDOT/US DOT/DOT); si no, por nombre de
+        negocio normalizado. Devuelve el folder_id o None."""
+        if not self.service or not self.main_folder_id:
+            return None
+        parent = self.main_folder_id
+        fmime = "application/vnd.google-apps.folder"
+        digits = re.sub(r"\D", "", str(usdot or ""))
+
+        # 1) por número de DOT (robusto a 'USDOT 123' / 'US DOT 123' / 'DOT 123')
+        if digits and len(digits) >= 5:
+            try:
+                res = self.service.files().list(
+                    q=(f"'{parent}' in parents and mimeType='{fmime}' "
+                       f"and name contains '{digits}' and trashed=false"),
+                    spaces="drive", fields="files(id,name)",
+                    supportsAllDrives=True, includeItemsFromAllDrives=True,
+                    pageSize=50,
+                ).execute()
+                cands = [f for f in res.get("files", [])
+                         if digits in re.sub(r"\D", "", f["name"])]
+            except Exception as e:
+                print(f"⚠️ Drive: error buscando carpeta por DOT {digits}: {e}")
+                cands = []
+            if cands:
+                bn = self._norm(business_name)
+                for f in cands:  # preferir el que además matchee el negocio
+                    if bn and bn[:10] and bn[:10] in self._norm(f["name"]):
+                        return f["id"]
+                return cands[0]["id"]
+
+        # 2) por nombre de negocio (primera palabra como ancla del query)
+        bn = self._norm(business_name)
+        words = (business_name or "").strip().split()
+        if bn and words:
+            token = words[0].replace("'", "\\'")
+            try:
+                res = self.service.files().list(
+                    q=(f"'{parent}' in parents and mimeType='{fmime}' "
+                       f"and name contains '{token}' and trashed=false"),
+                    spaces="drive", fields="files(id,name)",
+                    supportsAllDrives=True, includeItemsFromAllDrives=True,
+                    pageSize=100,
+                ).execute()
+                for f in res.get("files", []):
+                    if bn[:12] in self._norm(f["name"]):
+                        return f["id"]
+            except Exception as e:
+                print(f"⚠️ Drive: error buscando carpeta por nombre: {e}")
+        return None
+
+    def _find_or_create_client_folder(self, business_name: str,
+                                      usdot: str) -> Optional[str]:
+        fid = self._find_client_folder(business_name, usdot)
+        if fid:
+            return fid
+        digits = re.sub(r"\D", "", str(usdot or ""))
+        bname = (business_name or "UNKNOWN").strip()
+        name = f"{bname} USDOT {digits}" if digits else bname
+        print(f"  Drive: carpeta de cliente no encontrada; creando '{name}'")
+        return self._get_or_create_folder(name, parent_id=self.main_folder_id)
+
+    def _find_or_create_quotes_subfolder(self,
+                                         client_folder_id: str) -> Optional[str]:
+        """Reusa una subcarpeta cuyo nombre contenga 'QUOTE' (p.ej. '2) QUotes');
+        si no existe, crea '2) Quotes'."""
+        fmime = "application/vnd.google-apps.folder"
+        try:
+            res = self.service.files().list(
+                q=(f"'{client_folder_id}' in parents and mimeType='{fmime}' "
+                   f"and trashed=false"),
+                spaces="drive", fields="files(id,name)",
+                supportsAllDrives=True, includeItemsFromAllDrives=True,
+                pageSize=100,
+            ).execute()
+            for f in res.get("files", []):
+                if "QUOTE" in (f["name"] or "").upper():
+                    return f["id"]
+        except Exception as e:
+            print(f"⚠️ Drive: error listando subcarpetas de quotes: {e}")
+        return self._get_or_create_folder("2) Quotes",
+                                          parent_id=client_folder_id)
+
+    def upload_quote_indication(self, business_name: str, usdot: str,
+                                pdf_path: str, carrier: str = "Progressive",
+                                when: Optional[datetime] = None) -> Optional[str]:
+        """Sube el PDF de indicación a
+        <carpeta cliente>/2) Quotes/'YYYYMMDD - Indications <carrier>.pdf'.
+        Best-effort: devuelve file_id, 'exists' si ya estaba, o None. NUNCA
+        levanta (un fallo de Drive no debe tumbar el flujo de cotización)."""
+        if not self.service:
+            print("⚠️ Drive no inicializado; no se sube la indicación.")
+            return None
+        if not self.main_folder_id:
+            print("⚠️ DRIVE_MAIN_FOLDER_ID no seteado; no se sube la indicación.")
+            return None
+        p = Path(pdf_path) if pdf_path else None
+        if not p or not p.exists():
+            print(f"⚠️ Drive: el PDF de indicación no existe: {pdf_path}")
+            return None
+        try:
+            client_id = self._find_or_create_client_folder(business_name, usdot)
+            if not client_id:
+                return None
+            quotes_id = self._find_or_create_quotes_subfolder(client_id)
+            if not quotes_id:
+                return None
+            date_str = (when or datetime.now()).strftime("%Y%m%d")
+            label = {"PROGRESSIVE": "Progressive", "GEICO": "GEICO"}.get(
+                (carrier or "").upper(), (carrier or "Quote").title())
+            fname = f"{date_str} - Indications {label}.pdf"
+
+            existing = self._list_existing_file_keys(quotes_id) or set()
+            if self._filename_key(fname) in existing:
+                print(f"  Drive: '{fname}' ya existe; no se re-sube.")
+                return "exists"
+
+            media = MediaFileUpload(str(p), mimetype="application/pdf",
+                                    resumable=True)
+            created = self.service.files().create(
+                body={"name": fname, "parents": [quotes_id]},
+                media_body=media, fields="id", supportsAllDrives=True,
+            ).execute()
+            print(f"  Drive: indicación subida → '{fname}' "
+                  f"(id={created.get('id')})")
+            return created.get("id")
+        except Exception as e:
+            print(f"✗ Drive: error subiendo la indicación: {e}")
+            return None
+
     def upload_files_for_client(self, business_name: str, usdot: str, attachments: List[Dict]) -> bool:
         """
         Upload all related files for a specific client into their own folder.
@@ -264,12 +467,9 @@ class DriveManager:
                     "Uploads may fail if it belongs to My Drive."
                 )
 
-        usdot_str = str(usdot).strip() if usdot else "UNKNOWN"
-        bname_str = str(business_name).strip() if business_name else "UNKNOWN"
-        client_folder_name = f"{bname_str} USDOT {usdot_str}"
-
-        print(f"  Drive: Creating/finding folder '{client_folder_name}'...")
-        client_folder_id = self._get_or_create_folder(client_folder_name, parent_id=self.main_folder_id)
+        print(f"  Drive: buscando/creando carpeta de cliente para "
+              f"'{business_name}' (USDOT {usdot})...")
+        client_folder_id = self._find_or_create_client_folder(business_name, usdot)
 
         if not client_folder_id:
             return False

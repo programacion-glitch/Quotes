@@ -11,15 +11,27 @@ Usage:
     python scripts/gmail_oauth_bootstrap.py
 """
 
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+# Google suele devolver scopes extra (openid/email) o en otro orden; relajamos
+# la validación para que el flujo no falle por "Scope has changed".
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-from modules.gmail_api_otp_reader import SCOPES
+# Token COMBINADO para quotes@: Gmail (leer/enviar/etiquetar) + Drive (subir
+# las indicaciones a '1) QUOTES', que es de quotes@). Los clientes en runtime
+# piden cada uno su subconjunto (gmail.modify ó drive), así que un token con
+# ambos scopes les sirve a todos.
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/drive",
+]
 
 CREDENTIALS = ROOT / "data" / "credentials.json"
 TOKEN = ROOT / "data" / "token.json"
