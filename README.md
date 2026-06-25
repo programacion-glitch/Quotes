@@ -157,10 +157,13 @@ Sin esto el bot **cotiza y responde igual**, solo no sube los PDFs a Drive. Para
 2. Usar/crear la SA `csquotes@drivequotes.iam.gserviceaccount.com` → pestaña **Claves → Crear clave nueva → JSON**. Se descarga `drivequotes-<KEY_ID>.json` (el `<KEY_ID>` cambia en cada descarga).
 3. Dejar el archivo en `config/drivequotes-<KEY_ID>.json` y apuntar la config:
    `config/settings.yaml` → `drive.credentials_path: "config/drivequotes-<KEY_ID>.json"`.
-4. **Compartir la carpeta de Drive** (`DRIVE_MAIN_FOLDER_ID`) con `csquotes@drivequotes.iam.gserviceaccount.com` como **Editor** (sin esto la SA no puede escribir).
+4. **Dar acceso de escritura al SA sobre el destino** (`DRIVE_MAIN_FOLDER_ID`):
+   - Si es una **carpeta de My Drive** (ID empieza con `1…`): compartirla con `csquotes@drivequotes.iam.gserviceaccount.com` como **Editor**.
+   - Si es una **Unidad Compartida / Shared Drive** (ID empieza con `0A…`, **este es el caso actual**: `0ALmdSjy0qv6gUk9PVA`): agregar al SA como **miembro** de la unidad con rol **Administrador de contenido** (Content Manager) o **Colaborador**.
 5. Reiniciar el bot. En el log debe verse `Drive: Authenticated as … (service account)` (o `(delegated user)` si hay Domain-Wide Delegation configurada para impersonar `programacion@`).
 
-> El modo **delegación (DWD)** sube como `programacion@`; requiere autorizar el client_id de la SA con el scope `drive` en el Admin de Google Workspace. Si no está configurado, el bot intenta delegar, falla, y **cae a Service Account** (sube como la propia SA) — por eso el paso 4 (compartir la carpeta) es lo importante.
+> El código ya pasa `supportsAllDrives=True`, así que sube tanto a My Drive como a Shared Drives.
+> El modo **delegación (DWD)** sube como `programacion@`; requiere autorizar el client_id de la SA con el scope `drive` en el Admin de Google Workspace. Si no está configurado, el bot intenta delegar, falla, y **cae a Service Account** (sube como la propia SA). Para una Shared Drive **no hace falta DWD** — basta el paso 4.
 
 ### Excel de configuración
 
