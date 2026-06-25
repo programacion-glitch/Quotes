@@ -26,13 +26,20 @@ from modules.quote_queue.worker import QuoteWorker
 
 
 def poll_once(gmail, orchestrator, subject_filter: str,
-              after_epoch=None) -> int:
-    """Un ciclo del monitor: procesa cada no-leído y lo marca leído (siempre,
-    aun si el procesamiento falla, para no reprocesarlo). Devuelve cuántos vio.
+              after_epoch=None, seen_label: str = "Procesado-Bot") -> int:
+    """Un ciclo del monitor: procesa cada no-leído y lo marca como PROCESADO
+    con una etiqueta (siempre, aun si el procesamiento falla, para no
+    reprocesarlo). Devuelve cuántos vio.
+
+    IMPORTANTE: NO marca leído — el correo queda NO LEÍDO para el equipo humano.
+    La dedup se hace por la etiqueta `seen_label`, que `fetch_unread` excluye en
+    el query (`-label:`). Sin etiquetar, el bot reprocesaría el mismo correo
+    cada ciclo (re-cotizar, re-enviar análisis).
 
     after_epoch: corte por fecha — solo correos recibidos después de ese epoch.
     """
-    emails = gmail.fetch_unread(subject_filter, after_epoch=after_epoch)
+    emails = gmail.fetch_unread(subject_filter, after_epoch=after_epoch,
+                                exclude_label=seen_label)
     for email_data in emails:
         try:
             orchestrator.process_email(email_data)
@@ -41,9 +48,9 @@ def poll_once(gmail, orchestrator, subject_filter: str,
                   f"{email_data.get('subject', '')[:50]}: {e}")
         finally:
             try:
-                gmail.mark_read(email_data["id"])
+                gmail.add_label(email_data["id"], seen_label)
             except Exception as e:
-                print(f"  [monitor] no se pudo marcar leído: {e}")
+                print(f"  [monitor] no se pudo etiquetar como procesado: {e}")
     return len(emails)
 
 
@@ -98,6 +105,9 @@ def run_forever(check_interval: int = 60) -> None:
     store = orchestrator.quote_store
     subject_filter = config.get("email.monitoring.subject_filter", "Submission")
     label = config.get("email.label_processed", "Cotizado-Bot")
+    # Etiqueta de "ya visto por el monitor" — NO se marca leído (a pedido del
+    # usuario los correos quedan NO LEÍDOS). La dedup va por esta etiqueta.
+    seen_label = config.get("email.label_seen", "Procesado-Bot")
     cutoff = _load_or_init_cutoff(_CUTOFF_FILE, time.time())
     from datetime import datetime
     print(f"[runner] corte por fecha: solo correos posteriores a "
@@ -125,7 +135,7 @@ def run_forever(check_interval: int = 60) -> None:
         while True:
             try:
                 n = poll_once(gmail, orchestrator, subject_filter,
-                              after_epoch=cutoff)
+                              after_epoch=cutoff, seen_label=seen_label)
                 if n:
                     print(f"[monitor] procesados {n} correo(s)")
             except Exception as e:

@@ -159,3 +159,12 @@ def test_fetch_unread_includes_after_when_given():
     _, kwargs = svc.users().messages().list.call_args
     assert "after:1750000000" in kwargs["q"]
     assert "is:unread" in kwargs["q"]
+
+
+def test_fetch_unread_excludes_label_when_given():
+    svc = _fake_service_with_messages([])
+    client = GmailClient(service=svc)
+    client.fetch_unread("Submission", exclude_label="Procesado-Bot")
+    _, kwargs = svc.users().messages().list.call_args
+    assert '-label:"Procesado-Bot"' in kwargs["q"]
+    assert "is:unread" in kwargs["q"]

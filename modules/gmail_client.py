@@ -68,11 +68,16 @@ class GmailClient:
     # ---- recibir ----
 
     def fetch_unread(self, subject_filter: Optional[str] = None,
-                     after_epoch: Optional[float] = None) -> List[dict]:
+                     after_epoch: Optional[float] = None,
+                     exclude_label: Optional[str] = None) -> List[dict]:
         """No-leídos que matchean el filtro de asunto, en el dict del flujo.
 
         after_epoch: si se da, solo correos recibidos DESPUÉS de ese epoch
         (término Gmail `after:`), para ignorar el backlog viejo sin tocarlo.
+
+        exclude_label: si se da, excluye los que ya tengan esa etiqueta
+        (término Gmail `-label:`). Así el bot puede dejar los correos NO LEÍDOS
+        y aún no reprocesarlos: se marcan con la etiqueta en vez de leídos.
         """
         svc = self._svc()
         q = "is:unread"
@@ -80,6 +85,8 @@ class GmailClient:
             q += f' subject:"{subject_filter}"'
         if after_epoch:
             q += f" after:{int(after_epoch)}"
+        if exclude_label:
+            q += f' -label:"{exclude_label}"'
         resp = (
             svc.users().messages()
             .list(userId="me", q=q, maxResults=25)

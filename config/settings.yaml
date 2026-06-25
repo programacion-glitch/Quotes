@@ -85,7 +85,8 @@ email:
   # Análisis autónomo (Gmail API): destino y etiqueta
   analysis_to: "${EMAIL_ANALYSIS_TO}"      # default quotes@h2oins.com (.env)
   analysis_cc: "${EMAIL_ANALYSIS_CC}"      # programacion@h2oins.com (.env)
-  label_processed: "Cotizado-Bot"          # etiqueta al correo original
+  label_processed: "Cotizado-Bot"          # etiqueta al correo original (al cotizar)
+  label_seen: "Procesado-Bot"              # etiqueta de "ya visto" (NO marca leído)
 
   # IMAP settings (receiving emails)
   imap:
