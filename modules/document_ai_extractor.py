@@ -910,61 +910,50 @@ class DocumentAIExtractor:
         # if it raises OR if the extracted data is insufficient (flat/scanned PDF).
         if "BLUE QUOTE" in classified:
             att = classified["BLUE QUOTE"]
-            bq_used_ai = False
-            bq_fallback_reason = None
 
-            # --- 2a) Try the form-based extractor ---
+            # --- Fuente 1: form-based (best-effort) ---
+            form_fields = None
             try:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                     tmp.write(att["data"])
                     tmp_path = tmp.name
-
                 try:
-                    extractor = BlueQuotePDFExtractor(tmp_path)
-                    bq_data = extractor.extract()
+                    bq_data = BlueQuotePDFExtractor(tmp_path).extract()
                 finally:
                     Path(tmp_path).unlink(missing_ok=True)
-
-                applicant, commodity, coverages, units, drivers, coverages_detail = self._map_blue_quote_to_profile(bq_data)
-
-                if self._is_blue_quote_sufficient(applicant, commodity, units, drivers, coverages):
-                    profile.applicant = applicant
-                    profile.commodity = commodity
-                    profile.coverages = coverages
-                    profile.coverages_detail = coverages_detail
-                    profile.units = units
-                    profile.drivers = drivers
-                    print(f"    Blue Quote extracted: {applicant.business_name}, commodity={commodity}")
-                else:
-                    bq_fallback_reason = (
-                        f"insufficient form data "
-                        f"(business_name='{applicant.business_name}', commodity='{commodity}', "
-                        f"drivers={len(drivers)}, units={units.count}, coverages={len(coverages)})"
-                    )
+                applicant, commodity, coverages, units, drivers, coverages_detail = \
+                    self._map_blue_quote_to_profile(bq_data)
+                form_fields = ExtractionFields(
+                    applicant=applicant, commodity=commodity, coverages=coverages,
+                    units=units, drivers=drivers, coverages_detail=coverages_detail)
             except Exception as e:
-                bq_fallback_reason = f"extractor raised: {e}"
+                print(f"    Blue Quote form extractor raised: {e}")
 
-            # --- 2b) AI fallback ---
-            if bq_fallback_reason:
-                print(f"    Blue Quote: {bq_fallback_reason} → trying AI fallback")
-                _ai = self._extract_blue_quote_ai_fields(att)
-                if _ai and _ai.applicant and _ai.applicant.business_name:
-                    profile.applicant = _ai.applicant
-                    profile.commodity = _ai.commodity
-                    profile.coverages = _ai.coverages
-                    profile.units = _ai.units
-                    profile.drivers = _ai.drivers
-                    bq_used_ai = True
-                    print(
-                        f"    Blue Quote (AI): {profile.applicant.business_name}, "
-                        f"commodity={profile.commodity}, drivers={len(profile.drivers)}, "
-                        f"units={profile.units.count}"
-                    )
-                else:
-                    print(f"    WARN: Blue Quote AI fallback also failed")
-                    confidence_flags.append(
-                        ConfidenceFlag("blue_quote", "Blue Quote could not be extracted by form parser or AI")
-                    )
+            # --- Fuente 2: IA (best-effort; si el proxy está caído NO rompe) ---
+            ai_fields = None
+            try:
+                ai_fields = self._extract_blue_quote_ai_fields(att)
+            except Exception as e:
+                print(f"    Blue Quote AI extractor raised: {e}")
+
+            # --- Reconciliación (form autoritativo, IA llena huecos) ---
+            reconciled, discrepancies = reconcile(form_fields, ai_fields)
+            for d in discrepancies:
+                print(f"    [reconcile] {d.field}: form={d.form_value}, "
+                      f"IA={d.ai_value} → {d.resolution}")
+
+            if reconciled.applicant and reconciled.applicant.business_name:
+                profile.applicant = reconciled.applicant
+                profile.commodity = reconciled.commodity
+                profile.coverages = reconciled.coverages
+                profile.coverages_detail = reconciled.coverages_detail
+                profile.units = reconciled.units
+                profile.drivers = reconciled.drivers
+                print(f"    Blue Quote extracted: {profile.applicant.business_name}, "
+                      f"commodity={profile.commodity} "
+                      f"(drivers={len(profile.drivers)}, units={profile.units.count})")
+            else:
+                print("    Blue Quote: ni form ni IA produjeron datos usables")
 
         # Step 3: Extract CDL (AI) — update driver-level data
         if "CDL" in classified:

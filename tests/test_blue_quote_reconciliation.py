@@ -51,3 +51,37 @@ def test_ai_fields_returns_none_when_no_business_name(monkeypatch):
     monkeypatch.setattr(ex, "_extract_ai_document", lambda *a, **k: {"business_name": ""})
     fields = ex._extract_blue_quote_ai_fields({"filename": "BQ.pdf", "data": b"x"})
     assert fields is None
+
+
+from modules.quote_profile import ApplicantProfile, UnitsProfile, DriverProfile
+from modules.extraction_reconciler import ExtractionFields
+
+
+def test_extract_all_form_drivers_win(monkeypatch):
+    ex = DocumentAIExtractor()
+
+    # form-based: 4 drivers (mapeado)
+    def fake_map(_self, _bq):
+        return (ApplicantProfile(business_name="ELITE", usdot="2857089"),
+                "BUILDING MATERIALS", ["AL"], UnitsProfile(count=4),
+                [DriverProfile(name=f"D{i}") for i in range(4)], None)
+    monkeypatch.setattr(DocumentAIExtractor, "_map_blue_quote_to_profile", fake_map)
+
+    # BlueQuotePDFExtractor.extract -> dict cualquiera (no se usa por el fake_map)
+    import modules.document_ai_extractor as mod
+    class _FakeBQ:
+        def __init__(self, *a, **k): pass
+        def extract(self): return {"driver_information": [1, 2, 3, 4]}
+    monkeypatch.setattr(mod, "BlueQuotePDFExtractor", _FakeBQ)
+
+    # IA: solo 2 drivers (subconteo)
+    monkeypatch.setattr(ex, "_extract_blue_quote_ai_fields", lambda att:
+        ExtractionFields(applicant=ApplicantProfile(business_name="ELITE"),
+                         commodity="BUILDING MATERIALS", coverages=["AL"],
+                         units=UnitsProfile(count=4),
+                         drivers=[DriverProfile(name="D0"), DriverProfile(name="D1")]))
+
+    att = {"filename": "20260622 BLUE QUOTE.pdf", "data": b"%PDF-1.4"}
+    profile = ex.extract_all([att])
+    assert len(profile.drivers) == 4          # gana el form
+    assert profile.applicant.business_name == "ELITE"
