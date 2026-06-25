@@ -79,6 +79,10 @@ class MappedFields:
 
     # ---- Coverages ----
     coverages: CoveragesProfile = field(default_factory=CoveragesProfile)
+    # El cliente pidió/tiene General Liability (código "GL" en profile.coverages).
+    # Diana 2026-06-25: tildar "General Liability" en la 1ra pregunta de "Other
+    # Business Insurance" de more_business (descuento por tener GL vigente).
+    has_general_liability: bool = False
 
     # ---- Critical-field detection ----
 
@@ -359,4 +363,16 @@ def map_profile_to_fields(
         vehicles=mapped_vehicles,
         drivers=mapped_drivers,
         coverages=coverages_out,
+        has_general_liability=_has_general_liability(profile),
     )
+
+
+def _has_general_liability(profile) -> bool:
+    """True si el cliente solicitó/tiene General Liability.
+
+    profile.coverages es la lista de códigos de cobertura de la Blue Quote
+    (p.ej. ['AL', 'GL', 'MTC', 'APD']). 'GL' presente → tildar General Liability
+    en more_business para el descuento (Diana 2026-06-25).
+    """
+    codes = getattr(profile, "coverages", None) or []
+    return any((str(c) or "").strip().upper() == "GL" for c in codes)

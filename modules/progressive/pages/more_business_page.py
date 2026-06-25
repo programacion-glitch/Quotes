@@ -41,6 +41,7 @@ class MoreBusinessPage(BasePage):
         customer_email: Optional[str] = None,
         federal_filings_required: bool = False,
         snapshot_proview: bool = False,
+        has_general_liability: bool = False,
     ) -> None:
         await self.wait_for_extjs_idle()
         await self.remove_overlays()
@@ -49,7 +50,7 @@ class MoreBusinessPage(BasePage):
             await self._fill_email(customer_email)
 
         await self._answer_currently_insured(currently_insured)
-        await self._answer_other_coverages(other_coverages)
+        await self._answer_other_coverages(other_coverages, has_general_liability)
         await self._answer_federal_filings_conditional(federal_filings_required)
         await self._answer_eld_required_conditional(eld_required)
         await self._answer_snapshot_proview_conditional(snapshot_proview)
@@ -80,19 +81,46 @@ class MoreBusinessPage(BasePage):
                 f"radio locked to resolved value ({e.__class__.__name__})",
             )
 
-    async def _answer_other_coverages(self, choice: str) -> None:
-        print(f"    [Progressive] Other coverages: {choice}")
-        target_labels = ["None of the above"] if choice in ("None", None, "") else [choice]
-        for label in target_labels:
-            checkboxes = self.page.get_by_role("checkbox", name=label, exact=True)
-            n = await checkboxes.count()
-            print(f"    [Progressive] Found {n} '{label}' checkbox(es); ticking each")
-            for i in range(n):
-                cb = checkboxes.nth(i)
+    async def _answer_other_coverages(
+        self, choice: str, has_general_liability: bool = False
+    ) -> None:
+        """Contesta la sección "Other Business Insurance" (descuentos).
+
+        Estructura verificada live 2026-06-25 — DOS preguntas, cada una con sus
+        propios checkboxes (Business Owners Policy / General Liability /
+        [Workers' Compensation] / None of the above):
+          Q1 = "Does the customer CURRENTLY HAVE any of the following...?"
+          Q2 = "...purchase within 45 days WITH PROGRESSIVE...?"
+        Los checkboxes están en orden de DOM (Q1 antes que Q2), así que para un
+        label dado nth(0)=Q1 y nth(1)=Q2.
+
+        Diana 2026-06-25 (#3/#9): si el cliente tiene GL → tildar
+        "General Liability" en Q1 (descuento por cobertura vigente) y dejar
+        "None of the above" en Q2 (no le vendemos pólizas extra por Progressive).
+        Sin GL → "None of the above" en ambas (comportamiento previo).
+        """
+        async def _tick(label: str, which) -> None:
+            cbs = self.page.get_by_role("checkbox", name=label, exact=True)
+            n = await cbs.count()
+            idxs = range(n) if which == "all" else [which] if which < n else []
+            for i in idxs:
                 try:
-                    await self.safe_checkbox(cb, check=True)
+                    await self.safe_checkbox(cbs.nth(i), check=True)
+                    print(f"    [Progressive] Other coverages: ticked '{label}' [q{i + 1}]")
                 except Exception as e:
                     print(f"    [Progressive] WARN: checkbox '{label}'[{i}]: {e}")
+
+        if has_general_liability and choice in ("None", None, ""):
+            print("    [Progressive] Other coverages: GL solicitado → 'General "
+                  "Liability' en Q1, 'None of the above' en Q2")
+            await _tick("General Liability", 0)        # Q1: tiene GL vigente
+            await _tick("None of the above", 1)        # Q2: nada por Progressive
+            return
+
+        # Sin GL (o un coverage explícito): comportamiento previo.
+        label = "None of the above" if choice in ("None", None, "") else choice
+        print(f"    [Progressive] Other coverages: {choice} → '{label}' (todas)")
+        await _tick(label, "all")
 
     async def _answer_federal_filings_conditional(self, required: bool) -> None:
         answer = "Yes" if required else "No"

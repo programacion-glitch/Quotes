@@ -32,6 +32,36 @@ from modules.progressive.unit_matching import normalize_identifier
 from modules.progressive.vehicle_amounts import resolve_gvw, resolve_vehicle_value
 
 
+# Progressive's discrete "farthest one-way distance" brackets (verificado live
+# 2026-06-25): 50 / 100 / 200 / 300 / 500 / More than 500. Hay un bracket
+# DISCRETO de '500 miles' distinto de 'More than 500 miles'.
+_RADIUS_BRACKETS = (50, 100, 200, 300, 500)
+
+
+def radius_to_progressive_option(radius_miles: Optional[str]) -> str:
+    """Mapea el radio de la Blue Quote a la opción del combo de Progressive.
+
+    Un radio de EXACTAMENTE 500 mapea al bracket discreto '500 miles', NO al
+    más caro 'More than 500 miles' (Diana 2026-06-25: el bot lo sobre-estimaba).
+    Frases sin tope ('more than'/'over'/'>'/'unlimited') y >500 → 'More than 500
+    miles'. Vacío/desconocido → 'More than 500 miles' (conservador: nunca
+    sub-estimar el radio, sería tergiversar el riesgo).
+    """
+    r = (radius_miles or "").lower()
+    if any(k in r for k in ("more than", "over", "unlimited", "greater")) or ">" in r:
+        return "More than 500 miles"
+    m = re.search(r"\d+", r.replace(",", ""))
+    if not m:
+        return "More than 500 miles"
+    miles = int(m.group())
+    if miles > 500:
+        return "More than 500 miles"
+    for b in _RADIUS_BRACKETS:
+        if miles <= b:
+            return f"{b} miles"
+    return "More than 500 miles"
+
+
 @dataclass
 class ExistingUnit:
     """A vehicle/trailer Progressive already has on the quote.
@@ -890,20 +920,9 @@ class AddVehiclePage(BasePage):
                 await self.safe_fill(zip_box.first, zip_code, verify=False)
 
     async def _set_distance(self, radius_miles: str) -> None:
-        """Convert simple radius string to Progressive's option label."""
-        r = (radius_miles or "").lower()
-        if "500" in r or "over" in r or "more than" in r:
-            option = "More than 500 miles"
-        elif "300" in r:
-            option = "300 miles"
-        elif "200" in r:
-            option = "200 miles"
-        elif "100" in r:
-            option = "100 miles"
-        elif "50" in r:
-            option = "50 miles"
-        else:
-            option = "More than 500 miles"
+        """Select Progressive's farthest-one-way-distance bracket for a radius."""
+        option = radius_to_progressive_option(radius_miles)
+        print(f"    [Progressive] Radius of operation: {radius_miles!r} -> '{option}'")
         await self._set_combobox_by_label(
             "Farthest one-way distance this vehicle typically travels", option
         )

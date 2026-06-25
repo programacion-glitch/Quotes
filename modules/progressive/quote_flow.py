@@ -167,6 +167,7 @@ class QuoteFlow:
                 other_coverages="None",
                 eld_required=False,
                 customer_email=fields.owner_email,  # Diana 2026-06-25: faltaba el email del cliente
+                has_general_liability=fields.has_general_liability,  # Diana #3: tildar GL (descuento)
             )
             result.warnings.extend(more_biz.warnings)
 
