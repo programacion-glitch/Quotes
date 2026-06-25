@@ -8,6 +8,7 @@ fuentes puede ser None.
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field, fields as dataclass_fields
 from typing import List, Optional
 
@@ -41,7 +42,15 @@ def _empty(v) -> bool:
 
 def _merge_applicant(form: Optional[ApplicantProfile],
                      ai: Optional[ApplicantProfile]) -> Optional[ApplicantProfile]:
-    """Por cada campo: gana el form si no está vacío; si no, la IA."""
+    """Por cada campo: gana el form si no está vacío; si no, la IA.
+
+    Nota: ApplicantProfile tiene campos con defaults NO vacíos (state="TX",
+    is_new_venture=True). Como esos defaults no son vacíos, gana el valor del
+    form aun cuando el extractor solo dejó el default. Es intencional: el form
+    es autoritativo y parsea state desde la dirección en Blue Quotes rellenables;
+    TX es el mercado por default; is_new_venture se re-deriva aguas abajo desde
+    el subject del email.
+    """
     if form is None:
         return ai
     if ai is None:
@@ -55,16 +64,16 @@ def _merge_applicant(form: Optional[ApplicantProfile],
 
 
 def reconcile(form: Optional[ExtractionFields],
-              ai: Optional[ExtractionFields]):
+              ai: Optional[ExtractionFields]) -> "tuple[ExtractionFields, list[Discrepancy]]":
     """Devuelve (ExtractionFields reconciliado, [Discrepancy])."""
     discrepancies: List[Discrepancy] = []
 
     if form is None and ai is None:
         return ExtractionFields(), discrepancies
     if form is None:
-        return ai, discrepancies
+        return copy.copy(ai), discrepancies
     if ai is None:
-        return form, discrepancies
+        return copy.copy(form), discrepancies
 
     out = ExtractionFields()
     out.applicant = _merge_applicant(form.applicant, ai.applicant)
