@@ -82,3 +82,28 @@ def test_extract_all_form_drivers_win(monkeypatch):
     profile = ex.extract_all([att])
     assert len(profile.drivers) == 4          # gana el form
     assert profile.applicant.business_name == "ELITE"
+
+
+def test_extract_all_ai_only_keeps_coverages_detail(monkeypatch):
+    # PDF plano: el form extractor revienta -> form_fields=None -> AI-only.
+    # coverages_detail NO debe quedar None (rompería los field mappers).
+    import modules.document_ai_extractor as mod
+    from modules.quote_profile import CoveragesProfile
+    ex = DocumentAIExtractor()
+
+    class _BoomBQ:
+        def __init__(self, *a, **k):
+            pass
+        def extract(self):
+            raise RuntimeError("flat pdf")
+    monkeypatch.setattr(mod, "BlueQuotePDFExtractor", _BoomBQ)
+    monkeypatch.setattr(ex, "_extract_blue_quote_ai_fields", lambda att:
+        ExtractionFields(applicant=ApplicantProfile(business_name="RYD"),
+                         commodity="X", coverages=["AL"],
+                         units=UnitsProfile(count=2),
+                         drivers=[DriverProfile(name="A")]))
+    att = {"filename": "BLUE QUOTE.pdf", "data": b"%PDF-1.4"}
+    profile = ex.extract_all([att])
+    assert profile.coverages_detail is not None
+    assert isinstance(profile.coverages_detail, CoveragesProfile)
+    assert len(profile.drivers) == 1

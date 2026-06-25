@@ -946,7 +946,7 @@ class DocumentAIExtractor:
                 profile.applicant = reconciled.applicant
                 profile.commodity = reconciled.commodity
                 profile.coverages = reconciled.coverages
-                profile.coverages_detail = reconciled.coverages_detail
+                profile.coverages_detail = reconciled.coverages_detail or CoveragesProfile()
                 profile.units = reconciled.units
                 profile.drivers = reconciled.drivers
                 print(f"    Blue Quote extracted: {profile.applicant.business_name}, "
