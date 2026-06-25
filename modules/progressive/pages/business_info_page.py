@@ -887,6 +887,27 @@ class BusinessInfoPage(BasePage):
                 except Exception:
                     pass
 
+        # A risk Progressive intends to decline can stall the START submission
+        # (no advance) and sometimes renders the decline notice in place rather
+        # than navigating. Surface that explicitly so it's reported as a carrier
+        # decline (not_eligible), not a generic "required field" error
+        # (live ALMA FORCE 2026-06-25: USDOT history failed acceptability).
+        try:
+            decline = self.page.get_by_text(
+                "Unable to Provide a Quote", exact=False
+            )
+            if await decline.count() > 0 and await decline.first.is_visible():
+                await self.screenshot("start_quote_declined")
+                raise RuntimeError(
+                    "Progressive DECLINED this risk ('We are Unable to Provide a "
+                    "Quote For This Risk') — carrier underwriting decline, not a "
+                    "bot error."
+                )
+        except RuntimeError:
+            raise
+        except Exception:
+            pass
+
         errors = await self._collect_validation_errors()
         await self.screenshot("start_quote_did_not_advance")
         raise RuntimeError(

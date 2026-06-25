@@ -53,7 +53,13 @@ def classify_result(result) -> tuple:
     err = (getattr(result, "error", None) or "").lower()
     if "ssn" in err or "social security" in err:
         return ("halted", "needs_ssn", premium, quote_number, pdf_path)
-    if "elegib" in err or "fmcsa" in err or "unable to complete" in err:
+    if (
+        "elegib" in err or "fmcsa" in err or "unable to complete" in err
+        # Decline de underwriting de Progressive (historial USDOT / criterios
+        # de aceptabilidad) — riesgo no cotizable, no es un bug.
+        or "declined" in err or "unable to provide a quote" in err
+        or "acceptability" in err
+    ):
         return ("halted", "not_eligible", premium, quote_number, pdf_path)
 
     return ("failed", "error", premium, quote_number, pdf_path)

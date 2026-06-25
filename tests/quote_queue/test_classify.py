@@ -44,6 +44,22 @@ def test_progressive_ssn_via_error_text():
     assert (status, reason) == ("halted", "needs_ssn")
 
 
+def test_progressive_decline_is_not_eligible():
+    # Mensaje real de _check_declined (live ALMA FORCE 2026-06-25): un decline
+    # de underwriting de Progressive debe clasificar como halted/not_eligible,
+    # NO como 'failed' (no es un bug, el riesgo no es cotizable).
+    r = SimpleNamespace(
+        success=False,
+        error=(
+            "Progressive DECLINED this risk: 'We are Unable to Provide a Quote "
+            "For This Risk'. This is a carrier underwriting decline, not a bot "
+            "error. Reason: ... does not meet Progressive's acceptability criteria."
+        ),
+    )
+    status, reason, *_ = classify_result(r)
+    assert (status, reason) == ("halted", "not_eligible")
+
+
 def test_unknown_failure_is_error():
     r = SimpleNamespace(success=False, error="boom at line 42")
     status, reason, *_ = classify_result(r)

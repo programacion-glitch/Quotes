@@ -136,6 +136,19 @@ class QuoteFlow:
             if hasattr(biz_page, "warnings") and biz_page.warnings:
                 result.warnings.extend(biz_page.warnings)
 
+            # Progressive can DECLINE a risk right after START — it replaces the
+            # wizard body with "We are Unable to Provide a Quote For This Risk"
+            # (e.g. a USDOT whose operating history doesn't meet acceptability
+            # criteria). The URL leaves BusinessOwnerInfo, so _click_start_quote
+            # thinks it advanced; downstream steps then fail cryptically (live
+            # ALMA FORCE 2026-06-25: declined → vehicles reported "never reached
+            # the tile picker"). Detect it and HALT with a clear reason.
+            decline = await self._check_declined(wizard_page)
+            if decline:
+                result.error = decline
+                result.screenshot_path = await self._take_error_screenshot("declined")
+                return result  # halted/not_eligible (no premium)
+
             # Step 4: VEHICLES (loop over fields.vehicles)
             result.step_reached = "vehicles"
             await self._add_all_vehicles(wizard_page, fields, result)
@@ -456,6 +469,38 @@ class QuoteFlow:
                     "blue quote. Verify driver license_number is correct or supply SSN."
                 )
                 result.screenshot_path = await no_hit.screenshot("nohit_halt")
+
+    async def _check_declined(self, page: Page) -> Optional[str]:
+        """Detect Progressive's 'Unable to Provide a Quote For This Risk' page.
+
+        Progressive declines some risks outright (USDOT operating history /
+        acceptability criteria) and swaps the wizard body for a decline notice
+        while the URL still leaves BusinessOwnerInfo. Return a clear,
+        human-readable decline reason (so the analysis email says WHY this risk
+        can't be quoted), or None when the page is the normal wizard.
+        """
+        try:
+            marker = page.get_by_text("Unable to Provide a Quote", exact=False)
+            if await marker.count() == 0 or not await marker.first.is_visible():
+                return None
+            reason = (
+                "Progressive DECLINED this risk: 'We are Unable to Provide a "
+                "Quote For This Risk'. This is a carrier underwriting decline, "
+                "not a bot error."
+            )
+            # Append Progressive's own explanation when present (acceptability
+            # criteria paragraph) for an actionable analysis email.
+            try:
+                para = page.get_by_text("acceptability criteria", exact=False)
+                if await para.count() > 0 and await para.first.is_visible():
+                    detail = (await para.first.inner_text()).strip()
+                    if detail:
+                        reason += f" Reason: {detail}"
+            except Exception:
+                pass
+            return reason
+        except Exception:
+            return None
 
     async def _take_error_screenshot(self, step: str) -> Optional[str]:
         try:
