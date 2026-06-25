@@ -148,7 +148,7 @@ class CoveragesProfile:
     # Per-vehicle add-ons (apply to ALL vehicles)
     medical_payments_limit: Optional[str] = None         # e.g. "$5,000". None = decline
     rental_reimbursement_limit: Optional[str] = None     # e.g. "$30 per day, $900 max"
-    roadside_assistance: str = "Selected w/ $0 Deductible"  # default selected
+    roadside_assistance: str = "Selected w/ $250 Deductible"  # Diana 2026-06-25: debe ir seleccionado
     fire_theft_cac: Optional[str] = None                 # Fire & Theft w/ CAC limit; None = decline
 
     # Cargo

@@ -153,6 +153,7 @@ class QuoteFlow:
                 currently_insured=False,
                 other_coverages="None",
                 eld_required=False,
+                customer_email=fields.owner_email,  # Diana 2026-06-25: faltaba el email del cliente
             )
             result.warnings.extend(more_biz.warnings)
 

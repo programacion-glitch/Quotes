@@ -175,8 +175,12 @@ class CoveragesRatesPage(BasePage):
                 coverages.rental_reimbursement_limit,
             )
 
-        # Roadside Assistance (per vehicle) - default "Selected w/ $0 Deductible"
-        if coverages.roadside_assistance != "Selected w/ $0 Deductible":
+        # Roadside Assistance (per vehicle) — Diana 2026-06-25: debe ir SIEMPRE
+        # seleccionado. Antes se saltaba cuando el valor era el default y
+        # Progressive lo dejaba en 'Not selected' (no se agregaba). Ahora se
+        # aplica siempre, salvo que explícitamente sea 'Not selected'.
+        if (coverages.roadside_assistance
+                and coverages.roadside_assistance.strip().lower() != "not selected"):
             await self._set_combobox_all("Roadside Assistance", coverages.roadside_assistance)
 
         # Fire & Theft w/ Combined Additional Coverage (per vehicle)
