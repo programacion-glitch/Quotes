@@ -75,6 +75,31 @@ def test_mark_terminal_sets_results_and_clears_lease(store):
     assert job.lease_until is None
 
 
+def test_mark_terminal_coerces_pathlib_screenshot(store):
+    """Regresión: Progressive falla → screenshot_path es un pathlib.Path.
+
+    Antes esto crasheaba con "Error binding parameter 4 - probably unsupported
+    type" y dejaba el job colgado en RUNNING (no se mandaba el correo). El borde
+    de persistencia debe stringificar el Path, no reventar.
+    """
+    from pathlib import Path
+
+    job_id = store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "4452732")
+    store.claim_next("PROGRESSIVE")
+    store.mark_terminal(
+        job_id, JobStatus.FAILED, error="error",
+        screenshot_path=Path("logs/progressive_business_info.png"),
+        pdf_path=Path("data/quote_pdfs/x.pdf"),
+    )
+    job = store.get_jobs("sub-1")[0]
+    assert job.status == JobStatus.FAILED.value
+    assert isinstance(job.screenshot_path, str)
+    assert job.screenshot_path.endswith("progressive_business_info.png")
+    assert isinstance(job.pdf_path, str)
+    assert job.pdf_path.endswith("x.pdf")
+    assert job.lease_until is None
+
+
 def test_mark_terminal_rejects_non_terminal_status(store):
     job_id = store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111")
     with pytest.raises(ValueError):

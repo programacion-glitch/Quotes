@@ -16,6 +16,22 @@ from typing import List, Optional
 from modules.quote_queue.models import QuoteJob, JobStatus, TERMINAL_STATUSES
 
 
+def _sqlite_safe(value):
+    """Coacciona un valor a un tipo bindeable por sqlite3.
+
+    sqlite3 solo bindea None / int / float / str / bytes. Los resultados de los
+    clientes RPA traen tipos que NO son nativos (p.ej. ``screenshot_path`` es un
+    ``pathlib.Path``, un premium puede venir como ``Decimal``), y bindearlos
+    crashea con "Error binding parameter N - probably unsupported type",
+    tumbando el guardado terminal del job (→ no se manda el correo, el job queda
+    colgado). Este borde de persistencia nunca debe confiar en que el caller
+    pase solo tipos nativos: lo que no es nativo se stringifica.
+    """
+    if value is None or isinstance(value, (int, float, str, bytes)):
+        return value
+    return str(value)
+
+
 class QuoteQueueStore:
     def __init__(self, db_path):
         self.db_path = str(db_path)
@@ -158,8 +174,9 @@ class QuoteQueueStore:
                 "UPDATE quote_jobs SET status=?, premium=?, quote_number=?, "
                 "pdf_path=?, screenshot_path=?, error=?, lease_until=NULL, "
                 "updated_at=? WHERE id=?",
-                (status.value, premium, quote_number, pdf_path,
-                 screenshot_path, error, now, job_id),
+                (status.value, _sqlite_safe(premium), _sqlite_safe(quote_number),
+                 _sqlite_safe(pdf_path), _sqlite_safe(screenshot_path),
+                 _sqlite_safe(error), now, job_id),
             )
             self._conn.commit()
 
