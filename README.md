@@ -199,12 +199,17 @@ Ver [ARCHITECTURE.md](ARCHITECTURE.md) para detalles técnicos de cada módulo.
 ## 🤝 Ejecución
 
 ```bash
-# Monitorear emails (modo producción)
-python workflow_orchestrator.py
+# Bot autónomo (entrypoint real): monitor de inbox + workers por MGA
+python -m modules.quote_queue.runner
+# …o en Docker (recomendado en producción):
+docker compose up -d
 
-# Ejecutar tests de componentes
-python test_mga_forwarding.py
+# Tests
+python -m pytest -q
 ```
+
+> El entrypoint del bot es `modules/quote_queue/runner.py` (lo usa el Dockerfile).
+> `workflow_orchestrator.py` ya NO se corre directo (es una librería del pipeline).
 
 ---
 
