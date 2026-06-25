@@ -123,10 +123,18 @@ def run_forever(check_interval: int = 60) -> None:
     print(f"[runner] monitoreando '{subject_filter}' cada {check_interval}s")
     try:
         while True:
-            n = poll_once(gmail, orchestrator, subject_filter,
-                          after_epoch=cutoff)
-            if n:
-                print(f"[monitor] procesados {n} correo(s)")
+            try:
+                n = poll_once(gmail, orchestrator, subject_filter,
+                              after_epoch=cutoff)
+                if n:
+                    print(f"[monitor] procesados {n} correo(s)")
+            except Exception as e:
+                # Errores transitorios de red/API (TimeoutError [WinError 10060],
+                # RemoteDisconnected, HttpError 5xx...) NO deben tumbar el runner:
+                # se loguea y se reintenta el próximo ciclo. Los workers siguen
+                # vivos. KeyboardInterrupt NO es Exception → escapa a la salida.
+                print(f"[monitor] ciclo falló ({type(e).__name__}: {e}); "
+                      f"reintento en {check_interval}s")
             time.sleep(check_interval)
     except KeyboardInterrupt:
         print("\n[runner] apagando...")
