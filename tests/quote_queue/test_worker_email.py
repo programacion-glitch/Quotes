@@ -45,6 +45,39 @@ def test_worker_sends_threaded_with_pdfs_and_labels(tmp_path):
     gmail.add_label.assert_called_once_with("m-orig", "Cotizado-Bot")
 
 
+def test_worker_attaches_decline_screenshot_as_evidence(tmp_path):
+    """Diana 2026-06-25: cuando un MGA web declina, adjuntar el screenshot de
+    evidencia. Un job no-quoted con screenshot_path se adjunta; uno quoted NO
+    (ese tiene su PDF)."""
+    store = _store(tmp_path)
+    sub = "sub-ev"
+    store.save_submission_context(sub, json.dumps({
+        "recipient": "quotes@h2oins.com", "cc": None,
+        "thread_id": None, "in_reply_to": None, "message_id": None,
+        "subject": "[ANALISIS]", "body_html": "<!--RPA_QUOTES_SECTION-->",
+        "attachment_paths": [],
+    }))
+    declined = store.enqueue(sub, "GEICO", "{}", None, "1")
+    store.mark_terminal(declined, JobStatus.HALTED, error="not_eligible",
+                        screenshot_path="logs/geico_not_eligible.png")
+    quoted = store.enqueue(sub, "PROGRESSIVE", "{}", None, "1")
+    store.mark_terminal(quoted, JobStatus.QUOTED, premium="$1", quote_number="Q",
+                        pdf_path="data/quote_pdfs/p.pdf",
+                        screenshot_path="logs/progressive_final.png")
+
+    gmail = MagicMock()
+    gmail.send_threaded.return_value = True
+    worker = QuoteWorker("GEICO", store, create_quote=lambda *a: None, gmail=gmail)
+
+    assert worker.maybe_send_submission_email(sub) is True
+    _, kwargs = gmail.send_threaded.call_args
+    atts = kwargs["attachments"]
+    assert "logs/geico_not_eligible.png" in atts, "evidencia de decline adjunta"
+    assert "data/quote_pdfs/p.pdf" in atts, "PDF de la cotización exitosa adjunto"
+    assert "logs/progressive_final.png" not in atts, \
+        "el screenshot de un job EXITOSO no se adjunta (ya tiene su PDF)"
+
+
 def _ctx(**over):
     base = {
         "recipient": "quotes@h2oins.com", "cc": None,

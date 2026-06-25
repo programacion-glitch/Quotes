@@ -318,6 +318,15 @@ def build_analysis_email(
     current_carrier_hits = [ev for ev in relevant if _is_current_carrier(ev.mga_name)]
     relevant = [ev for ev in relevant if not _is_current_carrier(ev.mga_name)]
 
+    # MGAs web (Progressive/GEICO): NO se categorizan por reglas. El rule engine
+    # no puede saber si su portal va a cotizar o declinar — eso SOLO lo determina
+    # el RPA, y su veredicto real (cotizó $X / declinado) se muestra en la sección
+    # "Cotizaciones automáticas (RPA)". Mostrarlos también como "elegibles" por
+    # reglas contradice un decline en vivo (Diana 2026-06-25: un MGA declinado por
+    # el RPA NO debe aparecer como opción disponible). Se excluyen de las listas
+    # elegibles/no-elegibles/desbloquea; su resultado vive en la sección RPA.
+    relevant = [ev for ev in relevant if not _is_web_automation_mga(ev.mga_name)]
+
     eligible = [ev for ev in relevant if ev.eligible]
     ineligible_all = [ev for ev in relevant if not ev.eligible]
 

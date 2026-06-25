@@ -186,6 +186,14 @@ class QuoteWorker:
         # BlueQuote original.
         attachments = list(ctx.get("attachment_paths", []))
         attachments += [j.pdf_path for j in jobs if j.pdf_path]
+        # Evidencia de decline/halt (Diana 2026-06-25): cuando un MGA web
+        # (Progressive/GEICO) NO cotiza, adjuntar el screenshot que el RPA captura
+        # (p.ej. "We are Unable to Provide a Quote" / GEICO "Not Eligible") como
+        # prueba de que el cliente no es elegible.
+        attachments += [
+            j.screenshot_path for j in jobs
+            if j.status != JobStatus.QUOTED.value and j.screenshot_path
+        ]
 
         ok = self.gmail.send_threaded(
             to=ctx["recipient"],
