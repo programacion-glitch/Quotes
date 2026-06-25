@@ -25,6 +25,7 @@ from modules.quote_profile import (
     IftasProfile, AppProfile, UnitsProfile, VehicleProfile, CoveragesProfile,
     ExtractionConfidence, ConfidenceFlag,
 )
+from modules.extraction_reconciler import ExtractionFields, reconcile
 
 
 # Document type constants
@@ -812,41 +813,31 @@ class DocumentAIExtractor:
         )
         return has_payload
 
-    def _extract_blue_quote_with_ai(self, att: dict, profile: QuoteProfile) -> bool:
-        """
-        Vision/text fallback for Blue Quote: send the PDF to the AI and map the
-        result into the profile. Returns True if at least business_name was set.
-
-        Strategy:
-          1. Try with the default content extraction (text-first).
-          2. If that returns no usable business_name (common with flattened forms
-             where the text layer only contains labels), retry forcing vision.
-        """
-        # Pass 1: default (text first, vision if no text)
+    def _extract_blue_quote_ai_fields(self, att: dict) -> "Optional[ExtractionFields]":
+        """Extrae la Blue Quote por IA y DEVUELVE ExtractionFields (sin mutar).
+        Pasada 1 texto; si no hay business_name, pasada 2 forzando visión.
+        Devuelve None si no hay datos usables."""
         content = self._extract_content(att["filename"], att["data"])
         self._debug_content("BLUE QUOTE", att["filename"], content)
-
         ai_data = self._extract_ai_document("BLUE QUOTE", content) if content else None
         business_name = (ai_data or {}).get("business_name") if ai_data else None
 
-        # Pass 2: if first pass was text-only and produced no business_name,
-        # retry forcing vision — flattened Blue Quote PDFs hide values from text.
         if (not business_name) and content and content.get("type") == "text":
-            print(f"    Blue Quote: text pass returned empty business_name → retrying with vision")
+            print("    Blue Quote: text pass returned empty business_name → retrying with vision")
             content = self._extract_content(att["filename"], att["data"], force_vision=True)
             self._debug_content("BLUE QUOTE", att["filename"], content)
             if content:
                 ai_data = self._extract_ai_document("BLUE QUOTE", content)
 
-        if not ai_data:
-            return False
+        if not ai_data or not ai_data.get("business_name"):
+            return None
 
         business_years = ai_data.get("business_years")
         is_nv = ai_data.get("is_new_venture")
         if is_nv is None:
             is_nv = business_years is None or business_years == 0
 
-        profile.applicant = ApplicantProfile(
+        applicant = ApplicantProfile(
             business_name=ai_data.get("business_name") or "",
             owner_name=ai_data.get("owner_name") or "",
             owner_age=ai_data.get("owner_age"),
@@ -854,23 +845,21 @@ class DocumentAIExtractor:
             business_years=business_years,
             is_new_venture=bool(is_nv),
         )
-        profile.commodity = _resolve_commodity(
-            ai_data.get("commodity"), ai_data.get("destinations")
+        drivers = [
+            DriverProfile(name=d.get("name") or "", cdl_years=d.get("exp_years"))
+            for d in (ai_data.get("drivers") or [])
+        ]
+        return ExtractionFields(
+            applicant=applicant,
+            commodity=_resolve_commodity(ai_data.get("commodity"), ai_data.get("destinations")),
+            coverages=ai_data.get("coverages") or [],
+            units=UnitsProfile(
+                count=ai_data.get("unit_count") or 0,
+                trailer_types=ai_data.get("trailer_types") or [],
+            ),
+            drivers=drivers,
+            coverages_detail=None,
         )
-        profile.coverages = ai_data.get("coverages") or []
-        profile.units = UnitsProfile(
-            count=ai_data.get("unit_count") or 0,
-            trailer_types=ai_data.get("trailer_types") or [],
-        )
-        # Replace drivers entirely (don't append) so a retry doesn't duplicate
-        profile.drivers = []
-        for d in (ai_data.get("drivers") or []):
-            profile.drivers.append(DriverProfile(
-                name=d.get("name") or "",
-                cdl_years=d.get("exp_years"),
-            ))
-
-        return bool(profile.applicant.business_name)
 
     # ---- Main Entry Point ----
 
@@ -958,7 +947,13 @@ class DocumentAIExtractor:
             # --- 2b) AI fallback ---
             if bq_fallback_reason:
                 print(f"    Blue Quote: {bq_fallback_reason} → trying AI fallback")
-                if self._extract_blue_quote_with_ai(att, profile):
+                _ai = self._extract_blue_quote_ai_fields(att)
+                if _ai and _ai.applicant and _ai.applicant.business_name:
+                    profile.applicant = _ai.applicant
+                    profile.commodity = _ai.commodity
+                    profile.coverages = _ai.coverages
+                    profile.units = _ai.units
+                    profile.drivers = _ai.drivers
                     bq_used_ai = True
                     print(
                         f"    Blue Quote (AI): {profile.applicant.business_name}, "
