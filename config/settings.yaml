@@ -73,6 +73,16 @@ matching:
   substring_bonus: 15.0  # % bonus for substring matches
 
 # ============================================================================
+# GOOGLE DRIVE (subida opcional de PDFs de cotizaciones)
+# ============================================================================
+drive:
+  # Clave de Service Account (proyecto drivequotes). El nombre lleva el ID de
+  # la clave (cambia en cada descarga). Archivo NO commiteado (config/*.json en
+  # .gitignore). Carpeta destino + impersonación se configuran por .env
+  # (DRIVE_MAIN_FOLDER_ID, DRIVE_IMPERSONATE_USER, etc.). Ver README.
+  credentials_path: "config/drivequotes-07d9379d6214.json"
+
+# ============================================================================
 # EMAIL SETTINGS (for future email automation)
 # ============================================================================
 email:

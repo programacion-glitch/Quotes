@@ -101,21 +101,93 @@ Para enviar a MGAs, el email debe contener:
 
 ## 🔧 Configuración
 
-Archivo `.env`:
+### Variables de entorno (`.env`, NO commitear)
+
 ```env
-EMAIL_USERNAME=your_email@example.com
+# --- Email / Gmail API ---
+EMAIL_USERNAME=programacion@h2oins.com      # usado por IMAP/SMTP legacy y como impersonate de Drive
 EMAIL_PASSWORD=your_app_password
-TEST_EMAIL_OVERRIDE=test@example.com  # Para pruebas
-DRY_RUN=True  # True=simular, False=enviar real
-DRIVE_MAIN_FOLDER_ID=your_drive_folder_id
-DRIVE_IMPERSONATE_USER=workspace_user@yourdomain.com
+EMAIL_ANALYSIS_TO=quotes@h2oins.com         # destino del correo de análisis del bot
+EMAIL_ANALYSIS_CC=programacion@h2oins.com   # CC del análisis
+TEST_EMAIL_OVERRIDE=test@example.com        # para pruebas
+DRY_RUN=True                                # True=simular, False=enviar real
+
+# --- MGAs RPA ---
+GEICO_QUEUE_ENABLED=true                    # GEICO ON/OFF en la cola (Progressive siempre ON)
+GEICO_HEADLESS=true                         # headless (obligatorio en Docker)
+PROGRESSIVE_HEADLESS=true
+
+# --- Google Drive (subida opcional de PDFs) ---
+DRIVE_MAIN_FOLDER_ID=your_drive_folder_id           # carpeta destino de los PDFs
+DRIVE_IMPERSONATE_USER=programacion@h2oins.com      # impersona vía DWD; si no hay DWD cae a Service Account
 DRIVE_ALLOW_SERVICE_ACCOUNT_FALLBACK=True
+
+# --- Proxy IA (clasificador de commodities) ---
+OPENAI_BASE_URL=http://localhost:3000/v1            # en Docker: http://host.docker.internal:3000/v1
 ```
 
-Excel de configuración:
-- `config/CHECK LIST (2)_ESTANDARIZADO.xlsx`
-  - Hoja `MAILS APPs`: Emails de MGAs (TO, CC)
-  - Otras hojas: Tipos de negocio, reglas, MGAs
+### 🔑 Credenciales de Google — son TRES distintas (no confundir)
+
+| Propósito | Tipo | Cuenta / Proyecto | Archivo(s) | Cómo obtenerlo |
+|-----------|------|-------------------|------------|----------------|
+| **Leer/responder/etiquetar el inbox** | OAuth de usuario (Gmail API, scope `gmail.modify`) | `quotes@h2oins.com` / proyecto del cliente OAuth de Gmail | `data/credentials.json` (cliente OAuth) + `data/token.json` (token) | `python scripts/gmail_oauth_bootstrap.py` (consiente como **quotes@**) |
+| **Sync de reglas desde Drive** (descarga `REGLAS FINALES`) | OAuth de usuario (Drive, scope `drive.readonly`) | `programacion@h2oins.com` / proyecto **drivequotes** | `config/oauth-credentials.json` (cliente OAuth) + `config/oauth_user_token.json` (token) | `python tools/read_sheet_as_user.py` (consiente como **programacion@**) |
+| **Subir PDFs de cotizaciones a Drive** (OPCIONAL) | **Service Account** (Drive, scope `drive`) | SA del proyecto **drivequotes** (`csquotes@drivequotes.iam.gserviceaccount.com`) | `config/drivequotes-<KEY_ID>.json` | ver abajo |
+
+> ⚠️ **El token OAuth es por-cuenta; el cliente OAuth es por-proyecto.** El sync de reglas DEBE consentirse como `programacion@` en el proyecto `drivequotes`, y el inbox como `quotes@`. Mezclarlos da errores 403 "API not enabled in project …".
+
+### 📍 Ubicaciones de archivos sensibles (TODOS gitignored)
+
+| Archivo | Qué es |
+|---------|--------|
+| `.env` | Variables/credenciales de entorno |
+| `data/credentials.json` · `data/token.json` | OAuth de Gmail API (**quotes@**) |
+| `config/oauth-credentials.json` · `config/oauth_user_token.json` | OAuth de Drive sync (**programacion@**) |
+| `config/drivequotes-<KEY_ID>.json` | **Service Account** de subida a Drive (proyecto drivequotes) |
+| `data/progressive_session.json` · `data/geico_session.json` | Sesiones de navegador persistidas |
+| `data/bot_since_epoch.txt` | Corte por fecha del bot (no procesa correos anteriores) |
+
+`.gitignore` cubre `.env`, `config/*.json`, `data/credentials.json`, `data/token.json`, sesiones, etc. Verificá con `git check-ignore <archivo>` antes de commitear.
+
+### 🛰️ Service Account para subir PDFs a Drive (opcional)
+
+Sin esto el bot **cotiza y responde igual**, solo no sube los PDFs a Drive. Para habilitarlo:
+
+1. **Google Cloud Console** → proyecto **drivequotes** → *IAM y administración → Cuentas de servicio*.
+2. Usar/crear la SA `csquotes@drivequotes.iam.gserviceaccount.com` → pestaña **Claves → Crear clave nueva → JSON**. Se descarga `drivequotes-<KEY_ID>.json` (el `<KEY_ID>` cambia en cada descarga).
+3. Dejar el archivo en `config/drivequotes-<KEY_ID>.json` y apuntar la config:
+   `config/settings.yaml` → `drive.credentials_path: "config/drivequotes-<KEY_ID>.json"`.
+4. **Compartir la carpeta de Drive** (`DRIVE_MAIN_FOLDER_ID`) con `csquotes@drivequotes.iam.gserviceaccount.com` como **Editor** (sin esto la SA no puede escribir).
+5. Reiniciar el bot. En el log debe verse `Drive: Authenticated as … (service account)` (o `(delegated user)` si hay Domain-Wide Delegation configurada para impersonar `programacion@`).
+
+> El modo **delegación (DWD)** sube como `programacion@`; requiere autorizar el client_id de la SA con el scope `drive` en el Admin de Google Workspace. Si no está configurado, el bot intenta delegar, falla, y **cae a Service Account** (sube como la propia SA) — por eso el paso 4 (compartir la carpeta) es lo importante.
+
+### Excel de configuración
+
+- `config/CHECK LIST (2)_ESTANDARIZADO.xlsx` — checklist de docs requeridos por MGA.
+- Reglas de elegibilidad: hoja **`REGLAS FINALES`** (la baja el sync de Drive a `config/REGLAS_quotes.xlsx`).
+
+## 🐳 Ejecución del bot autónomo (Docker)
+
+El bot corre en **un contenedor** (incluye el RPA de Playwright, headless):
+
+```bash
+docker compose build          # construir la imagen
+docker compose up -d          # arrancar (restart: unless-stopped)
+docker compose logs -f        # ver en vivo
+docker compose ps             # estado / healthcheck
+docker compose down           # apagar
+```
+
+- El proxy de IA (clasificador de commodities) debe estar **arriba en el host** en el puerto `3000` (el contenedor lo alcanza por `host.docker.internal:3000`).
+- **Sesión única por MGA:** NO correr el runner en el host (`python -m modules.quote_queue.runner`) y el contenedor a la vez.
+- Volúmenes montados (RW): `./config`, `./data`, `./logs`.
+
+### 📧 Comportamiento con los correos
+
+- El bot lee **no-leídos** con asunto `Submission` recibidos **después** del corte (`data/bot_since_epoch.txt`); el backlog viejo no se toca.
+- **Los correos quedan NO LEÍDOS.** En vez de marcar leído, el bot etiqueta cada correo procesado con **`Procesado-Bot`** (config `email.label_seen`) y lo excluye del próximo barrido. Así el equipo humano sigue viéndolos como pendientes sin que el bot los reprocese.
+- Al **cotizar**, además responde **en el mismo hilo** a `quotes@` con CC a `programacion@`, adjunta los PDFs, y etiqueta el original con **`Cotizado-Bot`** (config `email.label_processed`).
 
 ## 📚 Documentación Adicional
 
@@ -133,5 +205,5 @@ python test_mga_forwarding.py
 
 ---
 
-**Última actualización**: 2026-02-07  
-**Versión**: 0.2.0 (MGA Forwarding)
+**Última actualización**: 2026-06-25  
+**Versión**: 0.4.0 (Bot autónomo Gmail API + Dockerizado + Progressive/GEICO RPA)
