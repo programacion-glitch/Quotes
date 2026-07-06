@@ -168,3 +168,21 @@ def test_fetch_unread_excludes_label_when_given():
     _, kwargs = svc.users().messages().list.call_args
     assert '-label:"Procesado-Bot"' in kwargs["q"]
     assert "is:unread" in kwargs["q"]
+
+
+def test_fetch_unread_includes_from_allowlist_when_given():
+    svc = _fake_service_with_messages([])
+    client = GmailClient(service=svc)
+    client.fetch_unread("Submission",
+                        from_allowlist=["a@h2oins.com", "b@h2oins.com"])
+    _, kwargs = svc.users().messages().list.call_args
+    assert "from:(a@h2oins.com OR b@h2oins.com)" in kwargs["q"]
+    assert "is:unread" in kwargs["q"]
+
+
+def test_fetch_unread_no_from_clause_when_allowlist_absent():
+    svc = _fake_service_with_messages([])
+    client = GmailClient(service=svc)
+    client.fetch_unread("Submission")
+    _, kwargs = svc.users().messages().list.call_args
+    assert "from:(" not in kwargs["q"]
