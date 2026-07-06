@@ -23,24 +23,43 @@ for _stream in (sys.stdout, sys.stderr):
 from modules.config_manager import get_config
 from modules.gmail_client import GmailClient
 from modules.quote_queue.worker import QuoteWorker
+from modules.quote_queue.sender_filter import is_processable_submission
 
 
 def poll_once(gmail, orchestrator, subject_filter: str,
-              after_epoch=None, seen_label: str = "Procesado-Bot") -> int:
-    """Un ciclo del monitor: procesa cada no-leído y lo marca como PROCESADO
-    con una etiqueta (siempre, aun si el procesamiento falla, para no
-    reprocesarlo). Devuelve cuántos vio.
+              after_epoch=None, seen_label: str = "Procesado-Bot",
+              rt_senders=None, new_venture_senders=None) -> int:
+    """Un ciclo del monitor: procesa cada submission ORIGINAL de ventas y la marca
+    como PROCESADA con una etiqueta (siempre, aun si el procesamiento falla, para
+    no reprocesarla). Devuelve cuántas PROCESÓ (no cuántas fetcheó).
+
+    Guard: si se pasan sets de remitentes (aunque vacíos), solo procesa correos que
+    cumplan `is_processable_submission` (asunto empieza con "Submission" + grupo
+    RT/VENTAS NUEVAS que coincide con la variante del asunto). Lo que no pasa NO se
+    procesa NI se etiqueta (queda no leído, sin tocar). Si ambos sets son None
+    (llamador legacy), el guard no se aplica.
 
     IMPORTANTE: NO marca leído — el correo queda NO LEÍDO para el equipo humano.
     La dedup se hace por la etiqueta `seen_label`, que `fetch_unread` excluye en
-    el query (`-label:`). Sin etiquetar, el bot reprocesaría el mismo correo
-    cada ciclo (re-cotizar, re-enviar análisis).
+    el query (`-label:`).
 
     after_epoch: corte por fecha — solo correos recibidos después de ese epoch.
     """
+    guard_active = not (rt_senders is None and new_venture_senders is None)
+    rt = rt_senders or set()
+    nv = new_venture_senders or set()
+    from_allowlist = sorted(rt | nv) if guard_active else None
+
     emails = gmail.fetch_unread(subject_filter, after_epoch=after_epoch,
-                                exclude_label=seen_label)
+                                exclude_label=seen_label,
+                                from_allowlist=from_allowlist)
+    processed = 0
     for email_data in emails:
+        if guard_active and not is_processable_submission(
+                email_data.get("sender_email", ""),
+                email_data.get("subject", ""), rt, nv):
+            continue  # no es submission original de ventas: no procesar, no etiquetar
+        processed += 1
         try:
             orchestrator.process_email(email_data)
         except Exception as e:  # un correo malo no frena el monitor
@@ -51,7 +70,7 @@ def poll_once(gmail, orchestrator, subject_filter: str,
                 gmail.add_label(email_data["id"], seen_label)
             except Exception as e:
                 print(f"  [monitor] no se pudo etiquetar como procesado: {e}")
-    return len(emails)
+    return processed
 
 
 def _create_quote_for(mga: str):
