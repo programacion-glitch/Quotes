@@ -114,6 +114,15 @@ def _load_or_init_cutoff(path: str, now: float) -> float:
     return now
 
 
+def _load_sender_sets(config):
+    """Devuelve (rt_set, new_venture_set) en minúscula desde la config."""
+    rt = {str(a).strip().lower() for a in
+          (config.get("email.monitoring.senders.rt", []) or [])}
+    nv = {str(a).strip().lower() for a in
+          (config.get("email.monitoring.senders.new_venture", []) or [])}
+    return rt, nv
+
+
 def run_forever(check_interval: int = 60) -> None:
     config = get_config()
     gmail = GmailClient()
@@ -127,6 +136,12 @@ def run_forever(check_interval: int = 60) -> None:
     # Etiqueta de "ya visto por el monitor" — NO se marca leído (a pedido del
     # usuario los correos quedan NO LEÍDOS). La dedup va por esta etiqueta.
     seen_label = config.get("email.label_seen", "Procesado-Bot")
+    rt_senders, new_venture_senders = _load_sender_sets(config)
+    print(f"[runner] remitentes ventas: RT={len(rt_senders)} "
+          f"NEW_VENTURE={len(new_venture_senders)}")
+    if not rt_senders and not new_venture_senders:
+        print("[runner] ⚠️ WARNING: sin remitentes de ventas configurados "
+              "(email.monitoring.senders) — el filtro rechazará TODO (fail-closed)")
     cutoff = _load_or_init_cutoff(_CUTOFF_FILE, time.time())
     from datetime import datetime
     print(f"[runner] corte por fecha: solo correos posteriores a "
@@ -154,7 +169,9 @@ def run_forever(check_interval: int = 60) -> None:
         while True:
             try:
                 n = poll_once(gmail, orchestrator, subject_filter,
-                              after_epoch=cutoff, seen_label=seen_label)
+                              after_epoch=cutoff, seen_label=seen_label,
+                              rt_senders=rt_senders,
+                              new_venture_senders=new_venture_senders)
                 if n:
                     print(f"[monitor] procesados {n} correo(s)")
             except Exception as e:

@@ -99,3 +99,29 @@ def test_poll_once_passes_from_allowlist_union():
     _, kwargs = gmail.fetch_unread.call_args
     assert sorted(kwargs.get("from_allowlist")) == [
         "duvan@h2oins.com", "simon@h2oins.com"]
+
+
+def test_load_sender_sets_lowercases_and_splits_groups():
+    class FakeConfig:
+        def get(self, key, default=None):
+            data = {
+                "email.monitoring.senders.rt":
+                    ["Simon@H2Oins.com", "esteban@h2oins.com"],
+                "email.monitoring.senders.new_venture":
+                    ["Duvan@h2oins.com"],
+            }
+            return data.get(key, default)
+
+    rt, nv = runner._load_sender_sets(FakeConfig())
+    assert rt == {"simon@h2oins.com", "esteban@h2oins.com"}
+    assert nv == {"duvan@h2oins.com"}
+
+
+def test_load_sender_sets_empty_when_missing():
+    class FakeConfig:
+        def get(self, key, default=None):
+            return default
+
+    rt, nv = runner._load_sender_sets(FakeConfig())
+    assert rt == set()
+    assert nv == set()

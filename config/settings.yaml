@@ -91,6 +91,28 @@ email:
     #subject_filter: "Submission New Venture"
     subject_filter: "Submission"
     check_interval_seconds: 60
+    # Remitentes de ventas permitidos. RT = cliente existente ("Submission ...");
+    # VENTAS NUEVAS = new venture ("Submission New Venture ..."). Match
+    # case-insensitive por direccion exacta. Editar aca al alta/baja de vendedores.
+    senders:
+      rt:
+        - simon@h2oins.com
+        - esteban@h2oins.com
+        - victor@h2oins.com
+        - luisgomez@h2oins.com
+        - juanmanuel@h2oins.com
+      new_venture:
+        - duvan@h2oins.com
+        - veronica@h2oins.com
+        - jhonfredy@h2oins.com
+        - felipemartinez@h2oins.com
+        - juanfelipe@h2oins.com
+        - juandavid@h2oins.com
+        - danielramirez@h2oins.com
+        - johan@h2oins.com
+        - sirley@h2oins.com
+        - brandon@h2oins.com
+        - cindyr@h2oins.com
 
   # Análisis autónomo (Gmail API): destino y etiqueta
   analysis_to: "${EMAIL_ANALYSIS_TO}"      # default quotes@h2oins.com (.env)
