@@ -168,6 +168,13 @@ class QuoteFlow:
                 eld_required=False,
                 customer_email=fields.owner_email,  # Diana 2026-06-25: faltaba el email del cliente
                 has_general_liability=fields.has_general_liability,  # Diana #3: tildar GL (descuento)
+                # Diana 2026-07-06: el radio "Are state or federal filings required?"
+                # es CONDITIONAL — Progressive solo lo muestra para operaciones con
+                # autoridad (for-hire trucking, etc.). Cuando aparece, el cliente
+                # tiene permisos → va Yes (antes iba No y "faltaban los filings",
+                # de lo que depende que le monten la prueba de seguro). Si no
+                # aparece, _answer_federal_filings_conditional lo soft-skipea.
+                federal_filings_required=True,
             )
             result.warnings.extend(more_biz.warnings)
 

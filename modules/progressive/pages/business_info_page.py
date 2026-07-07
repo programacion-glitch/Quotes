@@ -127,7 +127,11 @@ class BusinessInfoPage(BasePage):
             # If SAFER returned 'USDOT information was not found', Progressive
             # reveals a follow-up Y/N: "Did the customer obtain their USDOT
             # Number within the last 60 days?". Soft-skipped when not shown.
-            await self._answer_usdot_recently_obtained(recently_obtained=False)
+            # Diana 2026-07-06: este radio SOLO aparece cuando el USDOT no se
+            # encontró en SAFER — o sea es un DOT nuevo/reciente → la respuesta
+            # correcta es Yes (obtenido en los últimos 60 días). Con No se cotiza
+            # mal y afecta el filing de la prueba de seguro.
+            await self._answer_usdot_recently_obtained(recently_obtained=True)
 
         await self._select_entity_type(fields.entity_type)
         await self._fill_business_name(fields.business_name, fields.dba_name)
@@ -246,9 +250,11 @@ class BusinessInfoPage(BasePage):
 
           'Did the customer obtain their USDOT Number within the last 60 days?'
 
-        Default: No (most customers have had their USDOT for >60 days; if the
-        customer JUST got it the underwriter will likely need manual review
-        anyway). Soft-skips if the radio isn't rendered (USDOT found in SAFER).
+        Este radio SOLO se renderiza cuando SAFER NO encontró el USDOT (típico de
+        DOTs registrados hace muy poco). Por eso el caller pasa Yes: si el campo
+        aparece, el DOT es nuevo/reciente → se obtuvo en los últimos 60 días
+        (Diana 2026-07-06; antes iba No y cotizaba mal). Soft-skips si el radio no
+        se renderiza (USDOT encontrado en SAFER).
         """
         try:
             await self.wait_for_extjs_idle(timeout_ms=3_000)
