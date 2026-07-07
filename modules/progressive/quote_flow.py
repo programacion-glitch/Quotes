@@ -194,12 +194,19 @@ class QuoteFlow:
                     pass
                 return result  # success stays False
 
-            # Imprimir la página RATES completa (donde se ve el premium) a PDF —
-            # es la "impresión" que se adjunta al correo. Se captura ACÁ, antes
-            # de proceed_to_final_details() que navega fuera de RATES.
-            result.pdf_path = await rates_page.save_page_pdf(
-                f"quote_{(result.price.quote_number if result.price else None) or 'unknown'}"
-            )
+            # Descargar el PDF OFICIAL de la cotización (proposal) desde RATES,
+            # antes de proceed_to_final_details() que navega fuera de RATES. Si la
+            # descarga falla tras reintentos, se cae a la captura de la página
+            # (save_page_pdf) para no perder la evidencia. download_quote_pdf deja
+            # el wizard en RATES pase lo que pase.
+            _pdf_name = f"quote_{(result.price.quote_number if result.price else None) or 'unknown'}"
+            result.pdf_path = await rates_page.download_quote_pdf(_pdf_name)
+            if not result.pdf_path:
+                result.warnings.append(
+                    "PDF oficial de Progressive falló tras reintentos; "
+                    "fallback a captura de RATES"
+                )
+                result.pdf_path = await rates_page.save_page_pdf(_pdf_name)
 
             if self.dry_run:
                 result.success = True
