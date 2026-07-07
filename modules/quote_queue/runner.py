@@ -8,7 +8,6 @@ Entrypoint:  python -m modules.quote_queue.runner
 import sys
 import threading
 import time
-from pathlib import Path
 
 # La consola de Windows (cp1252) no puede encodear los emojis/acentos que el bot
 # imprime (⚠️, ✓, ñ, etc.) → UnicodeEncodeError que tumba el proceso. Forzar
@@ -95,23 +94,11 @@ def _worker_loop(worker, stop: threading.Event, idle_sleep: float = 5.0):
             stop.wait(idle_sleep)
 
 
-# Corte por fecha: el bot solo procesa correos recibidos DESPUÉS de este epoch.
-# Se fija en la primera corrida (now) y se persiste, para no procesar el backlog
-# de no-leídos viejos y, en un reinicio, no saltear lo que llegó mientras tanto.
-_CUTOFF_FILE = "data/bot_since_epoch.txt"
-
-
-def _load_or_init_cutoff(path: str, now: float) -> float:
-    """Devuelve el epoch de corte persistido; si no existe, lo fija a `now`."""
-    p = Path(path)
-    if p.exists():
-        try:
-            return float(p.read_text(encoding="utf-8").strip())
-        except Exception:
-            pass
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(str(now), encoding="utf-8")
-    return now
+# Corte por fecha: el bot arranca SIEMPRE desde el momento en que sube el
+# contenedor y solo procesa correos NO LEÍDOS que lleguen de ahí en adelante
+# (Usuario 2026-07-06). NO se persiste un cutoff entre reinicios: antes se
+# persistía el epoch de la 1ra corrida, lo que tras una caída larga reprocesaba
+# días de backlog no-leído. Ahora cada startup fija un cutoff nuevo (= now).
 
 
 def _load_sender_sets(config):
@@ -142,11 +129,13 @@ def run_forever(check_interval: int = 60) -> None:
     if not rt_senders and not new_venture_senders:
         print("[runner] ⚠️ WARNING: sin remitentes de ventas configurados "
               "(email.monitoring.senders) — el filtro rechazará TODO (fail-closed)")
-    cutoff = _load_or_init_cutoff(_CUTOFF_FILE, time.time())
+    # Siempre desde AHORA (arranque del contenedor): solo correos NO LEÍDOS que
+    # lleguen de acá en adelante; nunca el backlog previo.
+    cutoff = time.time()
     from datetime import datetime
-    print(f"[runner] corte por fecha: solo correos posteriores a "
+    print(f"[runner] corte por fecha: solo correos NO LEÍDOS posteriores a "
           f"{datetime.fromtimestamp(cutoff).isoformat()} "
-          f"(backlog no-leído anterior NO se toca)")
+          f"(desde el arranque del contenedor; backlog anterior NO se toca)")
 
     # Recuperación de crash: jobs colgados vuelven a pending.
     reclaimed = store.reclaim_stale()

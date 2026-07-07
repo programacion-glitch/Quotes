@@ -50,15 +50,6 @@ def test_poll_once_passes_after_epoch():
     assert kwargs.get("after_epoch") == 1750000000
 
 
-def test_load_or_init_cutoff_persists(tmp_path):
-    path = str(tmp_path / "cut.txt")
-    first = runner._load_or_init_cutoff(path, now=1750000000.0)
-    assert first == 1750000000.0
-    # Segunda llamada: reusa el valor persistido (ignora el now nuevo).
-    second = runner._load_or_init_cutoff(path, now=1760000000.0)
-    assert second == 1750000000.0
-
-
 def test_poll_once_guard_skips_non_matching_sender():
     gmail = MagicMock()
     gmail.fetch_unread.return_value = [
