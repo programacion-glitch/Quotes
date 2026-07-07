@@ -19,6 +19,7 @@ with a Recalculate button — must be clicked before Finish & Buy.
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from modules.progressive.pages.base_page import BasePage
@@ -291,6 +292,123 @@ class CoveragesRatesPage(BasePage):
         print("    [Progressive] Advancing to FINAL DETAILS...")
         await self._recalculate_if_needed()
         await self.safe_click_continue(expect_url_changes_from="CoveragesRates")
+
+    async def _ensure_on_rates(self, *, timeout_ms: int = 30_000) -> None:
+        """Garantiza que el wizard esté en RATES (pageName=CoveragesRates).
+
+        No-op si ya está en RATES (evita re-rate). Si no, click el step 'RATES'
+        del nav superior y espera a que cargue.
+        """
+        if await self.current_page_token() == "CoveragesRates":
+            return
+        await self.remove_overlays()
+        try:
+            await self.page.get_by_role("button", name="RATES", exact=True).click(
+                force=True, timeout=10_000
+            )
+        except Exception:
+            pass
+        await self.wait_for_page("CoveragesRates", timeout_ms=timeout_ms)
+        await self.wait_for_extjs_idle()
+
+    async def download_quote_pdf(
+        self, name: str, *, output_dir: str = "data/quote_pdfs", max_attempts: int = 2
+    ) -> Optional[str]:
+        """Descarga el PDF oficial (proposal) desde RATES.
+
+        Flujo: 'Print, Email, Fax' -> radio 'Insurance Quote' -> checkbox 'Print'
+        -> 'Print/Send' (abre popup con el PDF) -> captura la URL del popup ->
+        fetch autenticado -> 'Return to quote'. Reintenta hasta `max_attempts`; si
+        todos fallan devuelve None (el caller cae a save_page_pdf).
+
+        PRE: el wizard está en RATES. POST: al retornar (éxito o None) queda en RATES.
+        """
+        from modules.progressive.pdf_downloader import download_progressive_pdf
+
+        out_path = Path(output_dir) / f"progressive_quote_{name}.pdf"
+        last_err = None
+        for attempt in range(max_attempts):
+            try:
+                await self._ensure_on_rates()
+
+                # 1) Print, Email, Fax -> PrintEmailFax
+                await self.remove_overlays()
+                await self.page.get_by_role(
+                    "button", name="Print, Email, Fax"
+                ).click(force=True, timeout=10_000)
+                await self.wait_for_page("PrintEmailFax")
+                await self.wait_for_extjs_idle()
+
+                # 2) radio "Insurance Quote (with all bill plans)"
+                await self.safe_radio(
+                    self.page.get_by_role("radiogroup").first,
+                    "Insurance Quote (with all bill plans)",
+                )
+                await self.wait_for_extjs_idle()
+
+                # 3) checkbox "Print" -> revela "Print/Send"
+                await self.safe_checkbox(
+                    self.page.get_by_role("checkbox", name="Print", exact=True)
+                )
+                print_send = self.page.get_by_role("button", name="Print/Send")
+                await print_send.wait_for(state="visible", timeout=10_000)
+
+                # 4) Print/Send -> popup con el PDF inline
+                await self.remove_overlays()
+                async with self.page.context.expect_page(timeout=20_000) as popup_info:
+                    await print_send.click(force=True, timeout=10_000)
+                popup = await popup_info.value
+                try:
+                    await popup.wait_for_url("**/PDFHandler.ashx**", timeout=15_000)
+                except Exception:
+                    pass
+                pdf_url = popup.url
+                try:
+                    await popup.close()
+                except Exception:
+                    pass
+                if "PDFHandler.ashx" not in pdf_url:
+                    raise RuntimeError(
+                        f"popup URL no es un endpoint PDFHandler: {pdf_url[:120]}"
+                    )
+
+                # 5) fetch desde self.page (quedó en PrintEmailFaxConfirm, clpolicy)
+                info = await download_progressive_pdf(self.page, pdf_url, out_path)
+                print(
+                    f"    [Progressive] PDF oficial: {info['size']} bytes -> {info['path']}"
+                )
+
+                # 6) Return to quote -> RATES
+                await self.remove_overlays()
+                try:
+                    await self.page.get_by_role(
+                        "button", name="Return to quote"
+                    ).click(force=True, timeout=10_000)
+                except Exception:
+                    pass
+                await self._ensure_on_rates()
+                return str(out_path)
+
+            except Exception as e:
+                last_err = e
+                print(
+                    f"    [Progressive] download_quote_pdf intento "
+                    f"{attempt + 1}/{max_attempts} falló: {e}"
+                )
+                try:
+                    await self._ensure_on_rates()
+                except Exception:
+                    pass
+
+        print(
+            f"    [Progressive] PDF oficial no descargado tras {max_attempts} "
+            f"intentos ({last_err})"
+        )
+        try:
+            await self._ensure_on_rates()
+        except Exception:
+            pass
+        return None
 
     # ---- Helpers ----
 
