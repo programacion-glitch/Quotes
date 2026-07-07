@@ -378,16 +378,23 @@ class CoveragesRatesPage(BasePage):
                     f"    [Progressive] PDF oficial: {info['size']} bytes -> {info['path']}"
                 )
 
-                # 6) Return to quote -> RATES
+                # PDF ya en disco: éxito. Volver a RATES es BEST-EFFORT — un hipo de
+                # navegación NO debe descartar un PDF ya descargado ni disparar un
+                # re-download (por eso el ensure va acá dentro de su propio try, y se
+                # devuelve el path pase lo que pase con la navegación).
+                saved_path = str(out_path)
                 await self.remove_overlays()
                 try:
                     await self.page.get_by_role(
                         "button", name="Return to quote"
                     ).click(force=True, timeout=10_000)
-                except Exception:
-                    pass
-                await self._ensure_on_rates()
-                return str(out_path)
+                    await self._ensure_on_rates()
+                except Exception as e:
+                    print(
+                        f"    [Progressive] WARN: PDF descargado OK pero no se pudo "
+                        f"volver a RATES limpio ({e})"
+                    )
+                return saved_path
 
             except Exception as e:
                 last_err = e
