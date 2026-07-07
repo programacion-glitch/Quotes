@@ -383,8 +383,8 @@ class CoveragesRatesPage(BasePage):
                 # re-download (por eso el ensure va acá dentro de su propio try, y se
                 # devuelve el path pase lo que pase con la navegación).
                 saved_path = str(out_path)
-                await self.remove_overlays()
                 try:
+                    await self.remove_overlays()
                     await self.page.get_by_role(
                         "button", name="Return to quote"
                     ).click(force=True, timeout=10_000)
