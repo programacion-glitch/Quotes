@@ -221,6 +221,38 @@ def _eligible_row(ev: MGAEvaluation) -> str:
     return "\n".join(lines)
 
 
+def _format_value(v: Any) -> str:
+    """Format a FailedRule current_value/required_value for a business email.
+
+    Lists/tuples/sets render as a comma-joined string (e.g. "AL, MTC"), not
+    Python repr (e.g. "['AL', 'MTC']") — this email goes to a non-technical
+    business reviewer, not a developer.
+    """
+    if isinstance(v, (list, tuple, set)):
+        return ", ".join(str(x) for x in v)
+    return str(v)
+
+
+def _format_failed_rule_detail(fr: FailedRule) -> str:
+    """Build the '<reason> (actual: X — requerido: Y)' detail string for a
+    failed rule. Shared by _ineligible_row and _web_rules_row.
+
+    If only one of current_value/required_value is present, shows only that
+    one (avoids rendering a literal "None").
+    """
+    detail = fr.reason
+    has_current = fr.current_value is not None
+    has_required = fr.required_value is not None
+    if has_current and has_required:
+        detail += (f' <span style="color:#8c95a6;">(actual: {_format_value(fr.current_value)}'
+                   f' &mdash; requerido: {_format_value(fr.required_value)})</span>')
+    elif has_current:
+        detail += f' <span style="color:#8c95a6;">(actual: {_format_value(fr.current_value)})</span>'
+    elif has_required:
+        detail += f' <span style="color:#8c95a6;">(requerido: {_format_value(fr.required_value)})</span>'
+    return detail
+
+
 def _ineligible_row(ev: MGAEvaluation) -> str:
     """Generate an ineligible MGA row."""
     lines = [
@@ -229,10 +261,7 @@ def _ineligible_row(ev: MGAEvaluation) -> str:
         f'<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:bold;color:#c4291c;">{ev.mga_name}</p>',
     ]
     for fr in ev.failed_rules:
-        detail = fr.reason
-        if fr.current_value is not None or fr.required_value is not None:
-            detail += (f' <span style="color:#8c95a6;">(actual: {fr.current_value}'
-                       f' &mdash; requerido: {fr.required_value})</span>')
+        detail = _format_failed_rule_detail(fr)
         lines.append(
             f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#5a6577;">'
             f'&#8226; {detail}</p>'
@@ -262,10 +291,7 @@ def _web_rules_row(ev: MGAEvaluation) -> str:
         f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#5a6577;">{verdict}</p>',
     ]
     for fr in ev.failed_rules:
-        detail = fr.reason
-        if fr.current_value is not None or fr.required_value is not None:
-            detail += (f' <span style="color:#8c95a6;">(actual: {fr.current_value}'
-                       f' &mdash; requerido: {fr.required_value})</span>')
+        detail = _format_failed_rule_detail(fr)
         lines.append(
             f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#5a6577;">'
             f'&#8226; {detail}</p>'

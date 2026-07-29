@@ -66,3 +66,18 @@ def test_mga_web_eligible_referencia_seccion_rpa():
                        passed_rules=["MIN_UNITS"])
     out = _build([ev], [{"mga": "PROGRESSIVE"}])
     assert "Elegible por reglas" in out["body"]
+
+
+def test_valores_lista_no_muestran_repr_de_python():
+    """ALLOWED_COVERAGES / ALLOWED_TRAILER_TYPES ponen listas en
+    current_value/required_value (ver rule_engine.py). El correo es para
+    Diana (negocio, no tecnica) — no debe mostrar '['AL', 'MTC']'."""
+    ev = MGAEvaluation(
+        mga_name="COVERWHALE", eligible=False,
+        failed_rules=[FailedRule("ALLOWED_COVERAGES", "Cobertura no aceptada",
+                                 current_value=["AL", "MTC"], required_value=["AL"])],
+    )
+    out = _build([ev], [{"mga": "COVERWHALE"}])
+    body = out["body"]
+    assert "AL, MTC" in body
+    assert "['" not in body
