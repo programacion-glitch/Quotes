@@ -72,11 +72,21 @@ class QuoteQueueStore:
                     email_sent INTEGER NOT NULL DEFAULT 0,
                     created_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS seen_emails (
+                    gmail_id TEXT PRIMARY KEY,
+                    seen_at REAL NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_jobs_mga_status ON quote_jobs(mga, status);
                 CREATE INDEX IF NOT EXISTS idx_jobs_submission ON quote_jobs(submission_id);
                 CREATE INDEX IF NOT EXISTS idx_jobs_usdot ON quote_jobs(mga, usdot);
                 """
             )
+            self._conn.commit()
+            # Migración aditiva: quote_jobs ya existe en producción sin esta columna.
+            try:
+                self._conn.execute("ALTER TABLE quote_jobs ADD COLUMN decisions_json TEXT")
+            except sqlite3.OperationalError:
+                pass  # columna ya existe
             self._conn.commit()
 
     @staticmethod
@@ -99,6 +109,7 @@ class QuoteQueueStore:
             error=row["error"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            decisions_json=row["decisions_json"],
         )
 
     def _get_job_locked(self, job_id: int) -> Optional[QuoteJob]:
@@ -163,7 +174,8 @@ class QuoteQueueStore:
             self._conn.commit()
 
     def mark_terminal(self, job_id, status, premium=None, quote_number=None,
-                      pdf_path=None, screenshot_path=None, error=None) -> None:
+                      pdf_path=None, screenshot_path=None, error=None,
+                      decisions_json=None) -> None:
         """Marca un estado terminal (quoted/failed/halted) y guarda resultado."""
         status = JobStatus(status)
         if status not in TERMINAL_STATUSES:
@@ -172,11 +184,11 @@ class QuoteQueueStore:
         with self._lock:
             self._conn.execute(
                 "UPDATE quote_jobs SET status=?, premium=?, quote_number=?, "
-                "pdf_path=?, screenshot_path=?, error=?, lease_until=NULL, "
-                "updated_at=? WHERE id=?",
+                "pdf_path=?, screenshot_path=?, error=?, decisions_json=?, "
+                "lease_until=NULL, updated_at=? WHERE id=?",
                 (status.value, _sqlite_safe(premium), _sqlite_safe(quote_number),
                  _sqlite_safe(pdf_path), _sqlite_safe(screenshot_path),
-                 _sqlite_safe(error), now, job_id),
+                 _sqlite_safe(error), _sqlite_safe(decisions_json), now, job_id),
             )
             self._conn.commit()
 
@@ -268,6 +280,19 @@ class QuoteQueueStore:
                 "UPDATE submissions SET email_sent=1 "
                 "WHERE submission_id=? AND email_sent=0",
                 (submission_id,),
+            )
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def try_claim_email(self, gmail_id: str) -> bool:
+        """Reclama un correo por su Gmail message-id. Atómico y durable:
+        True solo la PRIMERA vez — la dedup del monitor vive acá, NO en
+        etiquetas de Gmail (el buzón de ventas no se toca)."""
+        now = time.time()
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO seen_emails (gmail_id, seen_at) VALUES (?, ?)",
+                (gmail_id, now),
             )
             self._conn.commit()
             return cur.rowcount == 1

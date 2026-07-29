@@ -50,3 +50,4 @@ class QuoteJob:
     error: Optional[str] = None
     created_at: float = 0.0
     updated_at: float = 0.0
+    decisions_json: Optional[str] = None

@@ -232,3 +232,42 @@ def test_save_context_after_claim_preserves_email_sent(store):
     assert store.try_claim_submission_email("sub-1") is True
     store.save_submission_context("sub-1", '{"updated": true}')
     assert store.try_claim_submission_email("sub-1") is False
+
+
+class TestSeenEmails:
+    def test_try_claim_email_first_time_true(self, tmp_path):
+        store = QuoteQueueStore(tmp_path / "q.db")
+        assert store.try_claim_email("gmail-abc-123") is True
+
+    def test_try_claim_email_second_time_false(self, tmp_path):
+        store = QuoteQueueStore(tmp_path / "q.db")
+        store.try_claim_email("gmail-abc-123")
+        assert store.try_claim_email("gmail-abc-123") is False
+
+    def test_try_claim_email_distinct_ids_independent(self, tmp_path):
+        store = QuoteQueueStore(tmp_path / "q.db")
+        assert store.try_claim_email("id-1") is True
+        assert store.try_claim_email("id-2") is True
+
+    def test_claim_survives_reopen(self, tmp_path):
+        """La dedup es durable: sobrevive reinicios del proceso."""
+        db = tmp_path / "q.db"
+        QuoteQueueStore(db).try_claim_email("id-1")
+        store2 = QuoteQueueStore(db)
+        assert store2.try_claim_email("id-1") is False
+
+
+class TestDecisionsJson:
+    def test_mark_terminal_saves_decisions_json(self, tmp_path):
+        store = QuoteQueueStore(tmp_path / "q.db")
+        jid = store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "123")
+        store.mark_terminal(jid, "quoted", premium="$1,000",
+                            decisions_json='[{"field": "Roadside"}]')
+        job = store.get_jobs("sub-1")[0]
+        assert job.decisions_json == '[{"field": "Roadside"}]'
+
+    def test_mark_terminal_decisions_json_default_none(self, tmp_path):
+        store = QuoteQueueStore(tmp_path / "q.db")
+        jid = store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "123")
+        store.mark_terminal(jid, "failed", error="error")
+        assert store.get_jobs("sub-1")[0].decisions_json is None
