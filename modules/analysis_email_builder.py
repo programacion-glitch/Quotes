@@ -478,6 +478,7 @@ def build_analysis_email(
         timestamp=datetime.now().strftime("%Y-%m-%d %H:%M"),
     )
 
-    subject = f"[ANALISIS] {original_subject}"
+    business = profile.applicant.business_name or "Cliente"
+    subject = f"[ANALISIS] {business} | {original_subject}"
 
     return {"subject": subject, "body": body, "is_html": True}

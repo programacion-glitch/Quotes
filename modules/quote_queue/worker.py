@@ -3,8 +3,9 @@ QuoteWorker — consumidor de la cola, uno por MGA.
 
 Reclama jobs en serie (sesión única por MGA), corre create_quote, clasifica el
 resultado a un estado terminal + reason code humanizable, y cuando TODOS los
-jobs de una submission terminaron, manda el correo de análisis (una sola vez)
-con la sección RPA inyectada y los PDFs adjuntos.
+jobs de una submission terminaron, manda el correo de análisis NUEVO al
+destinatario configurado (una sola vez) con la sección RPA inyectada y los
+PDFs adjuntos.
 """
 
 import json
@@ -67,13 +68,11 @@ def classify_result(result) -> tuple:
 
 class QuoteWorker:
     def __init__(self, mga: str, store, create_quote: Callable, gmail,
-                 label_processed: str = "Cotizado-Bot",
                  drive_manager=None):
         self.mga = mga
         self.store = store
         self.create_quote = create_quote   # (profile, effective_date) -> QuoteResult
-        self.gmail = gmail                  # GmailClient (send_threaded/add_label)
-        self.label_processed = label_processed
+        self.gmail = gmail                  # GmailClient (send_threaded)
         # Subida de la indicación a Drive (best-effort). Se puede desactivar con
         # DRIVE_UPLOAD_ENABLED=false. El DriveManager se crea perezosamente.
         self._drive = drive_manager
@@ -197,19 +196,11 @@ class QuoteWorker:
 
         ok = self.gmail.send_threaded(
             to=ctx["recipient"],
-            cc=ctx.get("cc"),
             subject=ctx["subject"],
             body=body,
             attachments=attachments,
             is_html=True,
-            thread_id=ctx.get("thread_id"),
-            in_reply_to=ctx.get("in_reply_to"),
         )
-        if ok and ctx.get("message_id"):
-            try:
-                self.gmail.add_label(ctx["message_id"], self.label_processed)
-            except Exception as e:  # etiquetar nunca debe tumbar el envío
-                print(f"    [worker:{self.mga}] label warn: {e}")
         print(f"    [worker:{self.mga}] analysis email for {submission_id} "
               f"sent={ok} (outcomes={len(outcomes)})")
         return ok

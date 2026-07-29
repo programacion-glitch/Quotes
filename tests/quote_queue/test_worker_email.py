@@ -1,4 +1,5 @@
-"""El worker manda el análisis en el hilo (CC) con los PDFs y etiqueta."""
+"""El worker manda el análisis como correo NUEVO (sin hilo, sin CC, sin
+etiqueta) con los PDFs adjuntos."""
 import json
 from unittest.mock import MagicMock
 
@@ -11,17 +12,13 @@ def _store(tmp_path):
     return QuoteQueueStore(tmp_path / "q.db")
 
 
-def test_worker_sends_threaded_with_pdfs_and_labels(tmp_path):
+def test_worker_sends_new_email_with_pdfs_no_label(tmp_path):
     store = _store(tmp_path)
     sub = "sub-1"
-    # Contexto con los campos nuevos (los pone el orquestador).
+    # Contexto reducido (lo pone el orquestador): sin cc/thread_id/message_id.
     store.save_submission_context(sub, json.dumps({
-        "recipient": "quotes@h2oins.com",
-        "cc": "programacion@h2oins.com",
-        "thread_id": "thread-1",
-        "in_reply_to": "<orig@mail>",
-        "message_id": "m-orig",
-        "subject": "[ANALISIS] ACME",
+        "recipient": "dianarubio@h2oins.com",
+        "subject": "[ANALISIS] ACME LLC | ACME",
         "body_html": "<!--RPA_QUOTES_SECTION-->",
         "attachment_paths": [],
     }))
@@ -37,12 +34,12 @@ def test_worker_sends_threaded_with_pdfs_and_labels(tmp_path):
 
     assert sent is True
     _, kwargs = gmail.send_threaded.call_args
-    assert kwargs["to"] == "quotes@h2oins.com"
-    assert kwargs["cc"] == "programacion@h2oins.com"
-    assert kwargs["thread_id"] == "thread-1"
-    assert kwargs["in_reply_to"] == "<orig@mail>"
+    assert kwargs["to"] == "dianarubio@h2oins.com"
+    assert "cc" not in kwargs
+    assert "thread_id" not in kwargs
+    assert "in_reply_to" not in kwargs
     assert "data/quote_pdfs/g.pdf" in kwargs["attachments"]
-    gmail.add_label.assert_called_once_with("m-orig", "Cotizado-Bot")
+    gmail.add_label.assert_not_called()
 
 
 def test_worker_attaches_decline_screenshot_as_evidence(tmp_path):
@@ -52,8 +49,7 @@ def test_worker_attaches_decline_screenshot_as_evidence(tmp_path):
     store = _store(tmp_path)
     sub = "sub-ev"
     store.save_submission_context(sub, json.dumps({
-        "recipient": "quotes@h2oins.com", "cc": None,
-        "thread_id": None, "in_reply_to": None, "message_id": None,
+        "recipient": "quotes@h2oins.com",
         "subject": "[ANALISIS]", "body_html": "<!--RPA_QUOTES_SECTION-->",
         "attachment_paths": [],
     }))
@@ -80,8 +76,7 @@ def test_worker_attaches_decline_screenshot_as_evidence(tmp_path):
 
 def _ctx(**over):
     base = {
-        "recipient": "quotes@h2oins.com", "cc": None,
-        "thread_id": None, "in_reply_to": None, "message_id": None,
+        "recipient": "quotes@h2oins.com",
         "subject": "[ANALISIS]", "body_html": "<!--RPA_QUOTES_SECTION-->",
         "attachment_paths": [],
     }
@@ -104,6 +99,40 @@ def test_not_sent_until_all_siblings_terminal(tmp_path):
 
     assert worker.maybe_send_submission_email(sub) is False
     gmail.send_threaded.assert_not_called()
+
+
+class _RecorderGmail:
+    def __init__(self):
+        self.sent = []
+
+    def send_threaded(self, **kwargs):
+        self.sent.append(kwargs)
+        return True
+
+    def add_label(self, *a, **k):
+        raise AssertionError("El worker NO debe etiquetar (transparencia)")
+
+
+def test_analysis_email_es_correo_nuevo_sin_hilo_ni_cc(tmp_path):
+    """El análisis sale como correo NUEVO al destinatario del contexto
+    (Diana en estabilización): sin thread_id, sin in_reply_to, sin CC."""
+    store = _store(tmp_path)
+    jid = store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "123")
+    store.mark_terminal(jid, "quoted", premium="$1,000")
+    store.save_submission_context("sub-1", json.dumps({
+        "recipient": "dianarubio@h2oins.com",
+        "subject": "[ANALISIS] ACME LLC | Submission - ACME",
+        "body_html": "<html><!--RPA_QUOTES_SECTION--></html>",
+        "attachment_paths": [],
+    }))
+    gmail = _RecorderGmail()
+    worker = QuoteWorker("PROGRESSIVE", store, lambda p, e: None, gmail)
+    assert worker.maybe_send_submission_email("sub-1") is True
+    (sent,) = gmail.sent
+    assert sent["to"] == "dianarubio@h2oins.com"
+    assert sent.get("cc") is None
+    assert sent.get("thread_id") is None
+    assert sent.get("in_reply_to") is None
 
 
 def test_sent_once_under_contention(tmp_path):

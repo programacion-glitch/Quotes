@@ -99,9 +99,6 @@ class QuoteWorkflowOrchestrator:
         self.gmail = GmailClient()
         self.analysis_to = (self.config.get("email.analysis_to")
                             or self.summary_email)
-        self.analysis_cc = self.config.get("email.analysis_cc") or None
-        self.label_processed = self.config.get("email.label_processed",
-                                               "Cotizado-Bot")
 
         # Pending approvals: stores data needed to dispatch after confirmation
         # Key: original subject, Value: dict with all data needed
@@ -249,17 +246,12 @@ class QuoteWorkflowOrchestrator:
             rpa_quotes_section=(RPA_SECTION_MARKER if eligible_rpa else ""),
         )
         analysis_to = self.analysis_to
-        analysis_cc = self.analysis_cc
 
         if eligible_rpa and not self.dry_run:
             submission_id = self._submission_id(email_data, profile)
             attachment_paths = self._persist_attachments(submission_id, attachments)
             self.quote_store.save_submission_context(submission_id, json.dumps({
                 "recipient": analysis_to,
-                "cc": analysis_cc,
-                "thread_id": email_data.get("thread_id"),
-                "in_reply_to": email_data.get("message_id"),
-                "message_id": email_data.get("id"),
                 "subject": analysis["subject"],
                 "body_html": analysis["body"],
                 "attachment_paths": attachment_paths,
@@ -500,24 +492,15 @@ class QuoteWorkflowOrchestrator:
 
     def _send_analysis_now(self, email_data: dict, subject: str, body: str,
                            attachments: list) -> None:
-        """Envía el análisis en el hilo (To analysis_to, CC analysis_cc) y
-        etiqueta el correo original. Para los caminos sin cola (sin-RPA,
-        rate-limited)."""
+        """Envía el análisis como correo NUEVO a analysis_to (Diana durante
+        estabilización). Transparente: no toca el correo original."""
         ok = self.gmail.send_threaded(
             to=self.analysis_to,
-            cc=self.analysis_cc,
             subject=subject,
             body=body,
             attachments=attachments,
             is_html=True,
-            thread_id=email_data.get("thread_id"),
-            in_reply_to=email_data.get("message_id"),
         )
-        if ok and email_data.get("id"):
-            try:
-                self.gmail.add_label(email_data["id"], self.label_processed)
-            except Exception as e:
-                print(f"  label warn: {e}")
         print(f"  Analysis sent to {self.analysis_to} (ok={ok})")
 
     def _send_not_found_email(self, email_data, commodity, sender_name, business_name, subject):
@@ -535,17 +518,9 @@ class QuoteWorkflowOrchestrator:
         else:
             ok = self.gmail.send_threaded(
                 to=self.analysis_to,
-                cc=self.analysis_cc,
                 subject=response['subject'],
                 body=response['body'],
                 is_html=False,
-                thread_id=email_data.get("thread_id"),
-                in_reply_to=email_data.get("message_id"),
             )
-            if ok and email_data.get("id"):
-                try:
-                    self.gmail.add_label(email_data["id"], self.label_processed)
-                except Exception as e:
-                    print(f"  label warn: {e}")
         print(f"{'='*60}\n")
 

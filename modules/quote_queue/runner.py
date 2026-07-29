@@ -112,7 +112,6 @@ def run_forever(check_interval: int = 60) -> None:
     orchestrator = QuoteWorkflowOrchestrator()
     store = orchestrator.quote_store
     subject_filter = config.get("email.monitoring.subject_filter", "Submission")
-    label = config.get("email.label_processed", "Cotizado-Bot")
     rt_senders, new_venture_senders = _load_sender_sets(config)
     print(f"[runner] remitentes ventas: RT={len(rt_senders)} "
           f"NEW_VENTURE={len(new_venture_senders)}")
@@ -135,8 +134,7 @@ def run_forever(check_interval: int = 60) -> None:
     stop = threading.Event()
     threads = []
     for mga in sorted(orchestrator.rpa_mgas):
-        worker = QuoteWorker(mga, store, _create_quote_for(mga), gmail,
-                             label_processed=label)
+        worker = QuoteWorker(mga, store, _create_quote_for(mga), gmail)
         t = threading.Thread(target=_worker_loop, args=(worker, stop),
                              name=f"worker-{mga}", daemon=True)
         t.start()

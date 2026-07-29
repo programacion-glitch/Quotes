@@ -114,11 +114,9 @@ email:
         - brandon@h2oins.com
         - cindyr@h2oins.com
 
-  # Análisis autónomo (Gmail API): destino y etiqueta
-  analysis_to: "${EMAIL_ANALYSIS_TO}"      # default quotes@h2oins.com (.env)
-  analysis_cc: "${EMAIL_ANALYSIS_CC}"      # programacion@h2oins.com (.env)
-  label_processed: "Cotizado-Bot"          # etiqueta al correo original (al cotizar)
-  label_seen: "Procesado-Bot"              # etiqueta de "ya visto" (NO marca leído)
+  # Análisis autónomo (Gmail API): destino del correo NUEVO (sin hilo, sin CC,
+  # sin etiquetas — transparente).
+  analysis_to: "${EMAIL_ANALYSIS_TO}"   # estabilización: dianarubio@h2oins.com (.env)
 
   # IMAP settings (receiving emails)
   imap:
