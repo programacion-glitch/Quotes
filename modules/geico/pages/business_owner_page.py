@@ -88,6 +88,10 @@ class BusinessOwnerPage(BasePage):
         default (tomorrow) — do nothing."""
         if not effective_date:
             print("    [GEICO] Step 2: Coverage Start Date -> default (tomorrow)")
+            decision_ledger.record(
+                "Coverage Start Date", "default de GEICO (mañana)", page=_PAGE,
+                source="RULE", rule_id="R-057",
+                note="no se parseó effective date del subject del correo")
             return
         print(f"    [GEICO] Step 2: Coverage Start Date -> {effective_date}")
         try:

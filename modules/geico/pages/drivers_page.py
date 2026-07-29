@@ -209,6 +209,10 @@ class DriverPlaceholderPage(BasePage):
                 "    [GEICO] Step 4: owner placeholder CDL -> No "
                 "(owner excluded; placeholder kept)"
             )
+            decision_ledger.record(
+                "CDL del owner placeholder", "No", page=_PAGE,
+                options=["Yes", "No"], source="DEFAULT", rule_id="R-070",
+                note="el owner está excluido de la póliza")
         else:
             answer = bool(owner_driver.has_cdl)
             print(
@@ -444,6 +448,10 @@ class AddDriverPage(BasePage):
         """
         relationship = "Owner" if driver.is_owner else "Employee"
         print(f"    [GEICO] Step 4: Relationship -> {relationship}")
+        decision_ledger.record(
+            "Relationship to the business", relationship, page=_PAGE,
+            options=["Owner", "Employee"], source="RULE", rule_id="R-072",
+            note="el driver real no-excluido entra como Employee")
         try:
             await self.click_question_radio(
                 "what is their relationship to the business", relationship

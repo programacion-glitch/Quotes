@@ -44,6 +44,9 @@ from modules.progressive.field_mapper import (
     _normalize_license_state,
     _same_person,
 )
+from modules import decision_ledger
+
+_PAGE = "Field mapper"
 
 
 _SUFFIX_TOKENS = {"JR", "SR", "II", "III", "IV", "V", "2ND", "3RD"}
@@ -348,6 +351,10 @@ def _map_driver(d: DriverProfile, owner_name: Optional[str]) -> MappedDriver:
         d.has_accidents_or_violations
         or (d.mvr_present and not d.mvr_is_clean)
     )
+    if not (d.license_state or "").strip():
+        decision_ledger.record(
+            "License state del driver", "Texas", page=_PAGE, source="DEFAULT",
+            rule_id="R-071", note=f"driver {d.name!r} sin estado de licencia")
     return MappedDriver(
         first_name=first,
         last_name=last,
@@ -470,6 +477,21 @@ def _map_vehicle(
             has_comp_coll = False
             print(f"    [GEICO] map: vehicle value {v.value!r} <= deductible "
                   f"{int(floor)} -> liability-only (no comp/coll)")
+    if v.vin:
+        decision_ledger.record(
+            "Conflicto VIN decode vs tipo del BlueQuote",
+            "gana el VIN decode", page=_PAGE, source="RULE", rule_id="R-050",
+            note=f"tipo del BlueQuote: {v.trailer_type!r} (solo se usa si el "
+                 f"decode falla)")
+    else:
+        decision_ledger.record(
+            "Vehicle Type (sin VIN)", _vehicle_type_from_trailer(v.trailer_type),
+            page=_PAGE, source="DEFAULT", rule_id="R-060",
+            note=f"derivado de trailer_type={v.trailer_type!r}")
+    decision_ledger.record(
+        "Owned / Leased / Financed", _financed_or_leased(v.has_loan),
+        page=_PAGE, source="DEFAULT", rule_id="R-083",
+        note=f"has_loan={v.has_loan!r}")
     return MappedVehicle(
         vin=v.vin,
         year=v.year,
@@ -546,6 +568,11 @@ def map_profile_to_fields(
                     f"trailer unit skipped (Add Trailer flow not mapped): "
                     f"{t.trailer_type or 'UNKNOWN TYPE'} VIN {t.vin or '?'}"
                 )
+                decision_ledger.record(
+                    "Trailer del BlueQuote", "se OMITE del quote", page=_PAGE,
+                    source="DEFAULT", rule_id="R-068",
+                    note=f"{t.trailer_type or 'UNKNOWN TYPE'} VIN "
+                         f"{t.vin or '?'} — falta el path Add TRAILER")
         mapped_vehicles = [
             _map_vehicle(v, fallback_zip, coverages, requested)
             for v in powered
@@ -580,6 +607,26 @@ def map_profile_to_fields(
     )
     bi_limits = _bi_limits_to_geico(coverages.bodily_injury_limit)
     has_current_ins = bool(applicant.current_carrier)
+
+    decision_ledger.record("Business ownership type", ownership_type,
+                           page=_PAGE, source="DEFAULT", rule_id="R-056",
+                           note=f"derivado del nombre {biz_name!r}")
+    decision_ledger.record("Años operando", years_op, page=_PAGE,
+                           source="DEFAULT", rule_id="R-073",
+                           note=f"BlueQuote: {applicant.business_years!r}")
+    decision_ledger.record("Cantidad de empleados (sin owners)", employees,
+                           page=_PAGE, source="DEFAULT", rule_id="R-074",
+                           note=f"derivado de {len(profile.drivers)} driver(s)")
+    decision_ledger.record(
+        "Seguro actual (tiene / años / límites BI)",
+        f"{'Yes' if has_current_ins else 'No'} / {years_insurer} / {bi_limits}",
+        page=_PAGE, source="DEFAULT", rule_id="R-075",
+        note=f"carrier del BlueQuote: {applicant.current_carrier!r}")
+    if applicant.phone:
+        decision_ledger.record(
+            "Teléfono del owner", applicant.phone, page=_PAGE, source="RULE",
+            rule_id="R-049",
+            note="el BlueQuote prevalece sobre el auto-pop de FMCSA")
 
     # Extractor values can carry stray whitespace ('2033673 ') or literal
     # placeholders ('N/A' — Sergio Perales live 2026-06-11): both must

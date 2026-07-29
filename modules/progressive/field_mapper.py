@@ -8,6 +8,7 @@ HYBRID strategy: defaults for obvious fields, None for critical missing fields.
 from dataclasses import dataclass, field
 from typing import Optional, List
 
+from modules import decision_ledger
 from modules.quote_profile import (
     QuoteProfile,
     VehicleProfile,
@@ -15,6 +16,8 @@ from modules.quote_profile import (
     CoveragesProfile,
 )
 from modules.progressive.unit_matching import NON_OWNED_MARKERS, looks_non_owned
+
+_PAGE = "Field mapper"
 
 
 @dataclass
@@ -151,6 +154,12 @@ def _map_vehicle(v: VehicleProfile, fallback_zip: Optional[str], fallback_type: 
     loan_raw = (v.has_loan or "No").lower()
     has_loan = loan_map.get(loan_raw, "No")
 
+    if not v.trailer_type:
+        decision_ledger.record(
+            "trailer_type de la unidad", fallback_type or "FLATBED",
+            page=_PAGE, source="DEFAULT", rule_id="R-021",
+            note="la unidad no trae tipo en el BlueQuote")
+
     return MappedVehicle(
         vin=v.vin,
         year=v.year,
@@ -238,6 +247,10 @@ def _normalize_license_state(raw: Optional[str]) -> str:
 def _map_driver(d: DriverProfile, owner_name: Optional[str]) -> MappedDriver:
     """Map a DriverProfile to MappedDriver."""
     is_owner = _same_person(owner_name, d.name)
+    if not (d.license_state or "").strip():
+        decision_ledger.record(
+            "License state del driver", "Texas", page=_PAGE, source="DEFAULT",
+            rule_id="R-071", note=f"driver {d.name!r} sin estado de licencia")
     return MappedDriver(
         name=d.name,
         license_state=_normalize_license_state(d.license_state),
@@ -264,6 +277,9 @@ def map_profile_to_fields(
         entity = "Corporation or LLC"
     else:
         entity = "Individual / Sole Proprietor"
+    decision_ledger.record("Entity type / estructura del negocio", entity,
+                           page=_PAGE, source="DEFAULT", rule_id="R-011",
+                           note=f"derivado del nombre {biz_name!r}")
 
     # DBA split
     dba = None
@@ -317,6 +333,11 @@ def map_profile_to_fields(
             f"    [Progressive] field_mapper: {non_owned_count} NON OWNED "
             f"trailer(s) -> Non-Owned Trailer Phys Damage = $25,000 (default)"
         )
+        decision_ledger.record(
+            "Non-Owned Trailer Physical Damage limit", "$25,000", page=_PAGE,
+            source="DEFAULT", rule_id="R-039",
+            note=f"{non_owned_count} unidad(es) NON OWNED sin límite en el "
+                 f"BlueQuote")
 
     # Drivers
     mapped_drivers = [_map_driver(d, profile.applicant.owner_name) for d in profile.drivers]
@@ -342,6 +363,14 @@ def map_profile_to_fields(
             "    [Progressive] field_mapper: commodity unset in PDF; "
             "defaulting to 'Trucker' (USDOT present)"
         )
+        decision_ledger.record(
+            "Commodity ausente en el PDF", "Trucker", page=_PAGE,
+            source="DEFAULT", rule_id="R-014",
+            note="sentinela genérico; hay USDOT presente")
+
+    decision_ledger.record("Estado del negocio", "TX", page=_PAGE,
+                           source="DEFAULT", rule_id="R-012",
+                           note="asume operación 100% Texas")
 
     return MappedFields(
         # Strip: a trailing space ('4518340 ') makes Progressive reject the
