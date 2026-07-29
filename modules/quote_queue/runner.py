@@ -25,22 +25,19 @@ from modules.quote_queue.worker import QuoteWorker
 from modules.quote_queue.sender_filter import is_processable_submission
 
 
-def poll_once(gmail, orchestrator, subject_filter: str,
-              after_epoch=None, seen_label: str = "Procesado-Bot",
-              rt_senders=None, new_venture_senders=None) -> int:
-    """Un ciclo del monitor: procesa cada submission ORIGINAL de ventas y la marca
-    como PROCESADA con una etiqueta (siempre, aun si el procesamiento falla, para
-    no reprocesarla). Devuelve cuántas PROCESÓ (no cuántas fetcheó).
+def poll_once(gmail, orchestrator, subject_filter: str, store,
+              after_epoch=None, rt_senders=None, new_venture_senders=None) -> int:
+    """Un ciclo del monitor: procesa cada submission ORIGINAL de ventas.
+    Devuelve cuántas PROCESÓ (no cuántas fetcheó).
 
-    Guard: si se pasan sets de remitentes (aunque vacíos), solo procesa correos que
-    cumplan `is_processable_submission` (asunto empieza con "Submission" + grupo
-    RT/VENTAS NUEVAS que coincide con la variante del asunto). Lo que no pasa NO se
-    procesa NI se etiqueta (queda no leído, sin tocar). Si ambos sets son None
-    (llamador legacy), el guard no se aplica.
+    TRANSPARENCIA TOTAL (Usuario 2026-07-29): el bot NO etiqueta, NO marca
+    leído, NO modifica el correo de ventas de ninguna forma. La dedup vive
+    en la cola SQLite (`store.try_claim_email` por Gmail message-id), NO en
+    el buzón. Se reclama ANTES de procesar (mismas semánticas que la
+    etiqueta vieja en finally: un crash a mitad de proceso no reprocesa).
 
-    IMPORTANTE: NO marca leído — el correo queda NO LEÍDO para el equipo humano.
-    La dedup se hace por la etiqueta `seen_label`, que `fetch_unread` excluye en
-    el query (`-label:`).
+    Guard de remitentes: idéntico a antes; lo que no pasa NO se procesa NI
+    se reclama (si mañana entra al allowlist, sigue procesable).
 
     after_epoch: corte por fecha — solo correos recibidos después de ese epoch.
     """
@@ -50,25 +47,21 @@ def poll_once(gmail, orchestrator, subject_filter: str,
     from_allowlist = sorted(rt | nv) if guard_active else None
 
     emails = gmail.fetch_unread(subject_filter, after_epoch=after_epoch,
-                                exclude_label=seen_label,
                                 from_allowlist=from_allowlist)
     processed = 0
     for email_data in emails:
         if guard_active and not is_processable_submission(
                 email_data.get("sender_email", ""),
                 email_data.get("subject", ""), rt, nv):
-            continue  # no es submission original de ventas: no procesar, no etiquetar
+            continue  # no es submission original de ventas
+        if not store.try_claim_email(email_data["id"]):
+            continue  # ya visto en un ciclo/arranque anterior
         processed += 1
         try:
             orchestrator.process_email(email_data)
         except Exception as e:  # un correo malo no frena el monitor
             print(f"  [monitor] error procesando "
                   f"{email_data.get('subject', '')[:50]}: {e}")
-        finally:
-            try:
-                gmail.add_label(email_data["id"], seen_label)
-            except Exception as e:
-                print(f"  [monitor] no se pudo etiquetar como procesado: {e}")
     return processed
 
 
@@ -120,9 +113,6 @@ def run_forever(check_interval: int = 60) -> None:
     store = orchestrator.quote_store
     subject_filter = config.get("email.monitoring.subject_filter", "Submission")
     label = config.get("email.label_processed", "Cotizado-Bot")
-    # Etiqueta de "ya visto por el monitor" — NO se marca leído (a pedido del
-    # usuario los correos quedan NO LEÍDOS). La dedup va por esta etiqueta.
-    seen_label = config.get("email.label_seen", "Procesado-Bot")
     rt_senders, new_venture_senders = _load_sender_sets(config)
     print(f"[runner] remitentes ventas: RT={len(rt_senders)} "
           f"NEW_VENTURE={len(new_venture_senders)}")
@@ -157,8 +147,8 @@ def run_forever(check_interval: int = 60) -> None:
     try:
         while True:
             try:
-                n = poll_once(gmail, orchestrator, subject_filter,
-                              after_epoch=cutoff, seen_label=seen_label,
+                n = poll_once(gmail, orchestrator, subject_filter, store,
+                              after_epoch=cutoff,
                               rt_senders=rt_senders,
                               new_venture_senders=new_venture_senders)
                 if n:
