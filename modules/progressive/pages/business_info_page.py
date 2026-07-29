@@ -9,6 +9,7 @@ All selectors VALIDATED LIVE on 2026-04-09 using USDOT 2998569 (M&D CUSTOM FREIG
 
 from typing import Optional
 
+from modules import decision_ledger
 from modules.progressive.pages.base_page import BasePage
 from modules.progressive.field_mapper import MappedFields
 from modules.progressive.choice_resolver import resolve_choice, Resolution
@@ -26,6 +27,8 @@ from modules.progressive.pages._exceptions import (
 
 
 # Quick-access business type buttons that appear on the page
+_PAGE = "START (BusinessOwnerInfo)"
+
 QUICK_TYPE_BUTTONS = [
     "Contractor",
     "Dirt, Sand and Gravel",
@@ -172,6 +175,10 @@ class BusinessInfoPage(BasePage):
         """Answer 'Is the customer currently insured with Progressive Commercial Auto?'"""
         answer = "Yes" if is_insured else "No"
         print(f"    [Progressive] Currently insured with Progressive: {answer}")
+        decision_ledger.record(
+            "Is the customer currently insured with Progressive Commercial Auto?",
+            answer, page=_PAGE, options=["Yes", "No"], source="DEFAULT",
+            rule_id="R-008")
         group = await self.find_radiogroup(
             "Is the customer currently insured with Progressive Commercial Auto?"
         )
@@ -269,6 +276,11 @@ class BusinessInfoPage(BasePage):
             return
         answer = "Yes" if recently_obtained else "No"
         print(f"    [Progressive] USDOT obtained in last 60 days: {answer}")
+        decision_ledger.record(
+            "Did the customer obtain their USDOT within the last 60 days?",
+            answer, page=_PAGE, options=["Yes", "No"], source="RULE",
+            rule_id="R-009",
+            note="el radio solo aparece si SAFER no encontró el USDOT")
         await self.safe_radio(group, answer)
 
     async def _confirm_usdot_belongs_to_customer(self, confirm: bool) -> None:
@@ -306,6 +318,10 @@ class BusinessInfoPage(BasePage):
             )
             return
         print(f"    [Progressive] USDOT belongs to customer: {answer}")
+        decision_ledger.record(
+            "Does this USDOT Number belong to the customer's business?",
+            answer, page=_PAGE, options=["Yes", "No"], source="RULE",
+            rule_id="R-010")
         await self.safe_radio(group, answer)
 
     async def _select_entity_type(self, entity_type: str) -> None:
@@ -501,6 +517,11 @@ class BusinessInfoPage(BasePage):
             return
         res = self.resolve_business_type(commodity)
         print(f"    [Progressive] Business type: '{commodity}' -> '{res.value}' ({res.note})")
+        # resolve_business_type NO pasa por resolve_choice (arma la Resolution
+        # a mano), así que el ledger se alimenta acá.
+        decision_ledger.record("Business type", res.value, page=_PAGE,
+                               source=res.kind, rule_id="R-013",
+                               note=f"commodity={commodity!r} ({res.note})")
         combo = await self.find_combo("Business type list")
         await combo.wait_for(state="visible", timeout=15_000)
         await self.safe_select_combo(combo, res.value)
@@ -596,6 +617,10 @@ class BusinessInfoPage(BasePage):
 
         answer = "Yes" if has_placard else "No"
         print(f"    [Progressive] Hazmat placard: {answer}")
+        decision_ledger.record(
+            "Do any listed vehicles or the load require a hazmat placard?",
+            answer, page=_PAGE, options=["Yes", "No"], source="DEFAULT",
+            rule_id="R-016")
         await self.safe_radio(group, answer)
 
     async def _fill_owner_info(
@@ -754,6 +779,10 @@ class BusinessInfoPage(BasePage):
             return
         answer = "Yes" if hauls_oil_gas else "No"
         print(f"    [Progressive] Oil & gas fields hauling: {answer}")
+        decision_ledger.record(
+            "Are any vehicles used to haul to or from oil & gas fields?",
+            answer, page=_PAGE, options=["Yes", "No"], source="DEFAULT",
+            rule_id="R-017")
         await self.safe_radio(group, answer)
 
     async def _fill_primary_phone(self, phone: Optional[str]) -> None:
@@ -807,6 +836,10 @@ class BusinessInfoPage(BasePage):
             return
         answer = "Yes" if owns else "No"
         print(f"    [Progressive] Owns the goods being transported: {answer}")
+        decision_ledger.record(
+            "Does the customer own the goods he or she is transporting?",
+            answer, page=_PAGE, options=["Yes", "No"], source="DEFAULT",
+            rule_id="R-018")
         await self.safe_radio(group, answer)
 
     async def _click_start_quote(self) -> None:

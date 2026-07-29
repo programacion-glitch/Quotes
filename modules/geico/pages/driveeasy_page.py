@@ -31,6 +31,7 @@ fallback.
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
+from modules import decision_ledger
 from modules.geico.pages.base_page import BasePage
 
 
@@ -109,6 +110,11 @@ class DriveEasyProPage(BasePage):
         print(
             "    [GEICO] Step 5b: Clicking 'Continue without driveEasy Pro'..."
         )
+        decision_ledger.record(
+            "DriveEasy Pro (telemática)", "Continue without driveEasy Pro",
+            page="Step 5b DriveEasy Pro", options=DRIVEEASY_OPTIONS,
+            source="RULE", rule_id="R-046",
+            note="enrolar requiere consentimiento del cliente")
         await self.remove_overlays()
         try:
             btn = self.page.get_by_role(

@@ -35,8 +35,11 @@ import re
 
 from playwright.async_api import Page
 
+from modules import decision_ledger
 from modules.geico.field_mapper import MappedVehicle
 from modules.geico.pages.base_page import BasePage, _flex_text_regex
+
+_PAGE = "Step 3 Vehicles"
 
 
 def _digits_only(s: str) -> str:
@@ -121,6 +124,10 @@ class VehicleEntryPage(BasePage):
 
         answer = "Yes" if has_hazmat else "No"
         print(f"    [GEICO] Step 3: Hazmat placard (opens Vehicles) -> {answer}")
+        decision_ledger.record(
+            "Do any vehicles require a hazardous material placard?", answer,
+            page=_PAGE, options=["Yes", "No"], source="DEFAULT",
+            rule_id="R-053")
         try:
             await self.click_question_radio(
                 "require a hazardous material placard", answer
@@ -205,6 +212,10 @@ class VehicleEntryPage(BasePage):
         await self._set_distance(vehicle)
 
         # 6. Radio "Is this vehicle ever used for personal use?"
+        decision_ledger.record(
+            "Is this vehicle ever used for personal use?",
+            "Yes" if vehicle.has_personal_use else "No", page=_PAGE,
+            options=["Yes", "No"], source="DEFAULT", rule_id="R-061")
         await self.click_question_radio(
             "ever used for personal use",
             "Yes" if vehicle.has_personal_use else "No",
@@ -218,6 +229,10 @@ class VehicleEntryPage(BasePage):
             )
             if await self.field_exists(grp, wait_ms=1_500):
                 print("    [GEICO] Step 3: customizations -> No")
+                decision_ledger.record("Does it have any customizations?",
+                                       "No", page=_PAGE,
+                                       options=["Yes", "No"],
+                                       source="DEFAULT", rule_id="R-062")
                 await self.click_question_radio("have any customizations", "No")
         except Exception as e:
             self.note_warning(f"customizations radio failed: {e}")
@@ -231,6 +246,10 @@ class VehicleEntryPage(BasePage):
             )
             if await self.field_exists(grp, wait_ms=1_500):
                 print("    [GEICO] Step 3: purchased in last 45 days -> No")
+                decision_ledger.record(
+                    "Was the vehicle purchased in the last 45 days?", "No",
+                    page=_PAGE, options=["Yes", "No"], source="DEFAULT",
+                    rule_id="R-063")
                 await self.click_question_radio(
                     "purchased in the last 45 days", "No"
                 )
@@ -309,6 +328,11 @@ class VehicleEntryPage(BasePage):
             f"Annual Mileage defaulted to {choice!r} (radius "
             f"{vehicle.one_way_distance!r}; BlueQuote carries none — review)"
         )
+        decision_ledger.record("Annual Mileage", choice, page=_PAGE,
+                               options=texts, source="DEFAULT",
+                               rule_id="R-064",
+                               note=f"radio {vehicle.one_way_distance!r}; "
+                                    f"el BlueQuote no trae millaje")
         await self.select_by_options_signature(["1-4000"], choice)
 
         # 'More than 52000' (and similar top buckets) REVEALS a required
@@ -402,6 +426,10 @@ class VehicleEntryPage(BasePage):
                 "comp/coll=Yes but BlueQuote has no vehicle value — "
                 "defaulting stated/cost to $50,000 (review)"
             )
+            decision_ledger.record("Total stated value of this vehicle",
+                                   "$50,000", page=_PAGE, source="DEFAULT",
+                                   rule_id="R-066",
+                                   note="comp/coll=Yes y el BlueQuote no trae Value")
         # (selector, value, human label). Mods first (0 = no customizations),
         # then the cost field. GiveStatedAmount is AUTO-DERIVED from the cost
         # and renders DISABLED (live YKZ 2026-06-12: value='$50,000', disabled)
@@ -527,6 +555,10 @@ class VehicleEntryPage(BasePage):
                     # Pickup conditional (ON THE GO 2026-06-11). BlueQuotes
                     # carry no hitch info; 'None' is the safe default.
                     print("    [GEICO] Step 3: trailer hitch -> None")
+                    decision_ledger.record(
+                        "Type of trailer hitch", "None", page=_PAGE,
+                        source="DEFAULT", rule_id="R-065",
+                        note="el BlueQuote no trae info de hitch")
                     await self.select_by_js("TypeOfTrailerHitch", "None")
                 elif "AnnualMileage" in sid:
                     await self._fill_annual_mileage_if_present(vehicle)
@@ -539,6 +571,10 @@ class VehicleEntryPage(BasePage):
                         f"unmapped required select {sid!r} — defaulting to "
                         f"{real[0]!r} (review)"
                     )
+                    decision_ledger.record(
+                        f"Select requerido no mapeado: {sid}", real[0],
+                        page=_PAGE, options=real, source="DEFAULT",
+                        rule_id="R-067")
                     await self.select_by_js(
                         sid.split("_")[1] if "_" in sid else sid, real[0]
                     )

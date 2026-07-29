@@ -19,7 +19,10 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from modules import decision_ledger
 from modules.progressive.pages.base_page import BasePage
+
+_PAGE = "More About Business"
 
 
 class MoreBusinessPage(BasePage):
@@ -61,6 +64,10 @@ class MoreBusinessPage(BasePage):
         box = self.page.get_by_role("textbox", name="Customer Email Address")
         if await box.count() > 0:
             await self.safe_fill(box.first, email)
+            decision_ledger.record("Customer Email Address", email,
+                                   page=_PAGE, source="RULE",
+                                   rule_id="R-003",
+                                   note="owner_email del BlueQuote")
 
     async def _answer_currently_insured(self, is_insured: bool) -> None:
         answer = "Yes" if is_insured else "No"
@@ -73,6 +80,9 @@ class MoreBusinessPage(BasePage):
             self._log_skipped("currently_insured", "pre-resolved by Progressive (static)")
             return
         print(f"    [Progressive] Currently insured: {answer}")
+        decision_ledger.record("Is the customer currently insured?", answer,
+                               page=_PAGE, options=["Yes", "No"],
+                               source="DEFAULT", rule_id="R-040")
         try:
             await self.safe_radio(group, answer)
         except Exception as e:
@@ -114,13 +124,24 @@ class MoreBusinessPage(BasePage):
             print("    [Progressive] Other coverages: GL solicitado → 'General "
                   "Liability' en Q1, 'None of the above' en Q2")
             await _tick("General Liability", 0)        # Q1: tiene GL vigente
+            decision_ledger.record(
+                "Other Business Insurance Q1 (coberturas vigentes)",
+                "General Liability", page="Other Business Insurance",
+                source="RULE", rule_id="R-007")
             await _tick("None of the above", 1)        # Q2: nada por Progressive
+            decision_ledger.record(
+                "Other Business Insurance Q2 (comprar con Progressive)",
+                "None of the above", page="Other Business Insurance",
+                source="RULE", rule_id="R-042")
             return
 
         # Sin GL (o un coverage explícito): comportamiento previo.
         label = "None of the above" if choice in ("None", None, "") else choice
         print(f"    [Progressive] Other coverages: {choice} → '{label}' (todas)")
         await _tick(label, "all")
+        decision_ledger.record(
+            "Other Business Insurance Q1+Q2 (sin GL en el BlueQuote)", label,
+            page="Other Business Insurance", source="RULE", rule_id="R-042")
 
     async def _answer_federal_filings_conditional(self, required: bool) -> None:
         answer = "Yes" if required else "No"
@@ -129,6 +150,9 @@ class MoreBusinessPage(BasePage):
             self._log_skipped("federal_filings_required", "field_not_rendered")
             return
         print(f"    [Progressive] Federal/state filings required: {answer}")
+        decision_ledger.record("Are state or federal filings required?",
+                               answer, page=_PAGE, options=["Yes", "No"],
+                               source="RULE", rule_id="R-002")
         await self.safe_radio(group, answer)
 
     async def _answer_eld_required_conditional(self, required: bool) -> None:
@@ -141,6 +165,10 @@ class MoreBusinessPage(BasePage):
             self._log_skipped("eld_required", "field_not_rendered_for_this_commodity")
             return
         print(f"    [Progressive] ELD required: {answer}")
+        decision_ledger.record(
+            "Is an Electronic Logging Device (ELD) required?", answer,
+            page=_PAGE, options=["Yes", "No"], source="DEFAULT",
+            rule_id="R-041")
         await self.safe_radio(group, answer)
 
     async def _answer_snapshot_proview_conditional(self, accept: bool = False) -> None:
@@ -160,6 +188,10 @@ class MoreBusinessPage(BasePage):
             self._log_skipped("snapshot_proview", "field_not_rendered_for_this_commodity")
             return
         print(f"    [Progressive] Snapshot ProView (accept): {answer}")
+        decision_ledger.record("Snapshot ProView (telemática, -20%)", answer,
+                               page=_PAGE, options=["Yes", "No"],
+                               source="RULE", rule_id="R-046",
+                               note="enrolar requiere consentimiento del cliente")
         await self.safe_radio(group, answer)
 
     def _log_skipped(self, field: str, reason: str) -> None:

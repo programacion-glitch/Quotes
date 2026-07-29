@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from modules import decision_ledger
 from modules.progressive.pages.base_page import BasePage
 from modules.progressive.field_mapper import MappedFields
 
@@ -183,6 +184,10 @@ class CoveragesRatesPage(BasePage):
         if (coverages.roadside_assistance
                 and coverages.roadside_assistance.strip().lower() != "not selected"):
             await self._set_combobox_all("Roadside Assistance", coverages.roadside_assistance)
+            decision_ledger.record("Roadside Assistance",
+                                   coverages.roadside_assistance,
+                                   page="Coverages/RATES", source="RULE",
+                                   rule_id="R-001")
 
         # Fire & Theft w/ Combined Additional Coverage (per vehicle)
         if coverages.fire_theft_cac:
@@ -799,6 +804,9 @@ class CoveragesRatesPage(BasePage):
             if not await self.field_exists(group, wait_ms=1_000):
                 continue
             print(f"    [Progressive] MTC subform: {label_hint} = {answer}")
+            decision_ledger.record(f"MTC: {label_hint}", answer,
+                                   page="Coverages/RATES", source="DEFAULT",
+                                   rule_id="R-034")
             try:
                 await self.safe_radio(group, answer)
             except Exception as e:
@@ -1411,6 +1419,9 @@ class CoveragesRatesPage(BasePage):
             try:
                 await self.safe_radio(group, "Yes")
                 print("    [Progressive] Trailer Interchange agreement: Yes")
+                decision_ledger.record(
+                    "Trailer Interchange: interchange agreement", "Yes",
+                    page="Coverages/RATES", source="DEFAULT", rule_id="R-037")
             except Exception as e:
                 msg = f"Trailer Interchange agreement radio failed: {e}"
                 print(f"    [Progressive] WARN: {msg}")
@@ -1424,6 +1435,9 @@ class CoveragesRatesPage(BasePage):
             try:
                 await self.safe_radio(furnish, "Yes")
                 print("    [Progressive] Trailer Interchange furnish copy: Yes")
+                decision_ledger.record(
+                    "Trailer Interchange: furnish copy of agreement", "Yes",
+                    page="Coverages/RATES", source="DEFAULT", rule_id="R-037")
             except Exception as e:
                 msg = f"Trailer Interchange 'furnish copy' radio failed: {e}"
                 print(f"    [Progressive] WARN: {msg}")
@@ -1449,6 +1463,10 @@ class CoveragesRatesPage(BasePage):
         if count_combo is not None:
             try:
                 await self.safe_select_combo(count_combo.first, "1")
+                decision_ledger.record(
+                    "Trailer Interchange: number of interchanged trailers",
+                    "1", page="Coverages/RATES", source="DEFAULT",
+                    rule_id="R-038", note="no viene en el BlueQuote")
                 msg = (
                     "Trailer Interchange: number of interchanged trailers "
                     "defaulted to 1 (not in the Blue Quote) — review if the "

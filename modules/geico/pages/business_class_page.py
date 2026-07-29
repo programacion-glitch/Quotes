@@ -24,9 +24,12 @@ from pathlib import Path
 
 from playwright.async_api import Page
 
+from modules import decision_ledger
 from modules.geico.business_class_resolver import resolve_business_class
 from modules.geico.field_mapper import MappedFields
 from modules.geico.pages.base_page import BasePage
+
+_PAGE = "Step 1 Business Class & USDOT"
 
 
 # Catalog of the 1,596 Business Class options, dumped once from the live
@@ -196,6 +199,9 @@ class BusinessClassPage(BasePage):
         question text and click the first 'Yes' radio inside that block.
         """
         print("    [GEICO] Step 1: Confirming 'Is this the customer's business?' Yes")
+        decision_ledger.record("Is this the customer's business?", "Yes",
+                               page=_PAGE, options=["Yes", "No"],
+                               source="DEFAULT", rule_id="R-051")
         try:
             await self.click_question_radio(
                 "Is this the customer's business", "Yes"
@@ -213,6 +219,10 @@ class BusinessClassPage(BasePage):
         """
         answer = "Yes" if has_eld else "No"
         print(f"    [GEICO] Step 1: ELD -> {answer}")
+        decision_ledger.record(
+            "Does the customer have an electronic logging device (ELD)?",
+            answer, page=_PAGE, options=["Yes", "No"], source="DEFAULT",
+            rule_id="R-052")
         try:
             await self.click_question_radio(
                 "Does the customer have an electronic logging device", answer
@@ -245,6 +255,10 @@ class BusinessClassPage(BasePage):
         print(f"    [GEICO] Step 1: Selecting business class {business_class!r}")
         try:
             if await self._select2_pick(business_class):
+                decision_ledger.record("Business Class", business_class,
+                                       page=_PAGE, source="MATCHED",
+                                       rule_id="R-054",
+                                       note="match directo en el Select2")
                 return
 
             # No match: resolve via catalog + learned cache + AI.
@@ -263,6 +277,9 @@ class BusinessClassPage(BasePage):
                 f"    [GEICO] Step 1: business class resolved via {source}: "
                 f"{business_class!r} -> {resolved!r}"
             )
+            decision_ledger.record("Business Class", resolved, page=_PAGE,
+                                   source="AI", rule_id="R-054",
+                                   note=f"{business_class!r} resuelto vía {source}")
             if not await self._select2_pick(resolved):
                 await self.screenshot("step1_business_class_resolved_no_match")
                 raise RuntimeError(
@@ -417,6 +434,10 @@ class BusinessClassPage(BasePage):
                 else:
                     print(f"    [GEICO] Step 1 conditional "
                           f"{needle!r} -> {answer}")
+                decision_ledger.record(f"Condicional Step 1: {needle}", answer,
+                                       page=_PAGE, source="DEFAULT",
+                                       rule_id="R-055",
+                                       note="revelada por la clase de negocio")
                 await self.click_question_radio(needle, answer)
 
     async def _click_next(self) -> None:

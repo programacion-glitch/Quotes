@@ -43,8 +43,11 @@ import re
 
 from playwright.async_api import Page
 
+from modules import decision_ledger
 from modules.geico.pages.base_page import BasePage
 from modules.geico.field_mapper import MappedFields
+
+_PAGE = "Step 7 Final Quote Details"
 
 
 # Signature for any DL State <select>: the 50-US-state list is invariant.
@@ -76,6 +79,10 @@ class FinalDetailsPage(BasePage):
         print(
             "    [GEICO] Step 7: communication checkboxes -> default (leave as-is)"
         )
+        decision_ledger.record(
+            "Checkboxes de comunicación (GEICO Text + Digital)",
+            "se dejan como GEICO los trae (tildados)", page=_PAGE,
+            source="DEFAULT", rule_id="R-081")
 
         await self._fill_drivers_section(fields)
         await self._fill_vehicles_section(fields)
@@ -84,6 +91,9 @@ class FinalDetailsPage(BasePage):
         print(
             "    [GEICO] Step 7: skipping optional Authorized Rep / Certificate Holder"
         )
+        decision_ledger.record(
+            "Authorized Rep / Certificate Holder", "se saltean (opcionales)",
+            page=_PAGE, source="DEFAULT", rule_id="R-084")
 
         await self._fill_blanket_additional(fields.has_blanket_additional)
 
@@ -102,6 +112,10 @@ class FinalDetailsPage(BasePage):
         compensation coverage for their drivers?"."""
         label = "Yes" if has_workers_comp else "No"
         print(f"    [GEICO] Step 7: Worker's comp -> {label}")
+        decision_ledger.record(
+            "Does the customer carry worker's compensation coverage?", label,
+            page=_PAGE, options=["Yes", "No"], source="DEFAULT",
+            rule_id="R-080")
         try:
             await self.click_question_radio(
                 "worker's compensation coverage", label

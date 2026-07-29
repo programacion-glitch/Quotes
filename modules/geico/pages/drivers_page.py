@@ -43,8 +43,11 @@ same way: placeholder -> add driver -> summary -> (add another | looks good).
 
 import re
 
+from modules import decision_ledger
 from modules.geico.field_mapper import MappedDriver
 from modules.geico.pages.base_page import BasePage, _flex_text_regex
+
+_PAGE = "Step 4 Drivers"
 
 
 # Signature for the Driver's License State native <select>. The 50 US-state
@@ -143,6 +146,10 @@ class DriverPlaceholderPage(BasePage):
             )
             if await self.field_exists(grp, wait_ms=1_500):
                 print("    [GEICO] Step 4: Certificate of Responsibility -> No")
+                decision_ledger.record(
+                    "Certificate of Responsibility (SR-22)", "No",
+                    page=_PAGE, options=["Yes", "No"], source="DEFAULT",
+                    rule_id="R-069")
                 await self.click_question_radio(
                     "Certificate of Responsib", "No"
                 )
@@ -350,6 +357,10 @@ class AddDriverPage(BasePage):
             )
             if await self.field_exists(grp, wait_ms=1_500):
                 print("    [GEICO] Step 4: Certificate of Responsibility -> No")
+                decision_ledger.record(
+                    "Certificate of Responsibility (SR-22)", "No",
+                    page=_PAGE, options=["Yes", "No"], source="DEFAULT",
+                    rule_id="R-069")
                 await self.click_question_radio(
                     "Certificate of Responsib", "No"
                 )

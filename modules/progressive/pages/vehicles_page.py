@@ -27,6 +27,7 @@ from modules.progressive.business_type_classifier import ai_pick_from_options
 from modules.progressive.field_mapper import MappedVehicle
 from modules.progressive.mappings import VEHICLE_TILE_MAP
 from modules.progressive.pages._exceptions import UnmappableValueError
+from modules import decision_ledger
 from modules.progressive.pages.base_page import BasePage
 from modules.progressive.unit_matching import normalize_identifier
 from modules.progressive.vehicle_amounts import resolve_gvw, resolve_vehicle_value
@@ -713,6 +714,10 @@ class AddVehiclePage(BasePage):
         await self._set_trailer_hitch()
 
         # Business/personal use - default Business Only
+        decision_ledger.record(
+            "Is this vehicle used for business, personal or both?",
+            "Business Only", page="Add Vehicle", source="DEFAULT",
+            rule_id="R-022")
         await self._set_radio("Is this vehicle used for business, personal or both?", "Business Only")
 
         # Pickup-only conditional: For-Hire basis radio.
@@ -720,6 +725,10 @@ class AddVehiclePage(BasePage):
         # Pickup. Default "Yes" — any USDOT-registered commercial trucking
         # operation that landed here via the Trucker fallback is, by
         # definition, hauling for compensation.
+        decision_ledger.record(
+            "Is this vehicle used to haul goods on a For-Hire basis?", "Yes",
+            page="Add Vehicle", options=["Yes", "No"], source="DEFAULT",
+            rule_id="R-023", note="CONDITIONAL: solo aparece para Pickup")
         await self._set_radio(
             "Is this vehicle used to haul goods on a For-Hire basis?", "Yes"
         )
@@ -923,6 +932,12 @@ class AddVehiclePage(BasePage):
         """Select Progressive's farthest-one-way-distance bracket for a radius."""
         option = radius_to_progressive_option(radius_miles)
         print(f"    [Progressive] Radius of operation: {radius_miles!r} -> '{option}'")
+        # R-006 (bracket discreto de 500) y R-019 (radio vacío -> 'More than
+        # 500 miles') salen del MISMO mapeo: se registra bajo R-006.
+        decision_ledger.record(
+            "Farthest one-way distance this vehicle typically travels", option,
+            page="Add Vehicle", source="RULE", rule_id="R-006",
+            note=f"radio del BlueQuote: {radius_miles!r}")
         await self._set_combobox_by_label(
             "Farthest one-way distance this vehicle typically travels", option
         )

@@ -37,6 +37,7 @@ from typing import Optional
 
 from playwright.async_api import Page
 
+from modules import decision_ledger
 from modules.geico.pages.base_page import BasePage
 from modules.geico.quote_result_types import QuotePrice
 
@@ -134,6 +135,12 @@ class CoveragesPage(BasePage):
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
         await self.remove_overlays()
         print("    [GEICO] Step 6: Quote & Coverages")
+        decision_ledger.record(
+            "Coberturas de la póliza",
+            "se aceptan los defaults de GEICO (no se customiza nada)",
+            page="Step 6 Quote & Coverages", source="DEFAULT",
+            rule_id="R-079",
+            note="los límites pedidos en el BlueQuote NO se aplican en GEICO")
 
         await self._wait_for_premium()
         await self._recalculate_if_needed()

@@ -17,6 +17,7 @@ Fields shown:
 
 from typing import Optional
 
+from modules import decision_ledger
 from modules.progressive.pages.base_page import BasePage
 
 
@@ -62,6 +63,9 @@ class FinalDetailsPage(BasePage):
     async def _set_mvr_order(self, order: bool) -> None:
         label = "Yes, order reports" if order else "No, do not order"
         print(f"    [Progressive] MVR/CLUE reports: {label}")
+        decision_ledger.record(
+            "Do you want to order MVR/CLUE reports for all drivers?", label,
+            page="FINAL DETAILS", source="DEFAULT", rule_id="R-043")
         group = self.page.get_by_role(
             "radiogroup",
             name="Do you want to order MVR/CLUE reports for all drivers?",

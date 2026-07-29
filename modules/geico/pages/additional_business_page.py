@@ -27,9 +27,12 @@ import re
 
 from playwright.async_api import Page
 
+from modules import decision_ledger
 from modules.geico.pages._exceptions import UnderwritingRejectError
 from modules.geico.pages.base_page import BasePage
 from modules.geico.field_mapper import MappedFields
+
+_PAGE = "Step 5 Additional Business Info"
 
 
 class AdditionalBusinessPage(BasePage):
@@ -174,6 +177,10 @@ class AdditionalBusinessPage(BasePage):
     async def _fill_additional_info(self, fields: MappedFields) -> None:
         """Liability type + named-additional-insured + blanket + filings."""
         await self._set_liability_type(fields.current_liability_type)
+        decision_ledger.record(
+            "Need a named additional insured?",
+            "Yes" if fields.needs_additional_insured else "No", page=_PAGE,
+            options=["Yes", "No"], source="DEFAULT", rule_id="R-077")
         await self._set_radio_group(
             question_substring="named additional insured",
             value=fields.needs_additional_insured,
@@ -190,6 +197,15 @@ class AdditionalBusinessPage(BasePage):
         # Live SOLANO 2026-06-11: the question reads 'Is the customer
         # required to provide proof of insurance/filings to a state or
         # federal agency?' with Yes/No options.
+        decision_ledger.record(
+            "Blanket additional insured contract?",
+            "Yes" if fields.has_blanket_additional else "No", page=_PAGE,
+            options=["Yes", "No"], source="DEFAULT", rule_id="R-077")
+        decision_ledger.record(
+            "Proof of insurance / filings requeridos?",
+            "Yes" if fields.requires_filings else "No", page=_PAGE,
+            options=["Yes", "No"], source="DEFAULT", rule_id="R-078",
+            note="en Progressive esta misma pregunta va Yes (R-002)")
         await self._set_radio_group(
             question_substring="proof of insurance/filings",
             value=fields.requires_filings,
@@ -204,6 +220,14 @@ class AdditionalBusinessPage(BasePage):
             "None": "None",
         }.get(liability_type, "None")
         print(f"    [GEICO] Step 5: Liability type -> {target_label}")
+        decision_ledger.record(
+            "Tipo de liability actual (BOP / GL / None)", target_label,
+            page=_PAGE,
+            options=["Business Owners Policy (BOP)",
+                     "General Liability Policy (GL)", "None"],
+            source="DEFAULT", rule_id="R-076",
+            note="en Progressive sí se tilda GL cuando el BlueQuote lo trae "
+                 "(R-007)")
         try:
             await self.click_question_radio(
                 "kind of liability insurance", target_label

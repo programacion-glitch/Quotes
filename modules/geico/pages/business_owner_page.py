@@ -36,8 +36,11 @@ import time
 
 from playwright.async_api import Page
 
+from modules import decision_ledger
 from modules.geico.pages.base_page import BasePage, _flex_text_regex
 from modules.geico.field_mapper import MappedFields
+
+_PAGE = "Step 2 Business Owner"
 
 
 class OwnerVerificationError(RuntimeError):
@@ -135,6 +138,9 @@ class BusinessOwnerPage(BasePage):
             # Marital Status — ALWAYS Single (Rule 1)
             marital = fields.marital_status or "Single"
             print(f"    [GEICO] Step 2: Marital Status -> {marital}")
+            decision_ledger.record("Marital Status", marital, page=_PAGE,
+                                   source="RULE", rule_id="R-005",
+                                   note="el BlueQuote no captura marital status")
             try:
                 await self.select_by_options_signature(
                     ["Single", "Widowed"], marital
@@ -355,6 +361,10 @@ class BusinessOwnerPage(BasePage):
 
     async def _answer_owner_is_driver(self, is_driver: bool) -> None:
         """Yes is default-checked by GEICO. Click No only when needed."""
+        decision_ledger.record("Is the owner a driver on the policy?",
+                               "Yes" if is_driver else "No", page=_PAGE,
+                               options=["Yes", "No"], source="RULE",
+                               rule_id="R-058")
         if is_driver:
             print("    [GEICO] Step 2: Owner is driver -> Yes (default)")
             return
@@ -545,6 +555,10 @@ class BusinessOwnerPage(BasePage):
             "    [GEICO] Step 2: vehicle prefill picker shown — choosing "
             "'Quote different vehicle(s)'"
         )
+        decision_ledger.record(
+            "Picker 'We found vehicles that might belong…'",
+            "Quote different vehicle(s)", page=_PAGE, source="RULE",
+            rule_id="R-059", note="los VINs del BlueQuote son la fuente de verdad")
         await self.remove_overlays()
         # The card's text is the clickable label for its hidden checkbox
         # (same pattern as the dashboard product checkboxes).
@@ -567,6 +581,9 @@ class BusinessOwnerPage(BasePage):
             "    [GEICO] Step 2: 'Verify USDOT Number' shown — clicking 'Skip' "
             "(keep BlueQuote USDOT)"
         )
+        decision_ledger.record("Verify USDOT Number", "Skip", page=_PAGE,
+                               options=["Skip", "Update USDOT Number"],
+                               source="RULE", rule_id="R-004")
         await self.remove_overlays()
         await self.click_button("Skip")
         await self.page.wait_for_load_state("networkidle", timeout=30_000)
