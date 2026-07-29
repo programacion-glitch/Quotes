@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from modules import decision_ledger
 from modules.quote_profile import QuoteProfile
 from modules.gmail_api_otp_reader import GmailAPIOTPReader
 from modules.geico import stealth
@@ -147,6 +148,8 @@ class GEICOClient:
             QuoteResult with success/failure info. On success, .price holds the
             captured premium and .pdf_path the path to the saved quote PDF.
         """
+        decision_ledger.start_run("GEICO")
+
         config = GEICOConfig.from_env()
         error = config.validate()
         if error:

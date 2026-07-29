@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 from typing import NoReturn, Optional
 
+from modules import decision_ledger
 from modules.progressive.pages._exceptions import UnmappableValueError
 
 
@@ -51,6 +52,28 @@ def resolve_choice(
     pass live-enumerated options and rely on the downstream `safe_select_combo`
     to enforce the value actually exists on the page.
     """
+    res = _resolve_choice_inner(
+        field, source_value, options, mapping=mapping, default=default,
+        generic_aliases=generic_aliases, screenshot_path=screenshot_path,
+        debug_context=debug_context,
+    )
+    # Notario: toda decisión de opción queda en el ledger (best-effort).
+    decision_ledger.record(res.field, res.value, options=list(options),
+                           source=res.kind, note=res.note)
+    return res
+
+
+def _resolve_choice_inner(
+    field: str,
+    source_value: Optional[str],
+    options: list,
+    *,
+    mapping: Optional[dict] = None,
+    default: Optional[str] = None,
+    generic_aliases: frozenset[str] = frozenset(),
+    screenshot_path=None,
+    debug_context: Optional[dict] = None,
+) -> Resolution:
     def _halt() -> NoReturn:
         raise UnmappableValueError(
             field=field,

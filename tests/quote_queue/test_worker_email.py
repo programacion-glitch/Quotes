@@ -3,6 +3,7 @@ etiqueta) con los PDFs adjuntos."""
 import json
 from unittest.mock import MagicMock
 
+from modules import decision_ledger
 from modules.quote_queue.store import QuoteQueueStore
 from modules.quote_queue.worker import QuoteWorker
 from modules.quote_queue.models import JobStatus
@@ -133,6 +134,61 @@ def test_analysis_email_es_correo_nuevo_sin_hilo_ni_cc(tmp_path):
     assert sent.get("cc") is None
     assert sent.get("thread_id") is None
     assert sent.get("in_reply_to") is None
+
+
+def test_run_once_captura_decisiones_en_mark_terminal(tmp_path):
+    """Lo que el bot registró en el decision_ledger durante create_quote queda
+    guardado en el job terminal (decisions_json) para el correo de análisis."""
+    store = _store(tmp_path)
+    store.enqueue("sub-dec", "PROGRESSIVE", "{}", None, "1")
+
+    class _Result:
+        success = True
+        price = None
+        pdf_path = None
+
+    def fake_create_quote(profile, effective_date):
+        decision_ledger.start_run("PROGRESSIVE")
+        decision_ledger.record("Roadside", "Yes", source="RULE", rule_id="R-1")
+        return _Result()
+
+    gmail = MagicMock()
+    worker = QuoteWorker("PROGRESSIVE", store, create_quote=fake_create_quote,
+                         gmail=gmail)
+
+    assert worker.run_once() is True
+
+    (job,) = store.get_jobs("sub-dec")
+    assert job.decisions_json is not None
+    decisions = json.loads(job.decisions_json)
+    assert len(decisions) == 1
+    assert decisions[0]["field"] == "Roadside"
+    assert decisions[0]["chosen"] == "Yes"
+    assert decisions[0]["rule_id"] == "R-1"
+
+
+def test_run_once_captura_decisiones_aunque_create_quote_truene(tmp_path):
+    """Si create_quote truena a medio camino, lo que alcanzó a registrarse
+    antes del crash igual se guarda (sirve de diagnóstico)."""
+    store = _store(tmp_path)
+    store.enqueue("sub-crash", "GEICO", "{}", None, "1")
+
+    def crashing_create_quote(profile, effective_date):
+        decision_ledger.start_run("GEICO")
+        decision_ledger.record("VIN", "match", source="MATCHED")
+        raise RuntimeError("boom")
+
+    gmail = MagicMock()
+    worker = QuoteWorker("GEICO", store, create_quote=crashing_create_quote,
+                         gmail=gmail)
+
+    assert worker.run_once() is True
+
+    (job,) = store.get_jobs("sub-crash")
+    assert job.decisions_json is not None
+    decisions = json.loads(job.decisions_json)
+    assert decisions[0]["field"] == "VIN"
+    assert decisions[0]["chosen"] == "match"
 
 
 def test_sent_once_under_contention(tmp_path):

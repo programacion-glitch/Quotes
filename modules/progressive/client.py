@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from modules import decision_ledger
 from modules.quote_profile import QuoteProfile
 from modules.gmail_api_otp_reader import GmailAPIOTPReader
 from modules.progressive.field_mapper import map_profile_to_fields
@@ -80,6 +81,8 @@ class ProgressiveClient:
         Returns:
             QuoteResult with success/failure info.
         """
+        decision_ledger.start_run("PROGRESSIVE")
+
         config = ProgressiveConfig.from_env()
         error = config.validate()
         if error:

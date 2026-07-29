@@ -13,6 +13,7 @@ import os
 import time
 from typing import Callable, List
 
+from modules import decision_ledger
 from modules.quote_profile import QuoteProfile
 from modules.quote_queue.models import JobStatus
 from modules.quote_queue.messages import (
@@ -93,8 +94,11 @@ class QuoteWorker:
             profile = QuoteProfile.from_dict(json.loads(job.profile_json))
             result = self.create_quote(profile, job.effective_date)
         except Exception as e:  # falla dura del cliente RPA
+            decisions = decision_ledger.entries()
+            decisions_json = json.dumps(decisions) if decisions else None
             self.store.mark_terminal(job.id, JobStatus.FAILED, error="error",
-                                     screenshot_path=None)
+                                     screenshot_path=None,
+                                     decisions_json=decisions_json)
             print(f"    [worker:{self.mga}] create_quote crashed: {e}")
             self.maybe_send_submission_email(job.submission_id)
             return True
@@ -112,9 +116,12 @@ class QuoteWorker:
         if status == "deferred":
             status, reason = "halted", "pending_retry"
 
+        decisions = decision_ledger.entries()
+        decisions_json = json.dumps(decisions) if decisions else None
         self.store.mark_terminal(
             job.id, JobStatus(status), premium=premium, quote_number=quote_number,
             pdf_path=pdf_path, screenshot_path=screenshot, error=reason,
+            decisions_json=decisions_json,
         )
         # Subir la indicación (PDF) a la carpeta del cliente en Drive.
         if status == "quoted" and pdf_path:
