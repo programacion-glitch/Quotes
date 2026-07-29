@@ -209,6 +209,14 @@ def _eligible_row(ev: MGAEvaluation) -> str:
             f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#5a6577;">'
             f'{" | ".join(info_parts)}</p>'
         )
+    if ev.passed_rules:
+        shown = ", ".join(ev.passed_rules[:8])
+        if len(ev.passed_rules) > 8:
+            shown += f" (+{len(ev.passed_rules) - 8})"
+        lines.append(
+            f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#0d7a3f;">'
+            f'Reglas OK: {shown}</p>'
+        )
     lines.append('</td></tr>')
     return "\n".join(lines)
 
@@ -221,9 +229,54 @@ def _ineligible_row(ev: MGAEvaluation) -> str:
         f'<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:bold;color:#c4291c;">{ev.mga_name}</p>',
     ]
     for fr in ev.failed_rules:
+        detail = fr.reason
+        if fr.current_value is not None or fr.required_value is not None:
+            detail += (f' <span style="color:#8c95a6;">(actual: {fr.current_value}'
+                       f' &mdash; requerido: {fr.required_value})</span>')
         lines.append(
             f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#5a6577;">'
-            f'&#8226; {fr.reason}</p>'
+            f'&#8226; {detail}</p>'
+        )
+    lines.append('</td></tr>')
+    return "\n".join(lines)
+
+
+def _web_rules_row(ev: MGAEvaluation) -> str:
+    """Fila del bloque 'MGAs Web — evaluación de reglas' (Progressive/GEICO).
+
+    El veredicto FINAL de estos MGAs lo da el RPA (sección 'Cotizaciones
+    automáticas'); este bloque explica el filtro PREVIO del rule engine:
+    por qué se intentó (o no) la cotización automática.
+    """
+    if ev.eligible:
+        color, verdict = "#0d7a3f", ("Elegible por reglas &mdash; la cotizaci&oacute;n "
+                                     "autom&aacute;tica decide el resultado final "
+                                     "(ver secci&oacute;n RPA)")
+    else:
+        color, verdict = "#c4291c", ("NO se intent&oacute; cotizaci&oacute;n "
+                                     "autom&aacute;tica &mdash; reglas:")
+    lines = [
+        '<tr style="background-color:#f4f7fb;">',
+        '<td style="padding:12px 16px;border-bottom:1px solid #bcd2e8;">',
+        f'<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:bold;color:{color};">{ev.mga_name}</p>',
+        f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#5a6577;">{verdict}</p>',
+    ]
+    for fr in ev.failed_rules:
+        detail = fr.reason
+        if fr.current_value is not None or fr.required_value is not None:
+            detail += (f' <span style="color:#8c95a6;">(actual: {fr.current_value}'
+                       f' &mdash; requerido: {fr.required_value})</span>')
+        lines.append(
+            f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#5a6577;">'
+            f'&#8226; {detail}</p>'
+        )
+    if ev.eligible and ev.passed_rules:
+        shown = ", ".join(ev.passed_rules[:8])
+        if len(ev.passed_rules) > 8:
+            shown += f" (+{len(ev.passed_rules) - 8})"
+        lines.append(
+            f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#5a6577;">'
+            f'Reglas OK: {shown}</p>'
         )
     lines.append('</td></tr>')
     return "\n".join(lines)
@@ -325,6 +378,11 @@ def build_analysis_email(
     # reglas contradice un decline en vivo (Diana 2026-06-25: un MGA declinado por
     # el RPA NO debe aparecer como opción disponible). Se excluyen de las listas
     # elegibles/no-elegibles/desbloquea; su resultado vive en la sección RPA.
+    # (2026-07-29, Task 4): se capturan ANTES de filtrar para renderizar el
+    # bloque separado "MGAs Web — Evaluación de Reglas" (_web_rules_row) que
+    # explica el filtro PREVIO del rule engine, sin reintroducirlos en las
+    # listas generales de elegibles/no-elegibles.
+    web_evals = [ev for ev in relevant if _is_web_automation_mga(ev.mga_name)]
     relevant = [ev for ev in relevant if not _is_web_automation_mga(ev.mga_name)]
 
     eligible = [ev for ev in relevant if ev.eligible]
@@ -452,10 +510,17 @@ def build_analysis_email(
     # -- NV color --
     nv_color = "#c4291c" if profile.applicant.is_new_venture else "#0d7a3f"
 
+    # -- Web MGAs (rule engine 'why') --
+    web_rules_rows = "".join(_web_rules_row(ev) for ev in web_evals)
+    if not web_rules_rows:
+        web_rules_rows = _no_data_row("Sin MGAs web para esta cotizacion",
+                                      bg="#f4f7fb", border="#bcd2e8")
+
     # -- Render template --
     body = template.format(
         warnings_banner=warnings_banner,
         rpa_quotes_section=rpa_quotes_section,
+        web_rules_rows=web_rules_rows,
         business_name=profile.applicant.business_name or "N/A",
         owner_name=profile.applicant.owner_name or "N/A",
         usdot=profile.applicant.usdot or "N/A",
