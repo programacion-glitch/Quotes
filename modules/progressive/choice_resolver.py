@@ -58,7 +58,10 @@ def resolve_choice(
         debug_context=debug_context,
     )
     # Notario: toda decisión de opción queda en el ledger (best-effort).
-    decision_ledger.record(res.field, res.value, options=list(options),
+    # `options` se pasa CRUDO (sin list()) — la conversión a lista de str
+    # vive dentro del try/except de record() para que un iterable frágil
+    # nunca pueda romper resolve_choice.
+    decision_ledger.record(res.field, res.value, options=options,
                            source=res.kind, note=res.note)
     return res
 

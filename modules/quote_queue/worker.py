@@ -90,6 +90,13 @@ class QuoteWorker:
             return False
         self.store.mark_running(job.id)
 
+        # Reset ANTES del try: si QuoteProfile.from_dict/json.loads truena
+        # (profile_json corrupto) antes de siquiera llegar a create_quote,
+        # el except de abajo no debe adjuntar las decisiones del job ANTERIOR
+        # de este mismo worker thread (audit trail falso, peor que None).
+        # Idempotente con el start_run de adentro de create_quote.
+        decision_ledger.start_run(self.mga)
+
         try:
             profile = QuoteProfile.from_dict(json.loads(job.profile_json))
             result = self.create_quote(profile, job.effective_date)

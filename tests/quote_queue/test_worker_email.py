@@ -191,6 +191,35 @@ def test_run_once_captura_decisiones_aunque_create_quote_truene(tmp_path):
     assert decisions[0]["chosen"] == "match"
 
 
+def test_run_once_no_arrastra_decisiones_del_job_anterior_si_profile_json_es_invalido(
+    tmp_path,
+):
+    """Si profile_json está corrupto, json.loads/from_dict truenan ANTES de
+    llegar a create_quote — nunca corre start_run para ESTE job. El except no
+    debe adjuntar las decisiones que quedaron en el ledger del job ANTERIOR de
+    este mismo worker thread: eso sería un audit trail falso (peor que None,
+    porque parece real pero es de otro cliente)."""
+    store = _store(tmp_path)
+    # Simula un job previo que dejó entradas vivas en el ledger de este thread.
+    decision_ledger.start_run("PROGRESSIVE")
+    decision_ledger.record("Roadside", "Yes", source="RULE", rule_id="R-OTHER-JOB")
+    assert decision_ledger.entries()  # precondición: hay basura previa
+
+    store.enqueue("sub-bad-json", "PROGRESSIVE", "{{{no-json", None, "1")
+
+    gmail = MagicMock()
+    worker = QuoteWorker("PROGRESSIVE", store, create_quote=lambda *a: None,
+                         gmail=gmail)
+
+    assert worker.run_once() is True
+
+    (job,) = store.get_jobs("sub-bad-json")
+    assert job.status == JobStatus.FAILED.value
+    assert job.decisions_json is None, (
+        "no debe arrastrar las decisiones del job anterior del mismo thread"
+    )
+
+
 def test_sent_once_under_contention(tmp_path):
     """Con todos terminales, el correo sale UNA sola vez (idempotencia de la
     carrera Progressive+GEICO terminando juntos)."""
