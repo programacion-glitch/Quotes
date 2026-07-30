@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from modules import decision_ledger  # noqa: E402
 from modules.quote_profile import (  # noqa: E402
     ApplicantProfile,
     CoveragesProfile,
@@ -516,12 +517,28 @@ async def main() -> None:
     print(f"Root: {ROOT}")
     print(f"Date: {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
 
+    # The simulator drives QuoteFlow directly (it doesn't go through
+    # ProgressiveClient.create_quote, which is what normally calls
+    # decision_ledger.start_run()). Start the ledger here so the
+    # choice_resolver auto-hook has somewhere to record during the run.
+    decision_ledger.start_run("PROGRESSIVE")
+
     profile = build_sample_profile()
     print(f"\nSample profile: {profile.applicant.business_name} / USDOT {profile.applicant.usdot}")
 
     sim_pure_logic(profile)
     await sim_full_flow(profile)
     sim_summary()
+
+    banner("PART D — Decision Ledger check")
+    entries = decision_ledger.entries()
+    print(f"decision_ledger.entries() -> {len(entries)} decisions recorded")
+    for e in entries[:10]:
+        print(f"    [{e['source']}] {e['page']}.{e['field']} = {e['chosen']!r}"
+              f" (rule_id={e['rule_id']})")
+    if len(entries) > 10:
+        print(f"    ... ({len(entries) - 10} more)")
+    assert entries, "decision_ledger stayed empty during the simulated run"
 
 
 if __name__ == "__main__":

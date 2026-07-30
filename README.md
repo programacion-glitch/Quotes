@@ -189,8 +189,8 @@ docker compose down           # apagar
 ### 📧 Comportamiento con los correos
 
 - El bot lee **no-leídos** con asunto `Submission` recibidos **después** del corte (`data/bot_since_epoch.txt`); el backlog viejo no se toca.
-- **Los correos quedan NO LEÍDOS.** En vez de marcar leído, el bot etiqueta cada correo procesado con **`Procesado-Bot`** (config `email.label_seen`) y lo excluye del próximo barrido. Así el equipo humano sigue viéndolos como pendientes sin que el bot los reprocese.
-- Al **cotizar**, además responde **en el mismo hilo** a `quotes@` con CC a `programacion@`, adjunta los PDFs, y etiqueta el original con **`Cotizado-Bot`** (config `email.label_processed`).
+- **Servicio transparente:** el bot NO etiqueta, NO marca leído y NO responde en el hilo de ventas. El correo original queda exactamente como llegó para el equipo humano. La dedup contra reprocesamiento es por Gmail message-id en `seen_emails` (cola SQLite), no por etiquetas.
+- Al **cotizar**, el bot envía un correo **nuevo** (sin hilo, sin CC) a `EMAIL_ANALYSIS_TO` con el análisis, el "por qué" del rule engine y la tabla "Decisiones tomadas" (Decision Ledger), y adjunta los PDFs.
 
 ## 📚 Documentación Adicional
 

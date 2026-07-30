@@ -233,3 +233,22 @@ Referencias:
 - Spec: `docs/superpowers/specs/2026-06-02-progressive-basepage-hardening-design.md`
 - Plan: `docs/superpowers/plans/2026-06-02-progressive-basepage-hardening.md`
 - Métricas: `docs/superpowers/baselines/2026-06-02-progressive-baseline.md`
+
+## Decision Ledger + servicio transparente (2026-07-29)
+
+**Servicio transparente:** el runner NO etiqueta, NO marca leído, NO responde
+el hilo de ventas. Dedup por Gmail message-id en `seen_emails` (cola SQLite).
+El análisis sale como correo NUEVO a `EMAIL_ANALYSIS_TO` (estabilización:
+dianarubio@h2oins.com — cambiar en `.env` al salir de estabilización).
+
+**Decision Ledger:** `modules/decision_ledger.py` (thread-local, best-effort).
+`choice_resolver` registra automático; sitios hardcodeados citan `rule_id` del
+Excel `config/mga_decision_rules.xlsx` (hojas `reglas` + `instrucciones`).
+El worker persiste `decisions_json` en el job y el correo muestra la tabla
+"Decisiones tomadas" por MGA cotizada (dudosas ⚠ arriba). El bot NO lee el
+Excel en runtime: código = fuente ejecutable, Excel = fuente humana.
+
+**Circuito de corrección:** Diana responde el correo → actualizar fila del
+Excel (Decisión, Fuente=Negocio, Quote ref, Estado=PENDIENTE-código) → fix en
+código citando el ID en el commit → Estado=VIGENTE. Filas EN-DUDA = agenda de
+la sesión de validación con negocios.

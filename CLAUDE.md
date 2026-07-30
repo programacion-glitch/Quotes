@@ -89,6 +89,9 @@ python -m pytest tests/test_rule_engine.py
      — incluye MTC ($100k with $1,000 deductible)
 ✅ MTC commodity picker para Distributor: Food & Beverage / Other Food & Beverages
 ✅ Race condition de Recalculate resuelto con retry loop + poll
+✅ Decision Ledger + servicio transparente (2026-07-29): dedup por message-id,
+   análisis a EMAIL_ANALYSIS_TO, tabla "Decisiones tomadas" + "por qué" del
+   rule engine en el correo. Registro: config/mga_decision_rules.xlsx.
 
 Próximos PRs candidatos:
 - Add Trailer flow real (sigue skipeado con WARN)
