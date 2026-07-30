@@ -85,6 +85,23 @@ class TestDecisionsTable:
         ])])
         assert "&#9888;" not in html
 
+    def test_default_con_rule_id_si_es_dudosa(self):
+        """Los defaults técnicos EN-DUDA citan su rule_id (R-0XX) pero NO
+        están validados por negocio — deben seguir marcándose con ⚠."""
+        html = render_rpa_section([self._outcome([
+            {"field": "License state del driver", "chosen": "Texas",
+             "source": "DEFAULT", "rule_id": "R-052"},
+        ])])
+        assert "&#9888;" in html
+
+    def test_rule_con_rule_id_no_es_dudosa(self):
+        """source=RULE con rule_id = regla de negocio validada — sin warning."""
+        html = render_rpa_section([self._outcome([
+            {"field": "Marital Status", "chosen": "Single", "source": "RULE",
+             "rule_id": "R-001"},
+        ])])
+        assert "&#9888;" not in html
+
     def test_no_quoted_sin_tabla(self):
         out = RpaQuoteOutcome(mga="GEICO", status="halted", reason="not_eligible",
                               decisions=[{"field": "X", "chosen": "Y",

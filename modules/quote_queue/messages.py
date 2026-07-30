@@ -29,10 +29,19 @@ class RpaQuoteOutcome:
 
 
 def _is_dudosa(d: dict) -> bool:
-    """Dudosa = decisión SIN regla de negocio detrás y que tampoco es un
+    """Dudosa = decisión que NO está validada por negocio (RULE) ni es un
     simple mapeo del dato del BlueQuote (MATCHED). Van arriba con ⚠ para
-    que negocios las revise primero."""
-    return not d.get("rule_id") and d.get("source") != "MATCHED"
+    que negocios las revise primero.
+
+    OJO: los defaults técnicos EN-DUDA (source=DEFAULT) SÍ traen rule_id
+    (citan la regla R-0XX que documenta el default en
+    config/mga_decision_rules.xlsx), así que `rule_id` presente NO implica
+    que la decisión esté validada — solo `source` distingue eso. Fuentes
+    conocidas: RULE (regla de negocio con Diana) y MATCHED (mapeo directo
+    del BlueQuote, vía choice_resolver o field_mapper) no llevan warning;
+    DEFAULT/DEFAULTED (default técnico), AI (clasificador) y HARDCODED
+    (sin source explícito) sí."""
+    return d.get("source") not in ("RULE", "MATCHED")
 
 
 def _decisions_table(decisions: List[dict]) -> str:
