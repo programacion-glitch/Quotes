@@ -239,3 +239,94 @@ def test_sent_once_under_contention(tmp_path):
     assert worker.maybe_send_submission_email(sub) is True    # gana
     assert worker.maybe_send_submission_email(sub) is False   # ya enviado
     assert gmail.send_threaded.call_count == 1
+
+
+class TestDecisionsForWorker:
+    """Tests del contrato worker-side de _decisions_for (deserialización y
+    wiring en outcomes)."""
+
+    def test_decisions_end_to_end_quoted_job_with_valid_json(self, tmp_path):
+        """Job QUOTED con decisions_json válido → correo contiene tabla
+        'Decisiones tomadas' con el contenido renderizado."""
+        store = _store(tmp_path)
+        sub = "sub-dec-e2e"
+        store.save_submission_context(sub, _ctx())
+
+        decisions_json = json.dumps([
+            {"field": "Roadside Assistance", "chosen": "Yes",
+             "source": "RULE", "rule_id": "R-001", "page": "Coverages/RATES"}
+        ])
+        jid = store.enqueue(sub, "PROGRESSIVE", "{}", None, "1")
+        store.mark_terminal(jid, JobStatus.QUOTED, premium="$50,000",
+                            quote_number="Q1", pdf_path=None,
+                            error="ok",
+                            decisions_json=decisions_json)
+
+        gmail = MagicMock()
+        gmail.send_threaded.return_value = True
+        worker = QuoteWorker("PROGRESSIVE", store, create_quote=lambda *a: None,
+                             gmail=gmail)
+
+        assert worker.maybe_send_submission_email(sub) is True
+        _, kwargs = gmail.send_threaded.call_args
+        body = kwargs["body"]
+        assert "Decisiones tomadas" in body
+        assert "Roadside Assistance" in body
+        assert "R-001" in body
+
+    def test_decisions_malformed_json_doesnt_break_email(self, tmp_path):
+        """Job QUOTED con decisions_json={{{no-json → correo se manda igual,
+        body NO contiene tabla, sin excepción (best-effort)."""
+        store = _store(tmp_path)
+        sub = "sub-dec-malformed"
+        store.save_submission_context(sub, _ctx())
+
+        jid = store.enqueue(sub, "GEICO", "{}", None, "1")
+        store.mark_terminal(jid, JobStatus.QUOTED, premium="$10,000",
+                            quote_number="Q2", pdf_path=None,
+                            error="ok",
+                            decisions_json="{{{no-json")
+
+        gmail = MagicMock()
+        gmail.send_threaded.return_value = True
+        worker = QuoteWorker("GEICO", store, create_quote=lambda *a: None,
+                             gmail=gmail)
+
+        # No exception, email sent
+        assert worker.maybe_send_submission_email(sub) is True
+        _, kwargs = gmail.send_threaded.call_args
+        body = kwargs["body"]
+        # decisions_json malformado → no tabla en el correo
+        assert "Decisiones tomadas" not in body
+        # MGA y estado normal siguen apareciendo
+        assert "GEICO" in body
+        assert "$10,000" in body
+
+    def test_decisions_non_quoted_never_shows_table(self, tmp_path):
+        """Job HALTED con decisions_json válido (artificial via mark_terminal)
+        → body NO contiene 'Decisiones tomadas' (solo quoted muestra tabla)."""
+        store = _store(tmp_path)
+        sub = "sub-dec-halted"
+        store.save_submission_context(sub, _ctx())
+
+        decisions_json = json.dumps([
+            {"field": "Body Type", "chosen": "Truck",
+             "source": "MATCHED", "rule_id": None}
+        ])
+        jid = store.enqueue(sub, "PROGRESSIVE", "{}", None, "1")
+        store.mark_terminal(jid, JobStatus.HALTED, error="not_eligible",
+                            decisions_json=decisions_json)
+
+        gmail = MagicMock()
+        gmail.send_threaded.return_value = True
+        worker = QuoteWorker("PROGRESSIVE", store, create_quote=lambda *a: None,
+                             gmail=gmail)
+
+        assert worker.maybe_send_submission_email(sub) is True
+        _, kwargs = gmail.send_threaded.call_args
+        body = kwargs["body"]
+        # No-quoted nunca muestra tabla, aunque tenga decisions_json
+        assert "Decisiones tomadas" not in body
+        # Pero el status normal sigue apareciendo
+        assert "PROGRESSIVE" in body
+        assert "elegibilidad" in body.lower()
