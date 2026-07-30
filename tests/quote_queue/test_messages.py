@@ -52,3 +52,47 @@ def test_render_section_contains_marker_text_and_each_outcome():
 
 def test_marker_is_html_comment():
     assert RPA_SECTION_MARKER.startswith("<!--") and RPA_SECTION_MARKER.endswith("-->")
+
+
+class TestDecisionsTable:
+    def _outcome(self, decisions, reason="ok"):
+        return RpaQuoteOutcome(mga="PROGRESSIVE", status="quoted",
+                               reason=reason, premium="$1,000",
+                               decisions=decisions)
+
+    def test_quoted_muestra_decisiones(self):
+        html = render_rpa_section([self._outcome([
+            {"field": "Roadside Assistance", "chosen": "Selected w/ $250 Deductible",
+             "source": "RULE", "rule_id": "R-001", "page": "Coverages/RATES"},
+        ])])
+        assert "Decisiones tomadas" in html
+        assert "Roadside Assistance" in html
+        assert "R-001" in html
+
+    def test_dudosas_van_primero_con_warning(self):
+        html = render_rpa_section([self._outcome([
+            {"field": "Con-Regla", "chosen": "A", "source": "RULE", "rule_id": "R-001"},
+            {"field": "Sin-Regla", "chosen": "B", "source": "DEFAULTED", "rule_id": None},
+        ])])
+        assert html.index("Sin-Regla") < html.index("Con-Regla")
+        assert "&#9888;" in html  # ⚠ en la dudosa
+
+    def test_matched_no_es_dudosa(self):
+        """MATCHED = dato del BlueQuote mapeado — no lleva warning."""
+        html = render_rpa_section([self._outcome([
+            {"field": "Body Type", "chosen": "Dump Truck", "source": "MATCHED",
+             "rule_id": None},
+        ])])
+        assert "&#9888;" not in html
+
+    def test_no_quoted_sin_tabla(self):
+        out = RpaQuoteOutcome(mga="GEICO", status="halted", reason="not_eligible",
+                              decisions=[{"field": "X", "chosen": "Y",
+                                          "source": "DEFAULTED", "rule_id": None}])
+        html = render_rpa_section([out])
+        assert "Decisiones tomadas" not in html
+
+    def test_decisions_none_no_rompe(self):
+        html = render_rpa_section([self._outcome(None)])
+        assert "PROGRESSIVE" in html
+        assert "Decisiones tomadas" not in html

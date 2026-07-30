@@ -186,10 +186,22 @@ class QuoteWorker:
         ctx = json.loads(raw_ctx)
 
         jobs = self.store.get_jobs(submission_id)
+
+        def _decisions_for(j):
+            """Deserializa el ledger del job. Best-effort: malformado → None."""
+            if j.status != JobStatus.QUOTED.value or not j.decisions_json:
+                return None
+            try:
+                return json.loads(j.decisions_json)
+            except (ValueError, TypeError) as e:
+                print(f"    [worker:{self.mga}] decisions_json malformado job {j.id}: {e}")
+                return None
+
         outcomes: List[RpaQuoteOutcome] = [
             RpaQuoteOutcome(
                 mga=j.mga, status=j.status, reason=(j.error or "error"),
                 premium=j.premium, pdf_path=j.pdf_path,
+                decisions=_decisions_for(j),
             )
             for j in jobs
         ]

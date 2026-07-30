@@ -25,6 +25,53 @@ class RpaQuoteOutcome:
     premium: Optional[str] = None
     pdf_path: Optional[str] = None
     detail: Optional[str] = None     # detalle técnico — NUNCA se muestra al agente
+    decisions: Optional[List[dict]] = None   # entradas del decision_ledger (solo quoted)
+
+
+def _is_dudosa(d: dict) -> bool:
+    """Dudosa = decisión SIN regla de negocio detrás y que tampoco es un
+    simple mapeo del dato del BlueQuote (MATCHED). Van arriba con ⚠ para
+    que negocios las revise primero."""
+    return not d.get("rule_id") and d.get("source") != "MATCHED"
+
+
+def _decisions_table(decisions: List[dict]) -> str:
+    """Tabla 'Decisiones tomadas' bajo la fila de una MGA que cotizó."""
+    ordered = sorted(decisions, key=lambda d: 0 if _is_dudosa(d) else 1)
+    rows = ""
+    for d in ordered:
+        warn = "&#9888; " if _is_dudosa(d) else ""
+        fuente = d.get("rule_id") or d.get("source", "")
+        page = f' <span style="color:#8c95a6;">({d["page"]})</span>' if d.get("page") else ""
+        rows += (
+            f'<tr>'
+            f'<td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;'
+            f'font-size:11px;color:#0a1628;border-top:1px solid #e8eaee;">'
+            f'{warn}{d.get("field", "?")}{page}</td>'
+            f'<td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;'
+            f'font-size:11px;font-weight:bold;color:#0a1628;border-top:1px solid #e8eaee;">'
+            f'{d.get("chosen", "?")}</td>'
+            f'<td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;'
+            f'font-size:11px;color:#5a6577;border-top:1px solid #e8eaee;">{fuente}</td>'
+            f'</tr>'
+        )
+    return (
+        '<p style="margin:8px 0 4px 0;font-family:Arial,Helvetica,sans-serif;'
+        'font-size:11px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;'
+        'color:#8c95a6;">Decisiones tomadas</p>'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="border:1px solid #e8eaee;border-radius:4px;">'
+        '<tr>'
+        '<td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:10px;'
+        'text-transform:uppercase;color:#8c95a6;">Campo</td>'
+        '<td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:10px;'
+        'text-transform:uppercase;color:#8c95a6;">Valor</td>'
+        '<td style="padding:4px 8px;font-family:Arial,Helvetica,sans-serif;font-size:10px;'
+        'text-transform:uppercase;color:#8c95a6;">Fuente</td>'
+        '</tr>'
+        f'{rows}'
+        '</table>'
+    )
 
 
 def humanize(outcome: "RpaQuoteOutcome") -> str:
@@ -57,12 +104,16 @@ def humanize(outcome: "RpaQuoteOutcome") -> str:
 def _row(outcome: "RpaQuoteOutcome") -> str:
     quoted = outcome.reason in ("ok", "ok_no_pdf")
     accent = "#0d7a3f" if quoted else "#b8860b"
+    decisions_html = ""
+    if quoted and outcome.decisions:
+        decisions_html = _decisions_table(outcome.decisions)
     return (
         f'<tr><td style="padding:12px 16px;border-bottom:1px solid #e8eaee;">'
         f'<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;'
         f'font-weight:bold;color:{accent};">{outcome.mga}</p>'
         f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;'
         f'font-size:13px;color:#0a1628;line-height:1.5;">{humanize(outcome)}</p>'
+        f'{decisions_html}'
         f'</td></tr>'
     )
 
