@@ -108,7 +108,6 @@ Para enviar a MGAs, el email debe contener:
 EMAIL_USERNAME=programacion@h2oins.com      # usado por IMAP/SMTP legacy y como impersonate de Drive
 EMAIL_PASSWORD=your_app_password
 EMAIL_ANALYSIS_TO=quotes@h2oins.com         # destino del correo de análisis del bot
-EMAIL_ANALYSIS_CC=programacion@h2oins.com   # CC del análisis
 TEST_EMAIL_OVERRIDE=test@example.com        # para pruebas
 DRY_RUN=True                                # True=simular, False=enviar real
 
