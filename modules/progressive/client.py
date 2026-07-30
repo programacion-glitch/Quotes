@@ -100,8 +100,16 @@ class ProgressiveClient:
                 step_reached="field_mapping",
             )
 
+        # Snapshot the field-mapper-only ledger entries: _run_with_browser
+        # retries the wizard internally (LOGIN flakes), and without resetting
+        # to just this snapshot at the top of each attempt, a failed
+        # attempt's wizard entries linger into a subsequent successful
+        # attempt (duplicated/contradictory rows in the email's "Decisiones
+        # tomadas" table).
+        mapper_entries = decision_ledger.entries()
+
         # Run async flow
-        return asyncio.run(_run_with_browser(config, fields))
+        return asyncio.run(_run_with_browser(config, fields, mapper_entries))
 
 
 # Cookies (incl. Progressive's MFA device-trust) persisted across runs so a
@@ -111,7 +119,9 @@ class ProgressiveClient:
 _SESSION_STATE = Path(__file__).resolve().parents[2] / "data" / "progressive_session.json"
 
 
-async def _run_with_browser(config: ProgressiveConfig, fields) -> QuoteResult:
+async def _run_with_browser(
+    config: ProgressiveConfig, fields, mapper_entries: Optional[list] = None
+) -> QuoteResult:
     """Launch browser and run the quote flow with retry logic."""
     from playwright.async_api import async_playwright
 
@@ -120,6 +130,12 @@ async def _run_with_browser(config: ProgressiveConfig, fields) -> QuoteResult:
     for attempt in range(1 + config.max_retries):
         if attempt > 0:
             print(f"    [Progressive] Retry {attempt}/{config.max_retries}...")
+
+        # Reset to just the field-mapper entries before EVERY attempt (incl.
+        # the first, harmlessly): a retried attempt must not carry over the
+        # previous attempt's wizard-page decisions.
+        decision_ledger.start_run("PROGRESSIVE")
+        decision_ledger.restore(mapper_entries)
 
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(

@@ -54,3 +54,25 @@ def record(field: str, chosen, *, page: Optional[str] = None,
 def entries() -> List[dict]:
     """Las decisiones registradas en el thread actual (lista vacía si no hay)."""
     return list(getattr(_state, "entries", []) or [])
+
+
+def restore(saved: Optional[List[dict]]) -> None:
+    """Re-siembra el ledger del thread actual con entradas ya capturadas
+    (p.ej. las del field-mapper, tomadas ANTES del retry loop del wizard).
+
+    Uso típico: `start_run(mga)` seguido de `restore(base)` al tope de CADA
+    intento de un retry loop, para que las entradas del intento anterior
+    (fallido) no sobrevivan a un intento posterior exitoso — sin este reset,
+    `entries()` acumula filas duplicadas/contradictorias entre intentos.
+
+    No-op si no hubo start_run en este thread. Best-effort SIEMPRE: igual
+    que record(), jamás lanza — un fallo acá deja el ledger como estaba
+    (posiblemente vacío) en vez de romper la cotización.
+    """
+    try:
+        entries = getattr(_state, "entries", None)
+        if entries is None:
+            return
+        entries.extend(dict(e) for e in (saved or []))
+    except Exception:
+        pass  # best-effort: el ledger nunca tumba el flujo
