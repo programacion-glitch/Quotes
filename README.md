@@ -144,9 +144,10 @@ OPENAI_BASE_URL=http://localhost:3000/v1            # en Docker: http://host.doc
 | `config/oauth-credentials.json` · `config/oauth_user_token.json` | OAuth de Drive sync (**programacion@**) |
 | `config/drivequotes-<KEY_ID>.json` | **Service Account** de subida a Drive (proyecto drivequotes) |
 | `data/progressive_session.json` · `data/geico_session.json` | Sesiones de navegador persistidas |
-| `data/bot_since_epoch.txt` | Corte por fecha del bot (no procesa correos anteriores) |
 
 `.gitignore` cubre `.env`, `config/*.json`, `data/credentials.json`, `data/token.json`, sesiones, etc. Verificá con `git check-ignore <archivo>` antes de commitear.
+
+> El corte por fecha ("cutoff") del bot **no vive en un archivo**: cada arranque del proceso/contenedor fija `cutoff = time.time()` en memoria y solo se procesan correos no-leídos posteriores a eso (el backlog previo queda intacto, nunca se toca). La dedup contra reprocesamiento es durable en SQLite (`seen_emails` dentro de `data/quote_queue.db`, por Gmail message-id), no por archivo de cutoff ni por etiqueta.
 
 ### 🛰️ Service Account para subir PDFs a Drive (opcional)
 
@@ -187,7 +188,7 @@ docker compose down           # apagar
 
 ### 📧 Comportamiento con los correos
 
-- El bot lee **no-leídos** con asunto `Submission` recibidos **después** del corte (`data/bot_since_epoch.txt`); el backlog viejo no se toca.
+- El bot lee **no-leídos** con asunto `Submission` recibidos **después** del corte (`cutoff = time.time()` fijado en memoria al arrancar el proceso/contenedor, no persistido entre reinicios); el backlog viejo no se toca.
 - **Servicio transparente:** el bot NO etiqueta, NO marca leído y NO responde en el hilo de ventas. El correo original queda exactamente como llegó para el equipo humano. La dedup contra reprocesamiento es por Gmail message-id en `seen_emails` (cola SQLite), no por etiquetas.
 - Al **cotizar**, el bot envía un correo **nuevo** (sin hilo, sin CC) a `EMAIL_ANALYSIS_TO` con el análisis, el "por qué" del rule engine y la tabla "Decisiones tomadas" (Decision Ledger), y adjunta los PDFs.
 
