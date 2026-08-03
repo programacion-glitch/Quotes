@@ -140,3 +140,26 @@ def map_commodity(commodity: Optional[str]) -> Tuple[Optional[str], bool]:
     if len(re.findall(r"\d+\s*%", c)) >= 2:
         return ("Trucker", True)
     return (None, False)
+
+
+# R-015 (Diana 2026-08-03, PANTHER): la clasificación sigue a la OPERACIÓN.
+# Cuando el commodity es genérico/mixto/ausente, el subtipo Type-of-Trucker se
+# deriva del tipo de unidad que arrastra la carga. Dry van y flatbed van a
+# 'General Freight / Other' (validado por Diana con captura); reefer va a
+# 'Refrigerated Goods'.
+_SUBTYPE_BY_UNIT = (
+    ("REEFER", "Refrigerated Goods"),
+    ("REFRIGERATED", "Refrigerated Goods"),
+    ("DRY VAN", "General Freight / Other"),
+    ("FLATBED", "General Freight / Other"),
+)
+
+
+def subtype_from_unit_hints(unit_hints) -> Tuple[Optional[str], Optional[str]]:
+    """Return (Type-of-Trucker label | None, unit hint que disparó | None)."""
+    for h in (unit_hints or []):
+        hu = (h or "").upper()
+        for key, label in _SUBTYPE_BY_UNIT:
+            if key in hu:
+                return label, h
+    return (None, None)

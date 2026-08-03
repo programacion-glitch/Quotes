@@ -13,7 +13,7 @@ from modules import decision_ledger
 from modules.progressive.pages.base_page import BasePage
 from modules.progressive.field_mapper import MappedFields
 from modules.progressive.choice_resolver import resolve_choice, Resolution
-from modules.progressive.mappings import map_commodity
+from modules.progressive.mappings import map_commodity, subtype_from_unit_hints
 from modules.progressive.business_type_classifier import (
     resolve_commodity_to_business_type,
     unit_type_hints,
@@ -591,15 +591,32 @@ class BusinessInfoPage(BasePage):
         _, is_generic = map_commodity(commodity)
         source = None if (is_generic or not (commodity or "").strip()) else commodity
         screenshot = await self.screenshot("type_of_trucker_options")
-        res = resolve_choice(
-            "Type of Trucker", source, options,
-            default=self._TYPE_OF_TRUCKER_DEFAULT,
-            generic_aliases=frozenset({"general freight", "mixed", "other", "trucker"}),
-            screenshot_path=screenshot,
+
+        # R-015: sin commodity específico, el subtipo sigue a la OPERACIÓN
+        # (reefer -> Refrigerated Goods; dry van / flatbed -> General Freight /
+        # Other). Solo si la unidad tampoco da señal cae el catch-all DEFAULTED.
+        hint_label, hint_src = subtype_from_unit_hints(
+            getattr(self, "_unit_hints", None)
         )
-        await self.page.get_by_role("option", name=res.value, exact=True).first.click(timeout=5_000)
+        norm_opts = {o.strip().lower(): o for o in options}
+        if source is None and hint_label and hint_label.strip().lower() in norm_opts:
+            value = norm_opts[hint_label.strip().lower()]
+            decision_ledger.record(
+                "Type of Trucker", value, page=_PAGE, options=options,
+                source="RULE", rule_id="R-015",
+                note=f"según operación ({hint_src})")
+            print(f"    [Progressive] Type of Trucker = {value!r} (operación: {hint_src})")
+        else:
+            res = resolve_choice(
+                "Type of Trucker", source, options,
+                default=self._TYPE_OF_TRUCKER_DEFAULT,
+                generic_aliases=frozenset({"general freight", "mixed", "other", "trucker"}),
+                screenshot_path=screenshot,
+            )
+            value = res.value
+            print(f"    [Progressive] Type of Trucker = {value!r} ({res.note})")
+        await self.page.get_by_role("option", name=value, exact=True).first.click(timeout=5_000)
         await self.settle_extjs()
-        print(f"    [Progressive] Type of Trucker = {res.value!r} ({res.note})")
 
     async def _answer_hazmat_placard(self, has_placard: bool) -> None:
         """
