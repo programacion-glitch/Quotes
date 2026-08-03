@@ -39,6 +39,7 @@ from modules.progressive.pages.drivers_page import (
 from modules.progressive.pages.final_details_page import FinalDetailsPage
 from modules.progressive.pages.home_page import HomePage
 from modules.progressive.pages.login_page import LoginPage
+from modules.progressive.pages.filing_proof_page import FilingProofPage
 from modules.progressive.pages.more_business_page import MoreBusinessPage
 from modules.progressive.pages.trailers_page import (
     AddTrailerPage,
@@ -177,6 +178,16 @@ class QuoteFlow:
                 federal_filings_required=True,
             )
             result.warnings.extend(more_biz.warnings)
+
+            # Step 6.5: Filing/Proof of Insurance — interstitial CONDITIONAL
+            # que aparece cuando R-002 respondió Yes a los filings. Live
+            # 2026-07-31: PANTHER/ALTIMO/G&E morían esperando el premium de
+            # RATES parados en esta página.
+            filing = FilingProofPage(wizard_page)
+            if await filing.is_present(wait_ms=4_000):
+                result.step_reached = "filing_proof"
+                await filing.complete()
+                result.warnings.extend(filing.warnings)
 
             # Step 7: RATES (CoveragesRates) - the page with the premium
             result.step_reached = "rates"
