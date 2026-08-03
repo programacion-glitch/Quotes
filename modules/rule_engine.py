@@ -294,7 +294,10 @@ class RuleEngine:
 
             if self._is_yes(rule.get("REQUIRES_QUESTIONS")):
                 if not profile.app.questions_filled:
-                    failures.append(FailedRule("REQUIRES_QUESTIONS", "Cuestionario no completado"))
+                    # "Faltan:" para que el correo de análisis lo trate como
+                    # desbloqueable (Diana pt.9 2026-08-03: Paramount/Novatae
+                    # deben aparecer en la sección de desbloqueo con requisitos)
+                    failures.append(FailedRule("REQUIRES_QUESTIONS", "Faltan: respuestas del cuestionario (preguntas de appointments)"))
                 else:
                     passed.append("REQUIRES_QUESTIONS")
 

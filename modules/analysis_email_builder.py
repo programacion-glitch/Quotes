@@ -177,6 +177,53 @@ def _warnings_banner(html_warnings: list) -> str:
     )
 
 
+def _info_parts(ev: MGAEvaluation) -> List[str]:
+    """Datos informativos del Excel para una MGA (ruta, formulario, notas).
+
+    Diana 2026-08-03 (PANTHER, 2º correo): "las notas que puse en cada
+    compañía es requisito que estén como comentario" — las notas van
+    COMPLETAS (sin truncar) en cada fila de MGA del correo.
+    """
+    parts: List[str] = []
+    info = ev.informational or {}
+    if info.get("routing"):
+        parts.append(f"Ruta: {info['routing']}")
+    if info.get("down_payment_pct"):
+        parts.append(f"Enganche: {info['down_payment_pct']}%")
+    if info.get("min_price"):
+        parts.append(f"Precio min: ${info['min_price']:,}")
+    if info.get("special_form"):
+        parts.append(f"Formulario: {info['special_form']}")
+    if info.get("notas_extra"):
+        parts.append(str(info["notas_extra"]))
+    return parts
+
+
+def _dedupe_by_mga(evals: List[MGAEvaluation]) -> List[MGAEvaluation]:
+    """Una fila por MGA en el correo.
+
+    El rule engine emite una evaluación POR FILA del Excel; un MGA con varios
+    paths (p.ej. Great West: path NV y path establecidos) aparecía a la vez en
+    elegibles y no elegibles (Diana 2026-08-03, PANTHER). Un MGA es elegible
+    si CUALQUIER path pasa; si ninguno pasa se muestra el path más cercano
+    (menos reglas fallidas).
+    """
+    best: Dict[str, MGAEvaluation] = {}
+    order: List[str] = []
+    for ev in evals:
+        key = (ev.mga_name or "").strip().upper()
+        if key not in best:
+            best[key] = ev
+            order.append(key)
+            continue
+        cur = best[key]
+        if ev.eligible and not cur.eligible:
+            best[key] = ev
+        elif ev.eligible == cur.eligible and len(ev.failed_rules) < len(cur.failed_rules):
+            best[key] = ev
+    return [best[k] for k in order]
+
+
 def _eligible_row(ev: MGAEvaluation) -> str:
     """Generate an eligible MGA row."""
     lines = [
@@ -190,20 +237,8 @@ def _eligible_row(ev: MGAEvaluation) -> str:
             f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#b8860b;">'
             f'&#9888; {w}</p>'
         )
-    # Informational
-    info_parts = []
-    info = ev.informational or {}
-    if info.get("routing"):
-        info_parts.append(f"Ruta: {info['routing']}")
-    if info.get("down_payment_pct"):
-        info_parts.append(f"Enganche: {info['down_payment_pct']}%")
-    if info.get("min_price"):
-        info_parts.append(f"Precio min: ${info['min_price']:,}")
-    if info.get("special_form"):
-        info_parts.append(f"Formulario: {info['special_form']}")
-    if info.get("notas_extra"):
-        note = str(info['notas_extra'])[:100]
-        info_parts.append(note)
+    # Informational (notas de Diana completas — requisito 2026-08-03)
+    info_parts = _info_parts(ev)
     if info_parts:
         lines.append(
             f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#5a6577;">'
@@ -265,6 +300,13 @@ def _ineligible_row(ev: MGAEvaluation) -> str:
         lines.append(
             f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#5a6577;">'
             f'&#8226; {detail}</p>'
+        )
+    # Notas de Diana completas también en las no elegibles (requisito 2026-08-03)
+    info_parts = _info_parts(ev)
+    if info_parts:
+        lines.append(
+            f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#8c95a6;">'
+            f'{" | ".join(info_parts)}</p>'
         )
     lines.append('</td></tr>')
     return "\n".join(lines)
@@ -347,6 +389,10 @@ def build_analysis_email(
 
     Returns dict with 'subject' and 'body'.
     """
+    # C3 (Diana 2026-08-03, PANTHER): el engine emite una evaluación por FILA
+    # del Excel — sin dedupe, Great West salía en elegibles Y no elegibles.
+    evaluations = _dedupe_by_mga(evaluations)
+
     # Filter strategy:
     #   - Hide MGAs that failed by IS_NEW_VENTURE only when it's a CATEGORICAL
     #     mismatch (MGA only takes NV but business is established) — years are
@@ -530,6 +576,26 @@ def build_analysis_email(
         sorted_fixes = sorted(fix_map.items(), key=lambda x: len(x[1]), reverse=True)
         for fix, mgas in sorted_fixes:
             fixes_rows += _fix_row(fix, mgas)
+        # Diana pt.9 (2026-08-03): los desbloqueables deben ir con SUS
+        # requisitos — una línea por MGA con las notas del Excel.
+        req_rows = ""
+        for ev in missing_docs_only:
+            parts = _info_parts(ev)
+            if parts:
+                req_rows += (
+                    f'<tr style="background-color:#fffbf0;">'
+                    f'<td style="padding:8px 16px;border-bottom:1px solid #f0deb0;">'
+                    f'<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#8c95a6;">'
+                    f'<strong style="color:#0a1628;">{ev.mga_name}</strong> &#8226; {" | ".join(parts)}</p>'
+                    f'</td></tr>'
+                )
+        if req_rows:
+            fixes_rows += (
+                '<tr style="background-color:#fffbf0;">'
+                '<td style="padding:10px 16px 4px 16px;">'
+                '<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;color:#8a5a00;">'
+                'Requisitos por MGA</p></td></tr>'
+            ) + req_rows
     else:
         fixes_rows = _no_data_row("No hay MGAs pendientes por desbloquear", bg="#fffbf0", border="#f0deb0")
 
