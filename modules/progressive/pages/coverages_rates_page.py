@@ -330,7 +330,9 @@ class CoveragesRatesPage(BasePage):
         """
         from modules.progressive.pdf_downloader import download_progressive_pdf
 
-        out_path = Path(output_dir) / f"progressive_quote_{name}.pdf"
+        # `name` = basename final sin extensión (R-086: el caller lo arma con
+        # quote_pdf_basename — fecha AAAA-MM-DD primero). Sin prefijos acá.
+        out_path = Path(output_dir) / f"{name}.pdf"
         last_err = None
         for attempt in range(max_attempts):
             try:

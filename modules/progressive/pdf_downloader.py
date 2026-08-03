@@ -9,10 +9,33 @@ from __future__ import annotations
 
 import base64
 import json
+import re
+from datetime import datetime
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 from playwright.async_api import Page
+
+# Caracteres inválidos en nombres de archivo (Windows es el más restrictivo).
+_INVALID_FS_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def quote_pdf_basename(
+    business_name: Optional[str],
+    quote_number: Optional[str],
+    when: Optional[datetime] = None,
+) -> str:
+    """Basename (sin extensión) del PDF oficial según R-086 (Diana 2026-08-03):
+    la cotización se guarda con la fecha AAAA-MM-DD primero, luego el negocio
+    y el número de quote. Ej: '2026-08-03 PANTHER EXPRESS Progressive CA117638002'.
+    """
+    when = when or datetime.now()
+    parts = [when.strftime("%Y-%m-%d")]
+    biz = _INVALID_FS_CHARS.sub("", (business_name or "")).strip()
+    if biz:
+        parts.append(biz)
+    parts.append(f"Progressive {(quote_number or '').strip() or 'sin-numero'}")
+    return " ".join(parts)
 
 
 _FETCH_PDF_JS = """

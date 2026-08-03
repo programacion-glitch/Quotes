@@ -25,10 +25,11 @@ class FakePage:
 
 @pytest.mark.asyncio
 async def test_save_page_pdf_headless_writes_pdf(tmp_path):
+    """R-086: el caller arma el basename final — no se antepone prefijo."""
     page = FakePage()
     bp = BasePage(page)
-    out = await bp.save_page_pdf("CA123", output_dir=str(tmp_path))
-    assert out == str(tmp_path / "progressive_quote_CA123.pdf")
+    out = await bp.save_page_pdf("2026-08-03 ACME Progressive CA123", output_dir=str(tmp_path))
+    assert out == str(tmp_path / "2026-08-03 ACME Progressive CA123.pdf")
     assert page.pdf_calls and page.pdf_calls[0]["print_background"] is True
     assert page.screenshot_calls == []
 
@@ -37,8 +38,8 @@ async def test_save_page_pdf_headless_writes_pdf(tmp_path):
 async def test_save_page_pdf_falls_back_to_png_when_headed(tmp_path):
     page = FakePage(pdf_raises=True)
     bp = BasePage(page)
-    out = await bp.save_page_pdf("CA123", output_dir=str(tmp_path))
-    assert out == str(tmp_path / "progressive_quote_CA123.png")
+    out = await bp.save_page_pdf("2026-08-03 ACME Progressive CA123", output_dir=str(tmp_path))
+    assert out == str(tmp_path / "2026-08-03 ACME Progressive CA123.png")
     assert page.screenshot_calls and page.screenshot_calls[0]["full_page"] is True
 
 

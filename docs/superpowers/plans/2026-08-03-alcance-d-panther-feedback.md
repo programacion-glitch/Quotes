@@ -43,9 +43,10 @@ Diana: la cotización de Progressive debe imprimirse/guardarse con fecha
 año-mes-día, no el nombre por defecto de la página.
 
 - Registrado como R-086 (VIGENTE) en config/mga_decision_rules.xlsx.
-- Depende del feature de descarga del PDF oficial (spec
-  2026-07-06-progressive-quote-pdf) — el nombre se aplica ahí y el destino
-  final es la subcarpeta "quotes" de D3.
+- ✅ IMPLEMENTADO 2026-08-03: `quote_pdf_basename` en pdf_downloader.py —
+  `AAAA-MM-DD {negocio} Progressive {quote#}.pdf` (la descarga del PDF
+  oficial ya existía desde julio). Falta solo el destino final: la
+  subcarpeta "quotes" del cliente (D3).
 
 ## Relacionado pero NO alcance D (ya en curso)
 

@@ -82,8 +82,12 @@ class BasePage:
         Usa page.pdf() de Chromium (solo headless). Si se corre headed, page.pdf()
         lanza excepción → fallback a un screenshot full-page (.png). Devuelve el
         path de lo que se escribió, o None si ambos fallan.
+
+        `name` es el basename FINAL (sin extensión) — el caller lo arma (R-086:
+        quote_pdf_basename pone la fecha AAAA-MM-DD primero); acá no se
+        antepone ningún prefijo para que primary y fallback nombren igual.
         """
-        base = Path(output_dir) / f"progressive_quote_{name}"
+        base = Path(output_dir) / name
         pdf_path = base.with_suffix(".pdf")
         try:
             base.parent.mkdir(parents=True, exist_ok=True)

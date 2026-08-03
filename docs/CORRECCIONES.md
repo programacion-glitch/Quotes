@@ -62,8 +62,11 @@ Commits `2484124..00d765f` en `progressive-basepage-hardening`.
   pendiente.
 - R-002 (refinada): filings siempre Yes; State vs Federal según radio —
   criterio exacto pendiente con Diana.
-- R-086 (nueva, VIGENTE): PDF de Progressive con fecha AAAA-MM-DD (feature
-  de descarga aún no implementado).
+- R-086 (nueva, VIGENTE): PDF de Progressive con nombre
+  `AAAA-MM-DD {negocio} Progressive {quote#}.pdf` — ✅ implementado
+  (`quote_pdf_basename` en pdf_downloader; la descarga del PDF oficial ya
+  existía desde julio). El destino final (subcarpeta "quotes" del cliente)
+  queda para el alcance D3. ⏳ Validación live pendiente.
 
 **Correo de análisis**:
 - Dedupe por MGA (Great West salía en elegibles Y no elegibles a la vez).

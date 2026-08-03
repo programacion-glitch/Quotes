@@ -23,7 +23,9 @@ from playwright.async_api import Page, BrowserContext
 
 from modules.progressive.field_mapper import MappedFields
 from modules.progressive.otp_reader import GmailOTPReader
+from modules import decision_ledger
 from modules.progressive.pages._exceptions import UnmappableValueError
+from modules.progressive.pdf_downloader import quote_pdf_basename
 from modules.progressive.preflight import run_preflight, format_report, write_report
 from modules.progressive.pages.base_page import BasePage
 from modules.progressive.pages.business_info_page import BusinessInfoPage
@@ -217,7 +219,16 @@ class QuoteFlow:
             # descarga falla tras reintentos, se cae a la captura de la página
             # (save_page_pdf) para no perder la evidencia. download_quote_pdf deja
             # el wizard en RATES pase lo que pase.
-            _pdf_name = f"quote_{(result.price.quote_number if result.price else None) or 'unknown'}"
+            # R-086 (Diana 2026-08-03): el archivo empieza con la fecha
+            # AAAA-MM-DD, luego el negocio y el número de quote.
+            _pdf_name = quote_pdf_basename(
+                fields.business_name,
+                result.price.quote_number if result.price else None,
+            )
+            decision_ledger.record(
+                "Nombre del PDF de la cotización", f"{_pdf_name}.pdf",
+                page="RATES → Print/Send", source="RULE", rule_id="R-086",
+                note="fecha AAAA-MM-DD + negocio + quote number")
             result.pdf_path = await rates_page.download_quote_pdf(_pdf_name)
             if not result.pdf_path:
                 result.warnings.append(
