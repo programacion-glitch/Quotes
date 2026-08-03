@@ -30,6 +30,7 @@ workflow_orchestrator.py          # entrypoint
 
 ## Documentos importantes (leer al retomar)
 
+0. **`docs/CORRECCIONES.md`** — ⭐ LEER PRIMERO si llegan correcciones de negocio: circuito de trabajo, mapa de archivos VIVOS (el rule engine lee `CHECK LIST (2)_ESTANDARIZADO.xlsx`, NO `REGLAS_quotes.xlsx`) y changelog de todas las olas de ajustes
 1. **`docs/AGENTS_CONTEXT.md`** — Contexto histórico del módulo Progressive, hallazgos live, decisiones
 2. **`docs/Progressive Variables Obligatorias.md`** — Qué campos debe traer la Blue Quote para cotizar
 3. **`docs/Proceso Progressive.md`** — Diagrama original del flujo (si existe)
