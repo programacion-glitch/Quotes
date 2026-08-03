@@ -41,7 +41,7 @@ class RuleEngine:
         "MIN_BUSINESS_YEARS", "MIN_CDL_YEARS",
         "REQUIRES_MVR", "MVR_MIN_YEARS", "REQUIRES_IFTAS", "REQUIRES_LOSS_RUN",
         "LOSS_RUN_MIN_YEARS", "LOSSES_MUST_BE_CLEAN", "REQUIRES_APP",
-        "REQUIRES_EIN", "REQUIRES_QUESTIONS", "REQUIRES_REGISTRATIONS",
+        "REQUIRES_APP_NV", "REQUIRES_EIN", "REQUIRES_QUESTIONS", "REQUIRES_REGISTRATIONS",
         "MIN_UNITS", "MIN_OWNER_AGE", "MIN_INDUSTRY_EXP_YEARS",
         "ALLOWED_COVERAGES", "BLOCKED_TRAILER_TYPES", "BLOCKED_COMMODITIES",
         "ALLOWED_TRAILER_TYPES", "ROUTING", "DOWN_PAYMENT_PCT", "MIN_PRICE",
@@ -278,6 +278,13 @@ class RuleEngine:
                     failures.append(FailedRule("REQUIRES_APP", "Falta documento: APP"))
                 else:
                     passed.append("REQUIRES_APP")
+
+            # APP de new venture: solo exigible cuando el negocio ES new venture
+            if self._is_yes(rule.get("REQUIRES_APP_NV")) and is_nv:
+                if not profile.app.present:
+                    failures.append(FailedRule("REQUIRES_APP_NV", "Falta documento: APP (new venture)"))
+                else:
+                    passed.append("REQUIRES_APP_NV")
 
             if self._is_yes(rule.get("REQUIRES_EIN")):
                 if not profile.app.ein_included:

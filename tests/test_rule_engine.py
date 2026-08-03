@@ -76,7 +76,7 @@ MOCK_RULES = [
         "DOWN_PAYMENT_PCT": "25",
         "MIN_PRICE": "25000",
         "SPECIAL_FORM": None,
-        "NOTES": "Test note",
+        "NOTAS_EXTRA": "Test note",
     },
 ]
 
@@ -170,6 +170,8 @@ class TestBusinessYears:
     def test_business_years_too_low(self, engine):
         """1 business year fails MGA_A (requires 2+) but passes MGA_B (requires 1+)."""
         profile = make_profile(business_years=1)
+        # MIN_BUSINESS_YEARS solo aplica a negocios establecidos (el engine lo salta para NV)
+        profile.applicant.is_new_venture = False
         results = engine.evaluate(profile, TIPO)
 
         mga_a = next(r for r in results if r.mga_name == "MGA_A")
@@ -238,7 +240,7 @@ class TestBlockedCommodity:
 
 class TestInformational:
     def test_informational_passed_through(self, engine):
-        """ROUTING, DOWN_PAYMENT_PCT, and NOTES appear in MGA_B informational dict."""
+        """ROUTING, DOWN_PAYMENT_PCT, and NOTAS_EXTRA appear in MGA_B informational dict."""
         profile = make_profile()
         results = engine.evaluate(profile, TIPO)
 
@@ -247,7 +249,7 @@ class TestInformational:
 
         assert info.get("routing") == "SOLO_NICO"
         assert info.get("down_payment_pct") == 25
-        assert info.get("notes") == "Test note"
+        assert info.get("notas_extra") == "Test note"
 
 
 class TestNoRules:
@@ -284,3 +286,30 @@ class TestCdlYears:
         assert "MIN_CDL_YEARS" in failed_rules
 
         assert mga_b.eligible is True
+
+
+class TestRequiresAppNv:
+    def test_app_nv_required_for_new_venture(self, engine):
+        """REQUIRES_APP_NV=YES falla para NV sin app y pasa con app."""
+        engine._rules_cache = [dict(MOCK_RULES[1], REQUIRES_APP_NV="YES")]
+
+        profile = make_profile(app_present=False)
+        profile.applicant.is_new_venture = True
+        [res] = engine.evaluate(profile, TIPO)
+        assert any(f.rule == "REQUIRES_APP_NV" for f in res.failed_rules)
+        assert res.eligible is False
+
+        profile_ok = make_profile(app_present=True)
+        profile_ok.applicant.is_new_venture = True
+        [res_ok] = engine.evaluate(profile_ok, TIPO)
+        assert "REQUIRES_APP_NV" in res_ok.passed_rules
+
+    def test_app_nv_ignored_for_established(self, engine):
+        """REQUIRES_APP_NV no aplica a negocios establecidos."""
+        engine._rules_cache = [dict(MOCK_RULES[1], REQUIRES_APP_NV="YES")]
+
+        profile = make_profile(app_present=False)
+        profile.applicant.is_new_venture = False
+        [res] = engine.evaluate(profile, TIPO)
+        assert not any(f.rule == "REQUIRES_APP_NV" for f in res.failed_rules)
+        assert "REQUIRES_APP_NV" not in res.passed_rules
