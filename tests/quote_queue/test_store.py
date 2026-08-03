@@ -271,3 +271,26 @@ class TestDecisionsJson:
         jid = store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "123")
         store.mark_terminal(jid, "failed", error="error")
         assert store.get_jobs("sub-1")[0].decisions_json is None
+
+
+class TestMetaAndSeen:
+    """Corte persistido (2026-08-03): key-value meta + is_seen de solo lectura."""
+
+    def test_meta_roundtrip(self, store):
+        assert store.get_meta("monitor_cutoff_epoch") is None
+        assert store.get_meta("monitor_cutoff_epoch", "dflt") == "dflt"
+        store.set_meta("monitor_cutoff_epoch", 1785500000.5)
+        assert store.get_meta("monitor_cutoff_epoch") == "1785500000.5"
+
+    def test_meta_upsert_overwrites(self, store):
+        store.set_meta("k", "v1")
+        store.set_meta("k", "v2")
+        assert store.get_meta("k") == "v2"
+
+    def test_is_seen_reflects_claims_without_claiming(self, store):
+        assert store.is_seen("m1") is False
+        assert store.try_claim_email("m1") is True
+        assert store.is_seen("m1") is True
+        # is_seen NO reclama: un id nunca visto sigue reclamable después
+        assert store.is_seen("m2") is False
+        assert store.try_claim_email("m2") is True

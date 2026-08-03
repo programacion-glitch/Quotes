@@ -207,3 +207,45 @@ class TestPollOnceTransparente:
         runner.poll_once(gmail, Boom(), "Submission", store,
                   rt_senders={"rt@h2oins.com"}, new_venture_senders=set())
         assert store.try_claim_email("m1") is False
+
+
+def test_poll_once_pasa_skip_que_salta_ya_vistos(tmp_path):
+    """El skip (metadata-first) evita re-descargar correos ya reclamados."""
+    from modules.quote_queue.store import QuoteQueueStore
+    store = QuoteQueueStore(tmp_path / "q.db")
+    store.try_claim_email("viejo")
+    gmail = MagicMock()
+    gmail.fetch_unread.return_value = []
+    orch = MagicMock()
+
+    runner.poll_once(gmail, orch, "Submission", store)
+
+    _, kwargs = gmail.fetch_unread.call_args
+    skip = kwargs.get("skip_message_id")
+    assert skip is not None
+    assert skip("viejo") is True
+    assert skip("nuevo") is False
+
+
+def test_poll_once_guard_rechazado_entra_al_skip_cache(tmp_path):
+    """Un correo rechazado por el guard no se reclama, pero queda en el
+    cache en memoria para no re-descargarlo cada ciclo de 5s."""
+    from modules.quote_queue.store import QuoteQueueStore
+    store = QuoteQueueStore(tmp_path / "q.db")
+    gmail = MagicMock()
+    gmail.fetch_unread.return_value = [
+        {"id": "mx", "subject": "Submission X",
+         "sender_email": "desconocido@otro.com"},
+    ]
+    orch = MagicMock()
+    cache = set()
+
+    n = runner.poll_once(gmail, orch, "Submission", store,
+                         rt_senders={"ventas@h2o.com"},
+                         new_venture_senders=set(), skip_cache=cache)
+
+    assert n == 0
+    assert "mx" in cache            # no se re-descarga este proceso
+    assert store.is_seen("mx") is False  # pero NO quedó reclamado (durable)
+    _, kwargs = gmail.fetch_unread.call_args
+    assert kwargs["skip_message_id"]("mx") is True

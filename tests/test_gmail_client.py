@@ -186,3 +186,21 @@ def test_fetch_unread_no_from_clause_when_allowlist_absent():
     client.fetch_unread("Submission")
     _, kwargs = svc.users().messages().list.call_args
     assert "from:(" not in kwargs["q"]
+
+
+def test_fetch_unread_skip_message_id_evita_el_get(client=None):
+    """skip_message_id filtra por ID ANTES de messages.get: el correo ya
+    visto no se vuelve a descargar (cuerpo + adjuntos)."""
+    svc = _fake_service_with_messages([
+        _msg("m1", "Submission A", "a@x.com", "uno"),
+        _msg("m2", "Submission B", "b@x.com", "dos"),
+    ])
+    client = GmailClient.__new__(GmailClient)
+    client._svc = lambda: svc
+
+    emails = client.fetch_unread("Submission", skip_message_id=lambda i: i == "m1")
+
+    assert [e["id"] for e in emails] == ["m2"]
+    # messages.get solo se llamó para m2
+    called_ids = [kw["id"] for _, kw in svc.users().messages().get.call_args_list if kw]
+    assert "m1" not in called_ids

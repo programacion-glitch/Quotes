@@ -76,6 +76,10 @@ class QuoteQueueStore:
                     gmail_id TEXT PRIMARY KEY,
                     seen_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_jobs_mga_status ON quote_jobs(mga, status);
                 CREATE INDEX IF NOT EXISTS idx_jobs_submission ON quote_jobs(submission_id);
                 CREATE INDEX IF NOT EXISTS idx_jobs_usdot ON quote_jobs(mga, usdot);
@@ -296,6 +300,34 @@ class QuoteQueueStore:
             )
             self._conn.commit()
             return cur.rowcount == 1
+
+    def is_seen(self, gmail_id: str) -> bool:
+        """True si el correo ya fue reclamado. Solo lectura — el claim
+        atómico sigue siendo try_claim_email; esto existe para saltar la
+        descarga pesada (messages.get + adjuntos) de correos ya vistos."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM seen_emails WHERE gmail_id = ?", (gmail_id,)
+            ).fetchone()
+            return row is not None
+
+    def get_meta(self, key: str, default=None):
+        """Valor del key-value store interno (tabla meta), o default."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM meta WHERE key = ?", (key,)
+            ).fetchone()
+            return row[0] if row else default
+
+    def set_meta(self, key: str, value) -> None:
+        """Upsert en el key-value store interno (tabla meta)."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, str(value)),
+            )
+            self._conn.commit()
 
     def recently_quoted(self, mga, usdot, since_epoch: float) -> int:
         """Cuántos jobs se crearon para (mga, usdot) desde since_epoch.

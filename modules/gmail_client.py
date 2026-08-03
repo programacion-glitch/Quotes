@@ -70,7 +70,8 @@ class GmailClient:
     def fetch_unread(self, subject_filter: Optional[str] = None,
                      after_epoch: Optional[float] = None,
                      exclude_label: Optional[str] = None,
-                     from_allowlist: Optional[List[str]] = None) -> List[dict]:
+                     from_allowlist: Optional[List[str]] = None,
+                     skip_message_id=None) -> List[dict]:
         """No-leídos que matchean el filtro de asunto, en el dict del flujo.
 
         after_epoch: si se da, solo correos recibidos DESPUÉS de ese epoch
@@ -83,6 +84,12 @@ class GmailClient:
         from_allowlist: si se da, restringe a remitentes en la lista
         (término Gmail `from:(a OR b ...)`). Así los correos fuera de la
         lista ni se descargan.
+
+        skip_message_id: callable(id) -> bool. Se evalúa sobre los IDs del
+        listado ANTES de messages.get: un correo ya visto no se vuelve a
+        descargar (cuerpo + adjuntos). Imprescindible con polling agresivo —
+        un no-leído pendiente se re-descargaba en CADA ciclo hasta que
+        ventas lo leyera.
         """
         svc = self._svc()
         q = "is:unread"
@@ -104,6 +111,8 @@ class GmailClient:
         )
         out = []
         for ref in resp.get("messages", []):
+            if skip_message_id is not None and skip_message_id(ref["id"]):
+                continue
             msg = (
                 svc.users().messages()
                 .get(userId="me", id=ref["id"], format="full")
