@@ -18,6 +18,11 @@ services:
       # Progressive sigue headless: su portal no tiene Imperva y funciona.
       - PROGRESSIVE_HEADLESS=true
       - GEICO_QUEUE_ENABLED=true
+      # SYNC DE REGLAS APAGADO (2026-08-03): el master de Drive (modificado
+      # 2026-06-01) NO tiene las correcciones de Diana del caso PANTHER y las
+      # pisaba en cada arranque. Reactivar SOLO después de subir el CHECK LIST
+      # corregido al Drive de programacion@ (proyecto drivequotes).
+      - REGLAS_SYNC_ENABLED=false
     extra_hosts:
       - "host.docker.internal:host-gateway"
     shm_size: "1gb"            # estabilidad de Chromium
@@ -28,7 +33,9 @@ services:
       - ./data:/app/data       # token/credenciales/sesiones/cola/PDFs/cutoff (persistente)
       - ./logs:/app/logs
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "modules.quote_queue.runner"]
+      # Anclado a ^python: el sh -c del CMD también contiene el nombre del
+      # módulo en su cmdline y daba healthy con el runner muerto.
+      test: ["CMD", "pgrep", "-f", "^python -u -m modules.quote_queue.runner"]
       interval: 60s
       timeout: 10s
       retries: 3
