@@ -9,12 +9,14 @@ services:
     environment:
       # Proxy de IA (clasificador de commodities) = servicio Windows del host.
       - OPENAI_BASE_URL=http://host.docker.internal:3000/v1
-      # Sin display en el contenedor: ambos MGAs headless (page.pdf() lo soporta).
-      - GEICO_HEADLESS=true
+      # GEICO HEADFUL bajo Xvfb (ver CMD del Dockerfile): Imperva bloqueaba el
+      # chromium-headless-shell con Error 15 'Access denied' (2026-07-31,
+      # logs/geico_login_failed.png — 4 jobs seguidos). Headful replica la
+      # config validada en el host (.env: GEICO_HEADLESS=false, wins de junio).
+      # Su PDF degrada a PNG (page.pdf() es headless-only; ya hay fallback).
+      - GEICO_HEADLESS=false
+      # Progressive sigue headless: su portal no tiene Imperva y funciona.
       - PROGRESSIVE_HEADLESS=true
-      # Progressive + GEICO ON. Si Incapsula bloquea el Chromium Linux (página
-      # "There was a problem while processing...") hay que afinar
-      # modules/geico/stealth.py para Linux (UA/headers/canal de Chrome).
       - GEICO_QUEUE_ENABLED=true
     extra_hosts:
       - "host.docker.internal:host-gateway"

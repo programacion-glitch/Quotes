@@ -19,4 +19,6 @@ COPY workflow_orchestrator.py ./
 RUN mkdir -p /app/data /app/logs
 
 # Entrypoint: el runner (monitor Gmail + workers por MGA + cola).
-CMD ["python", "-u", "-m", "modules.quote_queue.runner"]
+# xvfb-run: GEICO corre HEADFUL (Imperva bloquea el chromium-headless-shell
+# con Error 15 'Access denied', 2026-07-31) y necesita un display virtual.
+CMD ["xvfb-run", "--auto-servernum", "--server-args=-screen 0 1920x1080x24", "python", "-u", "-m", "modules.quote_queue.runner"]
