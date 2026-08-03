@@ -94,7 +94,12 @@
       "Bash(node -e \"const tls=require\\('tls'\\); const s=tls.connect\\(993,'imap.gmail.com',{servername:'imap.gmail.com'},\\(\\)=>{console.log\\('NODE TLS OK', s.getProtocol\\(\\)\\); s.end\\(\\);}\\); s.setTimeout\\(15000,\\(\\)=>{console.log\\('TIMEOUT'\\); s.destroy\\(\\);}\\); s.on\\('error',e=>console.log\\('NODE FAIL', e.code||e.message\\)\\);\")",
       "Bash(echo \"exit:$?\")",
       "Bash([ -s \"$f\" ])",
-      "Bash(grep -E \"^\\\\.env$|^\\\\.env\\\\.\")"
+      "Bash(grep -E \"^\\\\.env$|^\\\\.env\\\\.\")",
+      "PowerShell(Get-CimInstance Win32_Process -Filter \"Name='python.exe'\")",
+      "Bash(git log *)",
+      "Bash(\"C:/Users/Usuario/AppData/Local/Programs/Python/Python312/python.exe\" \"C:/Users/Usuario/AppData/Local/Temp/claude/C--Users-Usuario-Documents-Bots-H2O-Quotes/0119dd5c-890a-475e-9ec6-07344ccc66d7/scratchpad/refresh_progressive_session.py\")",
+      "Bash(\"C:/Users/Usuario/AppData/Local/Programs/Python/Python312/python.exe\" \"C:/Users/Usuario/AppData/Local/Temp/claude/C--Users-Usuario-Documents-Bots-H2O-Quotes/0119dd5c-890a-475e-9ec6-07344ccc66d7/scratchpad/check_session.py\")",
+      "PowerShell(git log --oneline -40 --grep=\"fix\" -i)"
     ]
   },
   "enabledMcpjsonServers": [
