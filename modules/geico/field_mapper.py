@@ -555,7 +555,13 @@ def map_profile_to_fields(
     # Vehicles: prefer detailed records, otherwise synthesize from units count
     units = profile.units
     coverages = profile.coverages_detail
-    fallback_zip = applicant.zip_code
+    # R-085: garaging con el zip de la PHYSICAL address, no la mailing
+    fallback_zip = applicant.physical_zip or applicant.zip_code
+    decision_ledger.record(
+        "Zip del vehículo (garaging)", fallback_zip or "?",
+        page="Step 3 Vehicles", source="RULE", rule_id="R-085",
+        note="physical address" if applicant.physical_zip
+        else "mailing (physical no parseable)")
     requested = profile.coverages   # list of codes like ["AL","GL","APD"]
     skipped_trailers: List[str] = []
     if units.vehicles:

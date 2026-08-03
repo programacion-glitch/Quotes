@@ -80,6 +80,10 @@ class ApplicantProfile:
     city: Optional[str] = None
     state: str = "TX"                     # default; overridden by extractor when address parses
     zip_code: Optional[str] = None        # 5-digit ZIP
+    # R-085 (Diana 2026-08-03, PANTHER): el garaging de vehículos usa el zip de
+    # la PHYSICAL address; street/city/zip de arriba siguen siendo el contacto
+    # (mailing-first). Fallback: zip del mailing si la physical no parsea.
+    physical_zip: Optional[str] = None
     # Added 2026-05-28 for GEICO (Step 2 form needs explicit phone/email).
     # Source: Blue Quote applicant_info.phone / applicant_info.email.
     phone: Optional[str] = None           # e.g. "(409) 656-7240"

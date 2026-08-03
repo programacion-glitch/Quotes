@@ -569,6 +569,14 @@ class DocumentAIExtractor:
                     or "")
         street, city, state_code, zip_code = _parse_us_address(addr_src)
 
+        # R-085: el zip de garaging de vehículos sale de la PHYSICAL address
+        # (fallback: mailing). PANTHER 2026-08-03 — el bot usó 77095 (mailing)
+        # cuando la physical era 77041.
+        phys_src = (app_info.get("physical_address")
+                    or app_info.get("mailing_address")
+                    or "")
+        _, _, _, physical_zip = _parse_us_address(phys_src)
+
         applicant = ApplicantProfile(
             business_name=app_info.get("business_name") or "",
             owner_name=app_info.get("owners_name") or "",
@@ -581,6 +589,7 @@ class DocumentAIExtractor:
             city=city,
             state=state_code or "TX",
             zip_code=zip_code,
+            physical_zip=physical_zip,
             phone=(app_info.get("phone") or "").strip() or None,
             email=(app_info.get("email") or "").strip() or None,
         )

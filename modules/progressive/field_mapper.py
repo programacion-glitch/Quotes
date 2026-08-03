@@ -288,7 +288,13 @@ def map_profile_to_fields(
         dba = biz_name[idx + 3:].strip().strip(":").strip()
 
     # Vehicles: prefer profile.units.vehicles, otherwise derive from trailer_types/count
-    fallback_zip = profile.applicant.zip_code
+    # R-085: garaging con el zip de la PHYSICAL address, no la mailing
+    fallback_zip = profile.applicant.physical_zip or profile.applicant.zip_code
+    decision_ledger.record(
+        "Zip del vehículo (garaging)", fallback_zip or "?",
+        page="Add Vehicle", source="RULE", rule_id="R-085",
+        note="physical address" if profile.applicant.physical_zip
+        else "mailing (physical no parseable)")
     units = profile.units
     if units.vehicles:
         mapped_vehicles = [
