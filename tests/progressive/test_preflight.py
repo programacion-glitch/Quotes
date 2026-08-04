@@ -19,11 +19,20 @@ def test_clean_fields_no_blockers():
     assert rep.ok() and rep.blockers == []
 
 
-def test_unmappable_commodity_blocks():
-    rep = run_preflight(_fields("PACKED CHARCOAL", "FLATBED"))
+def test_unmappable_commodity_sin_senal_de_trailer_blocks():
+    """Commodity sin match Y trailer sin señal de clasificación → blocker.
+    (TRACTOR no está en el mapping por operación de Diana 2026-08-04.)"""
+    rep = run_preflight(_fields("PACKED CHARCOAL", "TRACTOR"))
     assert not rep.ok()
     assert any(b.field == "Business type" and b.source_value == "PACKED CHARCOAL"
                for b in rep.blockers)
+
+
+def test_unmappable_commodity_con_dry_van_ya_no_bloquea():
+    """Caso JUAREZ (Diana 2026-08-04): el TRAILER clasifica cuando el
+    commodity no mapea — PACKED CHARCOAL en dry van → General Freight."""
+    rep = run_preflight(_fields("PACKED CHARCOAL", "DRY VAN TRAILER"))
+    assert rep.ok()
 
 
 def test_collects_all_blockers_in_one_pass():
@@ -69,10 +78,11 @@ def test_run_halts_before_browser_on_blocker(monkeypatch):
 
     monkeypatch.setattr("modules.progressive.quote_flow.LoginPage", _boom)
 
+    # TRACTOR: sin señal de trailer, el commodity inmapeable sigue bloqueando
     fields = MappedFields(
         usdot="1", business_name="JUAREZ LLC", effective_date="06/15/2026",
         owner_name="O", commodity="PACKED CHARCOAL",
-        vehicles=[MappedVehicle(trailer_type="FLATBED")],
+        vehicles=[MappedVehicle(trailer_type="TRACTOR")],
     )
     loop = asyncio.new_event_loop()
     try:

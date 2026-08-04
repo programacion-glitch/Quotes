@@ -518,9 +518,11 @@ class BusinessInfoPage(BasePage):
         res = self.resolve_business_type(commodity)
         print(f"    [Progressive] Business type: '{commodity}' -> '{res.value}' ({res.note})")
         # resolve_business_type NO pasa por resolve_choice (arma la Resolution
-        # a mano), así que el ledger se alimenta acá.
+        # a mano), así que el ledger se alimenta acá. El fallback por trailer
+        # es regla de negocio validada (Diana 2026-08-04), no un default.
+        src = "RULE" if res.note.startswith("trailer-fallback") else res.kind
         decision_ledger.record("Business type", res.value, page=_PAGE,
-                               source=res.kind, rule_id="R-013",
+                               source=src, rule_id="R-013",
                                note=f"commodity={commodity!r} ({res.note})")
         combo = await self.find_combo("Business type list")
         await combo.wait_for(state="visible", timeout=15_000)
@@ -592,31 +594,66 @@ class BusinessInfoPage(BasePage):
         source = None if (is_generic or not (commodity or "").strip()) else commodity
         screenshot = await self.screenshot("type_of_trucker_options")
 
-        # R-015: sin commodity específico, el subtipo sigue a la OPERACIÓN
-        # (reefer -> Refrigerated Goods; dry van / flatbed -> General Freight /
-        # Other). Solo si la unidad tampoco da señal cae el catch-all DEFAULTED.
+        # R-015 (Diana 2026-08-04, mapping completo): prioridad de resolución
+        #   1. commodity específico con match directo contra las opciones
+        #   2. señal de la UNIDAD (reefer/dry van/flatbed/auto hauler/tank/
+        #      cement -> subtipo; dump -> S&G o Scrap según el commodity)
+        #   3. catch-all DEFAULTED 'General Freight / Other'
+        # Antes, un commodity específico sin match (PACKED CHARCOAL) moría en
+        # HALT aunque el trailer diera la clasificación.
         hint_label, hint_src = subtype_from_unit_hints(
-            getattr(self, "_unit_hints", None)
+            getattr(self, "_unit_hints", None), commodity=commodity
         )
-        norm_opts = {o.strip().lower(): o for o in options}
-        if source is None and hint_label and hint_label.strip().lower() in norm_opts:
-            value = norm_opts[hint_label.strip().lower()]
-            decision_ledger.record(
-                "Type of Trucker", value, page=_PAGE, options=options,
-                source="RULE", rule_id="R-015",
-                note=f"según operación ({hint_src})")
-            print(f"    [Progressive] Type of Trucker = {value!r} (operación: {hint_src})")
-        else:
+        value = None
+        if source is not None:
+            try:
+                res = resolve_choice(
+                    "Type of Trucker", source, options,
+                    generic_aliases=frozenset({"general freight", "mixed", "other", "trucker"}),
+                    screenshot_path=screenshot,
+                )
+                value = res.value
+                print(f"    [Progressive] Type of Trucker = {value!r} ({res.note})")
+            except UnmappableValueError:
+                value = None  # commodity sin match: decide la unidad
+        if value is None and hint_label:
+            resolved = self._find_option(hint_label, options)
+            if resolved:
+                value = resolved
+                decision_ledger.record(
+                    "Type of Trucker", value, page=_PAGE, options=options,
+                    source="RULE", rule_id="R-015",
+                    note=f"según operación ({hint_src})")
+                print(f"    [Progressive] Type of Trucker = {value!r} (operación: {hint_src})")
+            else:
+                print(f"    [Progressive] WARN: subtipo {hint_label!r} (operación "
+                      f"{hint_src}) no está entre las opciones de la página")
+        if value is None:
             res = resolve_choice(
-                "Type of Trucker", source, options,
+                "Type of Trucker", None, options,
                 default=self._TYPE_OF_TRUCKER_DEFAULT,
-                generic_aliases=frozenset({"general freight", "mixed", "other", "trucker"}),
                 screenshot_path=screenshot,
             )
             value = res.value
             print(f"    [Progressive] Type of Trucker = {value!r} ({res.note})")
         await self.page.get_by_role("option", name=value, exact=True).first.click(timeout=5_000)
         await self.settle_extjs()
+
+    @staticmethod
+    def _find_option(label: str, options) -> Optional[str]:
+        """Match tolerante de un subtipo contra las opciones vivas de la
+        página: exacto normalizado, o todos los tokens del label presentes
+        en la opción ('Other for hire' -> 'Other For-Hire Trucking')."""
+        norm = {o.strip().lower(): o for o in options}
+        key = label.strip().lower()
+        if key in norm:
+            return norm[key]
+        toks = [t for t in key.replace(",", " ").split() if t]
+        for o in options:
+            ol = o.lower()
+            if all(t in ol for t in toks):
+                return o
+        return None
 
     async def _answer_hazmat_placard(self, has_placard: bool) -> None:
         """

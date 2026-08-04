@@ -142,24 +142,60 @@ def map_commodity(commodity: Optional[str]) -> Tuple[Optional[str], bool]:
     return (None, False)
 
 
-# R-015 (Diana 2026-08-03, PANTHER): la clasificación sigue a la OPERACIÓN.
-# Cuando el commodity es genérico/mixto/ausente, el subtipo Type-of-Trucker se
-# deriva del tipo de unidad que arrastra la carga. Dry van y flatbed van a
-# 'General Freight / Other' (validado por Diana con captura); reefer va a
-# 'Refrigerated Goods'.
+# R-015 (Diana 2026-08-03 + mapping completo 2026-08-04): la clasificación
+# sigue a la OPERACIÓN. Cuando el commodity es genérico/mixto/ausente/sin
+# match, el subtipo Type-of-Trucker se deriva del tipo de unidad:
+#   dry van / flatbed → General Freight / Other (validado con captura)
+#   reefer → Refrigerated Goods · auto hauler → Auto Hauler
+#   tank / cement mixer → Trucker + 'Other for hire'
+#   dump → Dirt, Sand and Gravel o Scrap Metal SEGÚN el commodity
 _SUBTYPE_BY_UNIT = (
     ("REEFER", "Refrigerated Goods"),
     ("REFRIGERATED", "Refrigerated Goods"),
     ("DRY VAN", "General Freight / Other"),
     ("FLATBED", "General Freight / Other"),
+    ("AUTO HAULER", "Auto Hauler"),
+    ("CAR HAULER", "Auto Hauler"),
+    ("TANK", "Other for hire"),
+    ("CEMENT", "Other for hire"),
+    ("MIXER", "Other for hire"),
 )
 
 
-def subtype_from_unit_hints(unit_hints) -> Tuple[Optional[str], Optional[str]]:
-    """Return (Type-of-Trucker label | None, unit hint que disparó | None)."""
+def subtype_from_unit_hints(
+    unit_hints, commodity: Optional[str] = None
+) -> Tuple[Optional[str], Optional[str]]:
+    """Return (Type-of-Trucker label | None, unit hint que disparó | None).
+
+    DUMP se resuelve por el commodity (Diana 2026-08-04): scrap → Scrap
+    Metal; arena/grava → Dirt, Sand and Gravel; sin señal → sin veredicto.
+    """
+    c = (commodity or "").upper()
     for h in (unit_hints or []):
         hu = (h or "").upper()
+        if "DUMP" in hu:
+            if "SCRAP" in c:
+                return ("Scrap Metal", h)
+            if any(k in c for k in ("ARENA", "GRAVA", "SAND", "GRAVEL", "DIRT")):
+                return ("Dirt, Sand and Gravel", h)
+            continue  # dump sin señal en el commodity: sin veredicto
         for key, label in _SUBTYPE_BY_UNIT:
             if key in hu:
                 return label, h
     return (None, None)
+
+
+def radius_exceeds_500(radius_strs) -> bool:
+    """True si algún radio indica MÁS de 500 millas (R-002, Diana 2026-08-04:
+    >500 → filing federal; ≤500 → estatal). 'Unlimited' cuenta como >500."""
+    for s in (radius_strs or []):
+        t = str(s or "").lower()
+        if "unlimit" in t or "ilimit" in t:
+            return True
+        m = re.search(r"(?:more than|over)\s+(\d+)", t)
+        if m and int(m.group(1)) >= 500:
+            return True
+        nums = [int(n) for n in re.findall(r"\d+", t)]
+        if nums and min(nums) > 500:
+            return True
+    return False

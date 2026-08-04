@@ -25,6 +25,7 @@ from modules.progressive.field_mapper import MappedFields
 from modules.progressive.otp_reader import GmailOTPReader
 from modules import decision_ledger
 from modules.progressive.pages._exceptions import UnmappableValueError
+from modules.progressive.mappings import radius_exceeds_500
 from modules.progressive.pdf_downloader import quote_pdf_basename
 from modules.progressive.preflight import run_preflight, format_report, write_report
 from modules.progressive.pages.base_page import BasePage
@@ -188,7 +189,9 @@ class QuoteFlow:
             filing = FilingProofPage(wizard_page)
             if await filing.is_present(wait_ms=4_000):
                 result.step_reached = "filing_proof"
-                await filing.complete()
+                # R-002 (Diana 2026-08-04): ≤500 millas → estatal; >500 → federal
+                await filing.complete(radius_over_500=radius_exceeds_500(
+                    [v.radius_miles for v in fields.vehicles]))
                 result.warnings.extend(filing.warnings)
 
             # Step 7: RATES (CoveragesRates) - the page with the premium

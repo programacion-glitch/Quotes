@@ -145,6 +145,16 @@ def resolve_commodity_to_business_type(
         learned_remember("business_type", commodity or "", ai_opt, store=store)
         return ai_opt, "ai"
 
+    # Diana 2026-08-04 (R-013): si tabla + AI no mapean, el TIPO DE TRAILER
+    # decide — cualquier señal de unidad rutea al path genérico 'Trucker' y
+    # el subtipo Type-of-Trucker refina (dry van/flatbed → General Freight,
+    # reefer → Refrigerated, dump → S&G/Scrap según commodity, etc.).
+    # Caso JUAREZ: 'PACKED CHARCOAL' en dry van → General Freight (antes: HALT).
+    from modules.progressive.mappings import subtype_from_unit_hints
+    hint_label, hint_src = subtype_from_unit_hints(unit_hints, commodity=commodity)
+    if hint_label:
+        return "Trucker", f"trailer-fallback:{hint_src}"
+
     return None, "unmapped"
 
 
