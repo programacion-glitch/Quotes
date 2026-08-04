@@ -22,7 +22,7 @@ y con qué regla/commit.
 
 | Archivo | Rol |
 |---|---|
-| `config/CHECK LIST (2)_ESTANDARIZADO.xlsx` | **Reglas de elegibilidad VIVAS** — es lo que lee el rule engine (`settings.yaml: excel_checklist`), hoja `REGLAS FINALES`. Master en Drive (programacion@, id en `REGLAS_DRIVE_FILE_ID`); el sync lo baja al arrancar y **pisa lo local**. `REGLAS_SYNC_ENABLED=false` desde 2026-08-03 hasta subir el corregido a Drive. |
+| `config/CHECK LIST (2)_ESTANDARIZADO.xlsx` | **Reglas de elegibilidad VIVAS** — es lo que lee el rule engine (`settings.yaml: excel_checklist`), hoja `REGLAS FINALES`. Master en Drive (programacion@, id en `REGLAS_DRIVE_FILE_ID`); el sync lo baja al arrancar y **pisa lo local**. Master vigente desde 2026-08-04 (archivo nuevo con olas 1+2; el viejo fue eliminado). ⚠️ Toda edición local DEBE subirse a Drive como versión nueva del MISMO archivo, o el próximo arranque la pisa. |
 | `config/REGLAS_quotes.xlsx` | Solo la copia local que escribe `tools/read_sheet_as_user.py`. **Nadie en producción la lee.** |
 | `config/mga_decision_rules.xlsx` | Decision Ledger: decisiones del flujo web Progressive/GEICO (`R-001…R-087`). Estados: VIGENTE (validada por negocio) / EN-DUDA (default técnico, agenda con Diana). |
 | `data/quote_queue.db` | Cola + `decisions_json` por job (qué decidió el bot en cada quote — la evidencia). |
@@ -68,6 +68,17 @@ EN-DUDA). Reglas resueltas:
 - **Great West + UIIA (resuelto)** — UIIA es flatbed que va al puerto: NV sí
   aplica con paquete completo + único conductor + tractor y trailer
   identificados + contrato.
+
+**Operativo del mismo día**:
+- Token de quotes@ renovado (expiró con el contenedor caído; el proceso vivo
+  cachea el token viejo → reiniciar tras re-auth).
+- Master de reglas NUEVO en Drive (el usuario eliminó el archivo viejo y
+  subió el corregido; ID nuevo en `.env`, verificado idéntico al local);
+  `REGLAS_SYNC_ENABLED=true` de nuevo.
+- Corte por fecha PERSISTIDO en SQLite (retoma tras caídas) + monitor cada
+  5s + skip de correos ya vistos antes de descargar adjuntos (cuota Gmail).
+- Imagen Docker reconstruida con todo; push a GitHub (main = rama =
+  `f0662be`). Contenedor a la espera de la orden de arranque.
 
 ### 2026-08-03 — Ola PANTHER EXPRESS (13 puntos de Diana + 4 hallazgos)
 
