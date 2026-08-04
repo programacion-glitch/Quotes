@@ -45,6 +45,9 @@ from modules.progressive.field_mapper import (
     _same_person,
 )
 from modules import decision_ledger
+# Función pura compartida (sin deps de Playwright): criterio de las 500
+# millas de Diana 2026-08-04 — mismo umbral para Progressive y GEICO.
+from modules.progressive.mappings import radius_exceeds_500
 
 _PAGE = "Field mapper"
 
@@ -159,6 +162,11 @@ class MappedFields:
     needs_additional_insured: bool = False
     has_blanket_additional: bool = False
     requires_filings: bool = False
+    # R-078 (Diana 2026-08-04): "MC" (interestatal/ilimitado, solo los 2
+    # primeros) | "TXDMV" (intraestatal con el # del campo TXDOT de la Blue
+    # Quote) | None (sin filings)
+    filing_mode: Optional[str] = None
+    txdmv_number: Optional[str] = None
 
     # ---- Final Quote Details (Step 7) ----
     has_workers_comp: bool = False
@@ -628,6 +636,31 @@ def map_profile_to_fields(
         f"{'Yes' if has_current_ins else 'No'} / {years_insurer} / {bi_limits}",
         page=_PAGE, source="DEFAULT", rule_id="R-075",
         note=f"carrier del BlueQuote: {applicant.current_carrier!r}")
+
+    # --- Filings (R-078, Diana 2026-08-04) ---
+    # Interestatal/ilimitado (>500 mi) → Yes, solo MC ("los dos primeros").
+    # Intraestatal (≤500) → GEICO exige el TXDMV# (campo TXDOT# de la Blue
+    # Quote; bloquea el continue sin él); TXDOT no activo → No por el momento.
+    _TXDOT_SENTINELS = {"", "N/A", "NA", "NONE", "-"}
+    _txdot = (applicant.txdot or "").strip()
+    if _txdot.upper() in _TXDOT_SENTINELS:
+        _txdot = ""
+    _interstate = radius_exceeds_500(
+        [v.radius_miles for v in profile.units.vehicles])
+    if _interstate:
+        _requires_filings, _filing_mode, _txdmv_number = True, "MC", None
+        _filing_note = "radio >500 mi / ilimitado → Yes, solo MC (los 2 primeros)"
+    elif _txdot:
+        _requires_filings, _filing_mode, _txdmv_number = True, "TXDMV", _txdot
+        _filing_note = f"intraestatal con TXDOT# activo → Yes + TXDMV {_txdot}"
+    else:
+        _requires_filings, _filing_mode, _txdmv_number = False, None, None
+        _filing_note = "intraestatal sin TXDOT# activo → No por el momento"
+    decision_ledger.record(
+        "Proof of insurance / filings",
+        f"Yes ({_filing_mode})" if _requires_filings else "No",
+        page="Step 5 Additional Business Info", source="RULE", rule_id="R-078",
+        note=_filing_note)
     if applicant.phone:
         decision_ledger.record(
             "Teléfono del owner", applicant.phone, page=_PAGE, source="RULE",
@@ -667,7 +700,9 @@ def map_profile_to_fields(
         current_liability_type="None",
         needs_additional_insured=False,
         has_blanket_additional=False,
-        requires_filings=False,
+        requires_filings=_requires_filings,
+        filing_mode=_filing_mode,
+        txdmv_number=_txdmv_number,
         has_workers_comp=False,
         vehicles=mapped_vehicles,
         drivers=mapped_drivers,

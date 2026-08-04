@@ -204,13 +204,59 @@ class AdditionalBusinessPage(BasePage):
         decision_ledger.record(
             "Proof of insurance / filings requeridos?",
             "Yes" if fields.requires_filings else "No", page=_PAGE,
-            options=["Yes", "No"], source="DEFAULT", rule_id="R-078",
-            note="en Progressive esta misma pregunta va Yes (R-002)")
+            options=["Yes", "No"], source="RULE", rule_id="R-078",
+            note=f"modo: {fields.filing_mode or 'sin filings'} "
+                 f"(criterio Diana 2026-08-04)")
         await self._set_radio_group(
             question_substring="proof of insurance/filings",
             value=fields.requires_filings,
             log_name="Filings required",
         )
+        if fields.requires_filings:
+            await self._fill_filing_details(fields)
+
+    async def _fill_filing_details(self, fields: MappedFields) -> None:
+        """Sub-campos CONDITIONAL revelados por filings=Yes (R-078).
+
+        TXDMV (intraestatal): GEICO bloquea el continue sin el número — se
+        llena con el TXDOT# de la Blue Quote. MC (interestatal/ilimitado):
+        'solo los dos primeros' — selección best-effort por nombre accesible;
+        el DOM exacto queda pendiente de mapeo live (según negocio, GEICO
+        permite continuar sin sub-selección cuando es fuera del estado).
+        """
+        # Deja que GEICO revele los sub-campos del Yes antes de buscarlos.
+        await self.page.wait_for_timeout(800)
+
+        if fields.filing_mode == "TXDMV" and fields.txdmv_number:
+            box = self.page.get_by_role(
+                "textbox", name=re.compile(r"TXDMV|TxDMV|DMV", re.I))
+            if await box.count() > 0:
+                await box.first.fill(fields.txdmv_number)
+                print(f"    [GEICO] TXDMV # = {fields.txdmv_number}")
+            else:
+                await self.screenshot("geico_filings_txdmv_not_found")
+                self.note_warning(
+                    "filings TXDMV: no se encontró el campo del número "
+                    "(mapeo live pendiente) — GEICO puede bloquear el continue")
+        elif fields.filing_mode == "MC":
+            cbs = self.page.get_by_role(
+                "checkbox", name=re.compile(r"\bMC\b|MCS", re.I))
+            n = await cbs.count()
+            if n:
+                # "solo los dos primeros" (Diana 2026-08-04)
+                for i in range(min(n, 2)):
+                    try:
+                        if not await cbs.nth(i).is_checked():
+                            await cbs.nth(i).click(timeout=3_000)
+                    except Exception as e:
+                        self.note_warning(
+                            f"filings MC: checkbox {i} no clickeable "
+                            f"({e.__class__.__name__})")
+                print(f"    [GEICO] Filings MC: {min(n, 2)} checkbox(es) marcados")
+            else:
+                self.note_warning(
+                    "filings MC: sin checkboxes con nombre MC/MCS — "
+                    "verificar selección en la validación live")
 
     async def _set_liability_type(self, liability_type: str) -> None:
         """Click the BOP/GL/None radio for the liability-type question."""

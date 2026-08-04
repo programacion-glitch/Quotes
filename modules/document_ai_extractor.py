@@ -581,6 +581,7 @@ class DocumentAIExtractor:
             business_name=app_info.get("business_name") or "",
             owner_name=app_info.get("owners_name") or "",
             usdot=app_info.get("usdot") or "",
+            txdot=(app_info.get("txdot") or "").strip() or None,
             business_years=business_years,
             is_new_venture=is_nv,
             current_carrier=current_carrier,

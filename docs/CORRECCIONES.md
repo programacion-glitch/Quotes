@@ -38,18 +38,24 @@ Diana respondió las 8 preguntas técnicas (queda pendiente agendar la sesión
 EN-DUDA). Reglas resueltas:
 
 - **R-002/R-087 (VIGENTE)** — Filings Progressive: ≤500 millas → ESTATAL,
-  >500 → FEDERAL. Ambos permisos activos → los 3 checkboxes; si no → solo
-  los 2 primeros (federales). Authority Number no se llena. ⏳ código.
+  >500 → FEDERAL. Ambos permisos activos (los 3 pre-marcados por SAFER) →
+  se dejan los 3; si no → según el radio. Authority Number no se llena.
+  ✅ implementado en FilingProofPage (`filing_selection`). ⏳ validación live.
 - **R-078 (VIGENTE)** — Filings GEICO: intraestatal exige el TXDMV# (campo
   `TXDOT#` de la Blue Quote; GEICO bloquea sin él); TXDOT N/A → No por el
-  momento; ilimitado → solo MC (2 primeros). ⏳ código (extraer TXDOT#).
+  momento; >500 mi/ilimitado → Yes solo MC (2 primeros). ✅ implementado:
+  `ApplicantProfile.txdot` + `filing_mode`/`txdmv_number` en el mapper +
+  `_fill_filing_details` (el DOM exacto de los sub-campos queda best-effort
+  con WARN hasta la validación live).
 - **R-013/R-015 (VIGENTE)** — Clasificación por TRAILER cuando el commodity
   no mapea (también GEICO): dry van/flatbed → General Freight; reefer →
   Refrigerated Goods; auto hauler → Auto Hauler; S&G → Dirt Sand and Gravel;
   scrap → Scrap Metal; dump → S&G o Scrap según commodity; tank / cement
   mixer / logging / no-reflejable → Trucker + "Other for hire". Resuelve el
-  caso JUAREZ (PACKED CHARCOAL en dry van → General Freight). ⏳ código
-  (implementado dry van/flatbed/reefer; falta el resto).
+  caso JUAREZ (PACKED CHARCOAL en dry van → General Freight). ✅ implementado
+  en Progressive (business type fallback + subtipo ampliado + match tolerante
+  de "Other for hire"); en GEICO aplica vía el mapper de business class
+  existente. ⏳ validación live.
 - **Rule engine — 4 columnas nuevas** (✅ implementado + CHECK LIST poblado):
   - `MAX_VEHICLE_AGE_YEARS=15`: MAXIMUM, COVER WHALE, MJ HALL, PROFESSIONAL
     RRG, TUMI, FUTURISTICS, COUNTY HALL, AONE (descartan >15 años).

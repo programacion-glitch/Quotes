@@ -69,6 +69,9 @@ class ApplicantProfile:
     owner_name: str = ""
     owner_age: Optional[int] = None
     usdot: str = ""
+    # R-078 (Diana 2026-08-04): GEICO exige el TXDMV# para filings
+    # intraestatales; viene del campo 'TXDOT#' de la Blue Quote.
+    txdot: Optional[str] = None
     business_years: Optional[int] = None
     is_new_venture: bool = True
     industry_experience_years: Optional[int] = None
