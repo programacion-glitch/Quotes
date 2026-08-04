@@ -32,6 +32,37 @@ Convenciones de fuente en el ledger/correo: `RULE`/`MATCHED` = confiable;
 
 ## Changelog de ajustes
 
+### 2026-08-04 — Ola 2: respuestas de Diana a las 8 dudas de PANTHER
+
+Diana respondió las 8 preguntas técnicas (queda pendiente agendar la sesión
+EN-DUDA). Reglas resueltas:
+
+- **R-002/R-087 (VIGENTE)** — Filings Progressive: ≤500 millas → ESTATAL,
+  >500 → FEDERAL. Ambos permisos activos → los 3 checkboxes; si no → solo
+  los 2 primeros (federales). Authority Number no se llena. ⏳ código.
+- **R-078 (VIGENTE)** — Filings GEICO: intraestatal exige el TXDMV# (campo
+  `TXDOT#` de la Blue Quote; GEICO bloquea sin él); TXDOT N/A → No por el
+  momento; ilimitado → solo MC (2 primeros). ⏳ código (extraer TXDOT#).
+- **R-013/R-015 (VIGENTE)** — Clasificación por TRAILER cuando el commodity
+  no mapea (también GEICO): dry van/flatbed → General Freight; reefer →
+  Refrigerated Goods; auto hauler → Auto Hauler; S&G → Dirt Sand and Gravel;
+  scrap → Scrap Metal; dump → S&G o Scrap según commodity; tank / cement
+  mixer / logging / no-reflejable → Trucker + "Other for hire". Resuelve el
+  caso JUAREZ (PACKED CHARCOAL en dry van → General Freight). ⏳ código
+  (implementado dry van/flatbed/reefer; falta el resto).
+- **Rule engine — 4 columnas nuevas** (✅ implementado + CHECK LIST poblado):
+  - `MAX_VEHICLE_AGE_YEARS=15`: MAXIMUM, COVER WHALE, MJ HALL, PROFESSIONAL
+    RRG, TUMI, FUTURISTICS, COUNTY HALL, AONE (descartan >15 años).
+  - `MIN_VEHICLE_YEAR=2001`: XPT, STAR MUTUAL.
+  - `REQUIRES_MECH_INSPECTION=YES` (warning, no descarta): AMWINS, UNIVERSAL
+    CASUALTY, SGA, SIU, NOVATAE, GSIAY, INVO.
+  - `MAX_RADIUS_MILES=200`: INVO (excede → se DESCARTA, no se advierte).
+  - `REQUIRED_COVERAGES=AL,MTC,APD` en filas NV de Great West: sin paquete
+    completo se descarta con motivo.
+- **Great West + UIIA (resuelto)** — UIIA es flatbed que va al puerto: NV sí
+  aplica con paquete completo + único conductor + tractor y trailer
+  identificados + contrato.
+
 ### 2026-08-03 — Ola PANTHER EXPRESS (13 puntos de Diana + 4 hallazgos)
 
 Referencia: PANTHER EXPRESS TRUCKING LLC, USDOT 4514637, quote CA117638002.

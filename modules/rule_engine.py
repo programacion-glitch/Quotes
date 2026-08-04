@@ -4,6 +4,9 @@ Rule Engine Module
 Deterministic evaluation of QuoteProfile against structured rules from REGLAS Excel sheet.
 """
 
+import re
+from datetime import datetime
+
 import openpyxl
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -43,9 +46,12 @@ class RuleEngine:
         "LOSS_RUN_MIN_YEARS", "LOSSES_MUST_BE_CLEAN", "REQUIRES_APP",
         "REQUIRES_APP_NV", "REQUIRES_EIN", "REQUIRES_QUESTIONS", "REQUIRES_REGISTRATIONS",
         "MIN_UNITS", "MIN_OWNER_AGE", "MIN_INDUSTRY_EXP_YEARS",
-        "ALLOWED_COVERAGES", "BLOCKED_TRAILER_TYPES", "BLOCKED_COMMODITIES",
-        "ALLOWED_TRAILER_TYPES", "ROUTING", "DOWN_PAYMENT_PCT", "MIN_PRICE",
-        "SPECIAL_FORM", "NOTAS_EXTRA"
+        "ALLOWED_COVERAGES", "REQUIRED_COVERAGES", "BLOCKED_TRAILER_TYPES",
+        "BLOCKED_COMMODITIES", "ALLOWED_TRAILER_TYPES", "ROUTING",
+        "DOWN_PAYMENT_PCT", "MIN_PRICE", "SPECIAL_FORM", "NOTAS_EXTRA",
+        # Diana 2026-08-04 (respuestas ola PANTHER):
+        "MAX_VEHICLE_AGE_YEARS", "MIN_VEHICLE_YEAR",
+        "REQUIRES_MECH_INSPECTION", "MAX_RADIUS_MILES",
     ]
 
     def __init__(self, excel_path: str, sheet_name: str = "REGLAS FINALES"):
@@ -116,6 +122,25 @@ class RuleEngine:
     def _is_si_aplica(self, value: Optional[str]) -> bool:
         """Check if value is SI_APLICA."""
         return value is not None and value.strip().upper() == "SI_APLICA"
+
+    @staticmethod
+    def _radius_lower_bound(radius_str) -> Optional[float]:
+        """Cota INFERIOR en millas de un radio textual, para afirmar con
+        certeza que EXCEDE un máximo: 'More than 500 miles' -> 501,
+        '51-200' -> 51, '0-50' -> 0, 'Unlimited' -> inf.
+        None si no hay dato parseable (no se puede afirmar nada)."""
+        if not radius_str:
+            return None
+        s = str(radius_str).strip().lower()
+        if "unlimit" in s or "ilimit" in s:
+            return float("inf")
+        m = re.search(r"more than\s+(\d+)", s)
+        if m:
+            return float(m.group(1)) + 1
+        nums = [int(n) for n in re.findall(r"\d+", s)]
+        if nums:
+            return float(min(nums))
+        return None
 
     def get_rules_for_mga(self, tipo_negocio: str) -> List[Dict[str, Any]]:
         """Get all REGLAS rows matching a tipo_negocio."""
@@ -320,6 +345,21 @@ class RuleEngine:
                 else:
                     passed.append("ALLOWED_COVERAGES")
 
+            # --- Paquete de coberturas OBLIGATORIO (Diana 2026-08-04: Great
+            # West NV exige cotizar AL+MTC+APD completo; sin eso se descarta
+            # con motivo) ---
+            required_cov = self._parse_list(rule.get("REQUIRED_COVERAGES"))
+            if required_cov:
+                requested = set(c.upper() for c in profile.coverages)
+                missing_cov = [c for c in required_cov if c not in requested]
+                if missing_cov:
+                    failures.append(FailedRule("REQUIRED_COVERAGES",
+                        f"Exige cotizar el paquete completo ({', '.join(required_cov)}); "
+                        f"faltan: {', '.join(missing_cov)}",
+                        sorted(requested), list(required_cov)))
+                else:
+                    passed.append("REQUIRED_COVERAGES")
+
             # --- Reglas de trailers (ALLOWED tiene precedencia) ---
             allowed_trailers = self._parse_list(rule.get("ALLOWED_TRAILER_TYPES"))
             blocked_trailers = self._parse_list(rule.get("BLOCKED_TRAILER_TYPES"))
@@ -354,6 +394,59 @@ class RuleEngine:
                         f"Commodity bloqueado: {', '.join(blocked_found)}"))
                 else:
                     passed.append("BLOCKED_COMMODITIES")
+
+            # --- Edad de vehículos (Diana 2026-08-04) ---
+            veh_years = [v.year for v in getattr(profile.units, "vehicles", [])
+                         if getattr(v, "year", None)]
+            current_year = datetime.now().year
+
+            max_age = self._get_int(rule.get("MAX_VEHICLE_AGE_YEARS"))
+            if max_age is not None and veh_years:
+                too_old = sorted(y for y in veh_years if (current_year - y) > max_age)
+                if too_old:
+                    failures.append(FailedRule("MAX_VEHICLE_AGE_YEARS",
+                        f"No acepta camiones de más de {max_age} años "
+                        f"(año(s): {', '.join(map(str, too_old))})",
+                        too_old, f"{current_year - max_age} o posterior"))
+                else:
+                    passed.append("MAX_VEHICLE_AGE_YEARS")
+
+            min_vyear = self._get_int(rule.get("MIN_VEHICLE_YEAR"))
+            if min_vyear is not None and veh_years:
+                too_early = sorted(y for y in veh_years if y < min_vyear)
+                if too_early:
+                    failures.append(FailedRule("MIN_VEHICLE_YEAR",
+                        f"No acepta vehículos anteriores a {min_vyear} "
+                        f"(año(s): {', '.join(map(str, too_early))})",
+                        too_early, min_vyear))
+                else:
+                    passed.append("MIN_VEHICLE_YEAR")
+
+            if self._is_yes(rule.get("REQUIRES_MECH_INSPECTION")) and veh_years:
+                over_15 = sorted(y for y in veh_years if (current_year - y) > 15)
+                if over_15:
+                    warnings.append(
+                        f"Camión(es) de más de 15 años "
+                        f"({', '.join(map(str, over_15))}): requiere "
+                        f"inspección mecánica")
+
+            # --- Radio máximo (Diana 2026-08-04: si excede, se DESCARTA) ---
+            max_radius = self._get_int(rule.get("MAX_RADIUS_MILES"))
+            if max_radius is not None:
+                bounds = [self._radius_lower_bound(getattr(v, "radius_miles", None))
+                          for v in getattr(profile.units, "vehicles", [])]
+                bounds = [b for b in bounds if b is not None]
+                exceeds = [b for b in bounds if b > max_radius]
+                if exceeds:
+                    worst = max(exceeds)
+                    shown = ("ilimitado" if worst == float("inf")
+                             else f"{int(worst)}+ millas")
+                    failures.append(FailedRule("MAX_RADIUS_MILES",
+                        f"Radio de operación excede el máximo de "
+                        f"{max_radius} millas ({shown})",
+                        shown, max_radius))
+                elif bounds:
+                    passed.append("MAX_RADIUS_MILES")
 
             # --- Informational columns (not evaluated) ---
             informational = {

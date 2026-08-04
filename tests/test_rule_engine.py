@@ -313,3 +313,88 @@ class TestRequiresAppNv:
         [res] = engine.evaluate(profile, TIPO)
         assert not any(f.rule == "REQUIRES_APP_NV" for f in res.failed_rules)
         assert "REQUIRES_APP_NV" not in res.passed_rules
+
+
+# ---------------------------------------------------------------------------
+# Diana 2026-08-04: edades de vehículos, radio máximo, paquete obligatorio
+# ---------------------------------------------------------------------------
+
+from datetime import datetime as _dt
+
+from modules.quote_profile import VehicleProfile
+
+
+def _with_vehicle(year=None, radius=None):
+    p = make_profile()
+    p.units.vehicles = [VehicleProfile(year=year, radius_miles=radius)]
+    return p
+
+
+class TestVehicleAge:
+    def test_max_age_rechaza_camion_viejo(self, engine):
+        engine._rules_cache = [dict(MOCK_RULES[1], MAX_VEHICLE_AGE_YEARS="15")]
+        [res] = engine.evaluate(_with_vehicle(year=2005), TIPO)
+        assert any(f.rule == "MAX_VEHICLE_AGE_YEARS" for f in res.failed_rules)
+        assert res.eligible is False
+
+    def test_max_age_acepta_reciente(self, engine):
+        engine._rules_cache = [dict(MOCK_RULES[1], MAX_VEHICLE_AGE_YEARS="15")]
+        [res] = engine.evaluate(_with_vehicle(year=_dt.now().year - 3), TIPO)
+        assert "MAX_VEHICLE_AGE_YEARS" in res.passed_rules
+
+    def test_min_year_rechaza_pre_2001(self, engine):
+        engine._rules_cache = [dict(MOCK_RULES[1], MIN_VEHICLE_YEAR="2001")]
+        [res] = engine.evaluate(_with_vehicle(year=1999), TIPO)
+        assert any(f.rule == "MIN_VEHICLE_YEAR" for f in res.failed_rules)
+
+    def test_min_year_acepta_2001_o_posterior(self, engine):
+        engine._rules_cache = [dict(MOCK_RULES[1], MIN_VEHICLE_YEAR="2001")]
+        [res] = engine.evaluate(_with_vehicle(year=2001), TIPO)
+        assert "MIN_VEHICLE_YEAR" in res.passed_rules
+
+    def test_inspeccion_advierte_sin_descartar(self, engine):
+        """>15 años con REQUIRES_MECH_INSPECTION: warning, NO rechazo."""
+        engine._rules_cache = [dict(MOCK_RULES[1], REQUIRES_MECH_INSPECTION="YES")]
+        [res] = engine.evaluate(_with_vehicle(year=2005), TIPO)
+        assert any("inspección mecánica" in w for w in res.warnings)
+        assert res.eligible is True
+
+
+class TestMaxRadius:
+    def test_unlimited_descarta(self, engine):
+        engine._rules_cache = [dict(MOCK_RULES[1], MAX_RADIUS_MILES="200")]
+        [res] = engine.evaluate(_with_vehicle(radius="Unlimited"), TIPO)
+        assert any(f.rule == "MAX_RADIUS_MILES" for f in res.failed_rules)
+
+    def test_more_than_500_descarta(self, engine):
+        engine._rules_cache = [dict(MOCK_RULES[1], MAX_RADIUS_MILES="200")]
+        [res] = engine.evaluate(_with_vehicle(radius="More than 500 miles"), TIPO)
+        assert any(f.rule == "MAX_RADIUS_MILES" for f in res.failed_rules)
+
+    def test_rango_bajo_pasa(self, engine):
+        engine._rules_cache = [dict(MOCK_RULES[1], MAX_RADIUS_MILES="200")]
+        [res] = engine.evaluate(_with_vehicle(radius="0-50 miles"), TIPO)
+        assert "MAX_RADIUS_MILES" in res.passed_rules
+
+    def test_sin_dato_no_afirma_nada(self, engine):
+        engine._rules_cache = [dict(MOCK_RULES[1], MAX_RADIUS_MILES="200")]
+        [res] = engine.evaluate(_with_vehicle(radius=None), TIPO)
+        assert not any(f.rule == "MAX_RADIUS_MILES" for f in res.failed_rules)
+        assert "MAX_RADIUS_MILES" not in res.passed_rules
+
+
+class TestRequiredCoverages:
+    def test_paquete_incompleto_descarta_con_motivo(self, engine):
+        """Great West NV: sin AL+MTC+APD completo se descarta (Diana 2026-08-04)."""
+        engine._rules_cache = [dict(MOCK_RULES[1], REQUIRED_COVERAGES="AL,MTC,APD")]
+        profile = make_profile(coverages=["AL"])
+        [res] = engine.evaluate(profile, TIPO)
+        fr = next(f for f in res.failed_rules if f.rule == "REQUIRED_COVERAGES")
+        assert "MTC" in fr.reason and "APD" in fr.reason
+        assert res.eligible is False
+
+    def test_paquete_completo_pasa(self, engine):
+        engine._rules_cache = [dict(MOCK_RULES[1], REQUIRED_COVERAGES="AL,MTC,APD")]
+        profile = make_profile(coverages=["AL", "MTC", "APD"])
+        [res] = engine.evaluate(profile, TIPO)
+        assert "REQUIRED_COVERAGES" in res.passed_rules
