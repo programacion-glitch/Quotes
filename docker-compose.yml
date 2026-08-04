@@ -18,11 +18,12 @@ services:
       # Progressive sigue headless: su portal no tiene Imperva y funciona.
       - PROGRESSIVE_HEADLESS=true
       - GEICO_QUEUE_ENABLED=true
-      # SYNC DE REGLAS APAGADO (2026-08-03): el master de Drive (modificado
-      # 2026-06-01) NO tiene las correcciones de Diana del caso PANTHER y las
-      # pisaba en cada arranque. Reactivar SOLO después de subir el CHECK LIST
-      # corregido al Drive de programacion@ (proyecto drivequotes).
-      - REGLAS_SYNC_ENABLED=false
+      # Sync de reglas REACTIVADO (2026-08-04): el master nuevo de Drive
+      # (REGLAS_DRIVE_FILE_ID en .env, subido por el usuario) ya contiene las
+      # correcciones de Diana (olas 1 y 2) — verificado contra el local.
+      # OJO: el archivo viejo fue ELIMINADO de Drive; si el .env apunta al ID
+      # viejo, el sync falla y cae al xlsx local (fail-safe).
+      - REGLAS_SYNC_ENABLED=true
     extra_hosts:
       - "host.docker.internal:host-gateway"
     shm_size: "1gb"            # estabilidad de Chromium
