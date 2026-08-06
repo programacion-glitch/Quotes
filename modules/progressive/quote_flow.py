@@ -124,7 +124,18 @@ class QuoteFlow:
             result.step_reached = "dashboard"
             home_page = HomePage(self.page)
             if not fields.usdot:
-                result.error = "USDOT is required but missing from quote profile"
+                # New Venture sin USDOT. El dashboard SÍ deja entrar al wizard
+                # sin USDOT (el lookup de SAFER es opcional) y BusinessInfoPage
+                # sabe responder "No"/"Not Yet", pero cuál de las dos es una
+                # DECLARACIÓN al carrier, no un default técnico → pendiente de
+                # confirmación de negocio (Diana). Hasta entonces, halt limpio.
+                result.error = (
+                    "Sin USDOT: la Blue Quote no trae número (New Venture / 'N/A'). "
+                    "Progressive permite cotizar respondiendo 'No' o 'Not Yet' a "
+                    "'Does the customer have a USDOT Number?', pero esa respuesta "
+                    "cambia el rating y es una declaración al carrier — falta "
+                    "definirla con negocio. Cotización NO enviada."
+                )
                 return result
 
             wizard_page = await home_page.start_new_quote(fields.usdot, self.context)

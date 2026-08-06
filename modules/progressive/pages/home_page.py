@@ -7,6 +7,8 @@ After this page, a new tab opens with the quote wizard.
 All selectors validated live at foragentsonly.com/home on 2026-04-09.
 """
 
+from typing import Optional
+
 from playwright.async_api import Page, BrowserContext
 
 from modules.progressive.pages.base_page import BasePage
@@ -23,23 +25,34 @@ STATE_NAMES = {
 class HomePage(BasePage):
     """Progressive dashboard after login."""
 
-    async def start_new_quote(self, usdot: str, context: BrowserContext) -> Page:
+    async def start_new_quote(
+        self, usdot: Optional[str], context: BrowserContext
+    ) -> Page:
         """
-        Execute the full dashboard flow: state -> product -> USDOT -> new tab.
+        Execute the full dashboard flow: state -> product -> [USDOT] -> new tab.
 
         Args:
-            usdot: USDOT number to search.
+            usdot: USDOT number to pre-validate against SAFER, or None cuando la
+                Blue Quote no trae uno (New Venture). El widget del dashboard es
+                OPCIONAL — sirve para ver los datos públicos de SAFER antes de
+                entrar al wizard, no para abrirlo; "Add Products to Quote" queda
+                habilitado igual. Pasarle un centinela ('N/A') hace que el widget
+                responda "This is not a valid USDOT number" y mate el flujo.
             context: browser context (needed to detect new tab).
 
         Returns:
             The new Page (tab) that opens with the quote wizard.
 
         Raises:
-            RuntimeError: if USDOT not found or flow fails.
+            RuntimeError: if the USDOT lookup fails or the flow breaks.
         """
         await self._select_state("TX")
-        await self._select_product_commercial_auto()
-        await self._search_usdot(usdot)
+        await self._select_product_commercial_auto(open_usdot_widget=bool(usdot))
+        if usdot:
+            await self._search_usdot(usdot)
+        else:
+            print("    [Progressive] Sin USDOT — se omite el lookup de SAFER "
+                  "(el widget del dashboard es opcional)")
         new_page = await self._add_products_to_quote(context)
         return new_page
 
@@ -66,8 +79,15 @@ class HomePage(BasePage):
         # the "Select Product(s)" button in the DOM before we can click it.
         await self.page.wait_for_timeout(500)
 
-    async def _select_product_commercial_auto(self) -> None:
-        """Click 'Select Product(s)' and choose 'Commercial Auto'."""
+    async def _select_product_commercial_auto(
+        self, open_usdot_widget: bool = True
+    ) -> None:
+        """Click 'Select Product(s)' and choose 'Commercial Auto'.
+
+        open_usdot_widget=False cuando no hay USDOT que consultar: no tiene
+        sentido desplegar el widget de SAFER y deja el modal más limpio para
+        el click de "Add Products to Quote".
+        """
         print("    [Progressive] Selecting product: Commercial Auto")
         # Click Select Product(s) - id is stable. The button is rendered by the
         # state dropdown's onchange (BuildProductSelector), so it can resolve in
@@ -122,7 +142,7 @@ class HomePage(BasePage):
         check_usdot = self.page.locator(
             '.pp-popup-box a:has-text("Check USDOT")'
         )
-        if await check_usdot.count() > 0:
+        if open_usdot_widget and await check_usdot.count() > 0:
             await check_usdot.first.click(force=True, timeout=5_000)
             # Deliberate animation wait: USDOT widget needs time to expand.
             await self.page.wait_for_timeout(800)

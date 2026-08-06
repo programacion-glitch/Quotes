@@ -127,6 +127,37 @@ class MappedFields:
 
 # ---------- Mapping helpers --------------------------------------------------
 
+# Centinelas de "todavía no tiene USDOT" que usan las Blue Quotes de New
+# Venture. Mismo criterio que _NO_CARRIER_SENTINELS (document_ai_extractor) y
+# _TXDOT_SENTINELS (geico/field_mapper): el texto no es un dato, es un hueco.
+_USDOT_SENTINELS = frozenset({
+    "", "N/A", "NA", "N.A.", "NONE", "NO", "-", "--", "TBD", "PENDING",
+    "PENDIENTE", "NEW", "NEW VENTURE", "NUEVO",
+})
+
+
+def _clean_usdot(raw: Optional[str]) -> Optional[str]:
+    """Normaliza el USDOT; devuelve None cuando la Blue Quote no trae uno real.
+
+    Progressive valida el número contra SAFER y rechaza cualquier cosa que no
+    sean dígitos con "This is not a valid USDOT number". Dos formas de romperlo,
+    ambas vistas en vivo:
+      - espacio al final ('4518340 ')
+      - centinela de New Venture ('N/A' — DIANA CAROLINA GARCIA OSORIO,
+        2026-08-06: mató el step 'dashboard' en 2 jobs seguidos)
+    Devolver None es lo correcto: aguas abajo 'sin USDOT' ya es un caso
+    modelado (BusinessInfoPage pregunta 'Does the customer have a USDOT?').
+    """
+    value = (raw or "").strip()
+    if value.upper() in _USDOT_SENTINELS:
+        return None
+    if not value.isdigit():
+        print(f"    [Progressive] field_mapper: USDOT '{value}' no es numérico "
+              f"— se descarta (Progressive lo rechazaría en el lookup)")
+        return None
+    return value
+
+
 def _is_non_owned(
     vin: Optional[str], make: Optional[str], model: Optional[str]
 ) -> bool:
@@ -379,9 +410,7 @@ def map_profile_to_fields(
                            note="asume operación 100% Texas")
 
     return MappedFields(
-        # Strip: a trailing space ('4518340 ') makes Progressive reject the
-        # lookup as "not a valid USDOT number". Defensive across extraction paths.
-        usdot=(profile.applicant.usdot or "").strip() or None,
+        usdot=_clean_usdot(profile.applicant.usdot),
         business_name=biz_name or None,
         effective_date=effective_date,
         entity_type=entity,
