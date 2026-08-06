@@ -23,11 +23,15 @@ def test_critical_fields_are_stripped():
     assert fields.business_name == "HUMBERTO VILLARREAL"
 
 
-def test_na_usdot_is_treated_as_missing():
+def test_na_usdot_normalizes_to_none():
     # Sergio Perales' BlueQuote carries the literal string 'N/A' — truthy, so
     # it sailed past missing_critical and died at the dashboard USDOT check
-    # (mini-batch 2026-06-11). Placeholder strings must normalize to None and
-    # halt at field_mapping with a clear message.
+    # (mini-batch 2026-06-11). Placeholder strings must normalize to None.
+    #
+    # OJO: hasta 2026-08-06 esto además HALTABA la cotización. Ya no: Diana
+    # confirmó que los New Venture se cotizan sin USDOT (R-092), así que
+    # 'usdot' salió de missing_critical() — ver tests/geico/
+    # test_new_venture_no_usdot.py.
     profile = QuoteProfile(
         applicant=ApplicantProfile(
             business_name="SERGIO PERALES TREVINO",
@@ -38,4 +42,4 @@ def test_na_usdot_is_treated_as_missing():
     )
     fields = map_profile_to_fields(profile)
     assert fields.usdot is None
-    assert "usdot" in fields.missing_critical()
+    assert "usdot" not in fields.missing_critical()

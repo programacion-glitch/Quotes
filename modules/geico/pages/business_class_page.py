@@ -89,6 +89,16 @@ _CONDITIONAL_DEFAULTS = (
     # negocio NUEVO — si el cliente ya tuviera póliza GEICO vigente sería una
     # renovación, no una cotización. R-091 (EN-DUDA, confirmar con Diana).
     ("current geico commercial auto policy", ("No", False)),
+    # New Venture sin USDOT: sin el 'Check USDOT' del modal, GEICO deja este
+    # radio SIN responder y Step 1 haría HALT por pregunta no mapeada.
+    # Mapeado live con el MCP (2026-08-06, ZIP 77036): las opciones son
+    # Yes / No / "Not yet, but the customer has applied for one." y el `value`
+    # del custom element ES ese string completo. Va 'Not yet' — un New Venture
+    # de trucking SÍ va a tener USDOT; "No" (= nunca lo tendrá) sería falso y
+    # cambia el rating. R-092, igual que Progressive. Cuando SÍ hay USDOT esta
+    # entrada no se usa: el radio llega pre-respondido desde el modal.
+    ("usdot number registered",
+     ("Not yet, but the customer has applied for one.", False)),
 )
 
 

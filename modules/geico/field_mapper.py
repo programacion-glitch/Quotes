@@ -126,6 +126,31 @@ class MappedDriver:
     has_incidents: bool = False
 
 
+# Centinelas de "todavía no tiene USDOT" que usan las Blue Quotes. Mismo
+# criterio y misma lista que modules/progressive/field_mapper.py.
+_USDOT_SENTINELS = frozenset({
+    "", "N/A", "NA", "N.A.", "NONE", "NO", "-", "--", "TBD", "PENDING",
+    "PENDIENTE", "NEW", "NEW VENTURE", "NUEVO",
+})
+
+
+def _clean_usdot(raw: Optional[str]) -> Optional[str]:
+    """Normaliza el USDOT; None cuando la Blue Quote no trae uno real.
+
+    Los extractores devuelven espacios de más ('2033673 ') o placeholders
+    ('N/A' — Sergio Perales live 2026-06-11). Un USDOT válido es siempre
+    numérico. Sin número NO se aborta: el New Venture se cotiza igual (R-092).
+    """
+    value = (raw or "").strip()
+    if value.upper() in _USDOT_SENTINELS:
+        return None
+    if not value.isdigit():
+        print(f"    [GEICO] field_mapper: USDOT '{value}' no es numérico "
+              f"— se descarta")
+        return None
+    return value
+
+
 @dataclass
 class MappedFields:
     """GEICO form field values ready to be filled."""
@@ -187,8 +212,10 @@ class MappedFields:
     def missing_critical(self) -> List[str]:
         """Return critical fields that block the GEICO quote."""
         missing: List[str] = []
-        if not self.usdot:
-            missing.append("usdot")
+        # El USDOT NO es crítico: los New Venture se cotizan sin él (R-092,
+        # Diana 2026-08-06). Verificado live con el MCP: en el modal 'Start
+        # New Quote' el botón 'Start Quote' queda HABILITADO con el campo de
+        # USDOT vacío, y Step 1 abre igual (responde 'Not yet' al radio).
         if not self.business_name:
             missing.append("business_name")
         if not self.zip_code:
@@ -641,7 +668,7 @@ def map_profile_to_fields(
     # Interestatal/ilimitado (>500 mi) → Yes, solo MC ("los dos primeros").
     # Intraestatal (≤500) → GEICO exige el TXDMV# (campo TXDOT# de la Blue
     # Quote; bloquea el continue sin él); TXDOT no activo → No por el momento.
-    _TXDOT_SENTINELS = {"", "N/A", "NA", "NONE", "-"}
+    _TXDOT_SENTINELS = {"", "N/A", "NA", "NONE", "-", "TBD", "PENDING"}
     _txdot = (applicant.txdot or "").strip()
     if _txdot.upper() in _TXDOT_SENTINELS:
         _txdot = ""
@@ -667,15 +694,8 @@ def map_profile_to_fields(
             rule_id="R-049",
             note="el BlueQuote prevalece sobre el auto-pop de FMCSA")
 
-    # Extractor values can carry stray whitespace ('2033673 ') or literal
-    # placeholders ('N/A' — Sergio Perales live 2026-06-11): both must
-    # normalize to None so missing_critical() halts BEFORE burning a browser.
-    usdot = (applicant.usdot or "").strip()
-    if usdot.upper().replace(".", "").replace("/", "") in ("NA", "NONE", "TBD", "PENDING", ""):
-        usdot = ""
-
     return MappedFields(
-        usdot=usdot or None,
+        usdot=_clean_usdot(applicant.usdot),
         business_name=biz_name or None,
         zip_code=(applicant.zip_code or "").strip() or None,
         effective_date=effective_date,

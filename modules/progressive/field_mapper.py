@@ -92,8 +92,9 @@ class MappedFields:
     def missing_critical(self) -> List[str]:
         """Return critical fields that block the entire quote."""
         missing = []
-        if not self.usdot:
-            missing.append("usdot")
+        # El USDOT NO es crítico: los New Venture se cotizan sin él (R-092,
+        # Diana 2026-08-06). START responde 'Not Yet' al radio de USDOT y el
+        # lookup de SAFER del dashboard se omite.
         if not self.business_name:
             missing.append("business_name")
         if not self.effective_date:
