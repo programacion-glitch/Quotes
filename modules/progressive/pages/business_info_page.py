@@ -191,12 +191,28 @@ class BusinessInfoPage(BasePage):
           - "Yes - the customer has a USDOT number"
           - "No - and the customer will not have a USDOT number"
           - "Not Yet - but the customer has applied/will apply for a USDOT number within 60 days"
+
+        Sin USDOT respondemos **Not Yet**, no "No" (R-092, Diana 2026-08-06:
+        "solo funciona Progressive y Geico para ese tipo de clientes, no hay
+        necesidad de verificar el USDOT"). Un New Venture de trucking sí va a
+        tener USDOT — es un trámite pendiente, no una operación que no lo
+        requiera. Responder "No" sería declararle al carrier algo falso y
+        cambia el rating.
         """
         if has_usdot:
             label = "Yes - the customer has a USDOT number"
+            short = "Yes"
         else:
-            label = "No - and the customer will not have a USDOT number"
-        print(f"    [Progressive] Has USDOT: {'Yes' if has_usdot else 'No'}")
+            label = ("Not Yet - but the customer has applied/will apply for a "
+                     "USDOT number within 60 days")
+            short = "Not Yet"
+        print(f"    [Progressive] Has USDOT: {short}")
+        decision_ledger.record(
+            "Does the customer have a USDOT Number?", short, page=_PAGE,
+            source="RULE" if has_usdot else "BUSINESS", rule_id="R-092",
+            note=("USDOT presente en la Blue Quote" if has_usdot else
+                  "New Venture sin USDOT: aplicará dentro de 60 días "
+                  "(Diana 2026-08-06). NO se responde 'No'"))
         group = await self.find_radiogroup("Does the customer have a USDOT Number?")
         # safe_radio uses exact=True; the option labels are long strings so pass the full label
         radio = group.get_by_role("radio", name=label)
