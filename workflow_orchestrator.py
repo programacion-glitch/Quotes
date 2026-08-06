@@ -158,14 +158,20 @@ class QuoteWorkflowOrchestrator:
             return
 
         # Override new-venture flag from subject (authoritative signal from sender)
-        # — but a filled current_carrier in the Blue Quote is HARD EVIDENCE that
-        # the client is already insured, so never treat as New Venture in that case.
+        # — but a REAL current_carrier in the Blue Quote is HARD EVIDENCE that
+        # the client is already insured, so never treat as New Venture in that
+        # case. OJO: la Blue Quote usa el mismo campo para decir "no tiene
+        # aseguradora" ('NEW BUSINESS', 'NEW VENTURE') — eso es evidencia de lo
+        # CONTRARIO (visto live con T&S Logistics 2026-08-06).
         current_carrier = (profile.applicant.current_carrier or "").strip()
-        if current_carrier:
+        carrier_kind = self._carrier_kind(current_carrier)
+        if carrier_kind == "real":
             profile.applicant.is_new_venture = False
             if "new venture" in subject.lower():
                 print(f"  Subject says 'New Venture' but Blue Quote has current_carrier='{current_carrier}' — treating as established")
-        elif "new venture" in subject.lower():
+        elif carrier_kind == "nv" or "new venture" in subject.lower():
+            if carrier_kind == "nv" and "new venture" not in subject.lower():
+                print(f"  Blue Quote current_carrier='{current_carrier}' — treating as NEW VENTURE")
             profile.applicant.is_new_venture = True
             # Drop business_years from confidence flags — not applicable to new ventures
             if profile.extraction_confidence:
@@ -488,7 +494,39 @@ class QuoteWorkflowOrchestrator:
     def _effective_date_from_subject(self, subject: str):
         import re
         m = re.search(r'[Ee]ffective\s+date[:\s]+(\d{1,2}/\d{1,2}/\d{4})', subject)
-        return m.group(1) if m else None
+        return self._clamp_effective_date(m.group(1)) if m else None
+
+    @staticmethod
+    def _carrier_kind(current_carrier: str) -> str:
+        """Clasifica el campo current_carrier de la Blue Quote:
+        'real' = nombre de aseguradora (evidencia de establecido),
+        'nv'   = sentinel de negocio nuevo (evidencia de new venture),
+        'empty'= sin dato (decide el subject)."""
+        c = (current_carrier or "").strip().upper()
+        if not c or c in {"N/A", "NA", "NONE", "-", "NO"}:
+            return "empty"
+        if c in {"NEW BUSINESS", "NEW VENTURE", "NEW", "NUEVO"}:
+            return "nv"
+        return "real"
+
+    @staticmethod
+    def _clamp_effective_date(raw: str, today=None):
+        """R-088: una fecha efectiva vencida no es cotizable — los portales
+        exigen >= hoy (Progressive: 'cannot be less than <hoy>', visto live
+        con T&S Logistics 2026-08-06) → se cotiza con HOY y queda en el log.
+        Una fecha futura o im-parseable pasa intacta."""
+        from datetime import datetime, date
+        try:
+            parsed = datetime.strptime(raw, "%m/%d/%Y").date()
+        except ValueError:
+            return raw
+        today = today or date.today()
+        if parsed >= today:
+            return raw
+        clamped = today.strftime("%m/%d/%Y")
+        print(f"  Effective date {raw} ya venció → se cotiza con hoy "
+              f"{clamped} (R-088)")
+        return clamped
 
     def _send_analysis_now(self, email_data: dict, subject: str, body: str,
                            attachments: list) -> None:

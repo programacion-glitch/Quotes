@@ -419,10 +419,20 @@ class BusinessInfoPage(BasePage):
             print(f"    [Progressive] No SAFER radio matched name={name!r}")
 
         # Fallback: 'Enter a different Business Name' radio reveals a textbox.
-        print(f"    [Progressive] SAFER radio not usable; using 'Enter a different Business Name'")
         diff_radio = self.page.get_by_role(
             "radio", name="Enter a different Business Name"
         )
+        if await diff_radio.count() == 0:
+            await self.page.wait_for_timeout(500)  # radiogroup de render tardío
+        if await diff_radio.count() == 0:
+            # Individual / Sole Proprietor NO renderiza el radio de Business
+            # Name (visto live con T&S Logistics 2026-08-06): el named insured
+            # es el owner y el nombre comercial va en 'DBA Name' (opcional).
+            print("    [Progressive] Business-name radio not rendered "
+                  "(Individual layout); filling DBA Name instead")
+            await self._fill_placeholder("DBA Name", dba or name)
+            return
+        print(f"    [Progressive] SAFER radio not usable; using 'Enter a different Business Name'")
         # NOTE: try natural click first (auto-scrolls + verifies actionability).
         # force=True paradoxically bypasses auto-scroll and fails with
         # "outside viewport" on long START forms. Fall back to scroll+force

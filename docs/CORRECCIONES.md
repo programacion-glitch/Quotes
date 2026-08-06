@@ -58,6 +58,26 @@ cayeron con el contenedor caído y quedaron fuera del corte elegido.
   nada" de "algo está roto" de un vistazo.
 - Paginación del listado (10 páginas x 50) para backlogs post-caída.
 
+**Primera corrida live del día (T&S Logistics, USDOT 9731476, de jorgeurzola@)
+— ciclo completo funcionó (extracción → reglas → encolado → correo a Diana),
+las 2 cotizaciones fallaron y dejaron 3 fixes + 1 pendiente:**
+- **R-088 (nueva, EN-DUDA)**: la effective date del subject (08/05) ya había
+  vencido y Progressive la rechaza ("cannot be less than <hoy>") → el
+  orquestador ahora clampa a HOY con log. ✅
+- **R-089 (nueva, EN-DUDA)**: `current_carrier='NEW BUSINESS'` en la Blue
+  Quote es un sentinel de "sin aseguradora", NO un carrier — el bot lo
+  trataba como evidencia de establecido (invertido). Ahora: NEW BUSINESS/NEW
+  VENTURE/NEW ⇒ new venture; N/A/NONE ⇒ decide el subject. ✅
+- **R-090 (nueva, EN-DUDA)**: Individual/Sole Proprietor NO renderiza el
+  radio de Business Name en Progressive → el nombre comercial va a "DBA
+  Name" (antes quemaba timeouts en un radio inexistente). ✅
+- **GEICO Error 15 OTRA VEZ** (Imperva bloqueó el login del contenedor pese
+  al headful+Xvfb validado el 04-08; IP 186.114.55.6). ⏳ investigar:
+  ¿transitorio/reputación de IP o detección nueva?
+- Guard de grupos funcionando: brandon@ mandó un Submission RT (SLDC GLOBAL)
+  estando solo en new_venture → descartado; el usuario confirmó que el cruce
+  es intencional (brandon NO va en RT).
+
 ### 2026-08-04 — Ola 2: respuestas de Diana a las 8 dudas de PANTHER
 
 Diana respondió las 8 preguntas técnicas (queda pendiente agendar la sesión
