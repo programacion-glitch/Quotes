@@ -71,14 +71,15 @@ class CoveragesRatesPage(BasePage):
         # Bodily Injury + Property Damage Liability limit
         # Normalize abbreviated labels (e.g. "$1M CSL" → "$1 million CSL") to match
         # Progressive's actual dropdown option text.
-        if coverages.bodily_injury_limit:
-            bi_label = self._normalize_bi_limit(coverages.bodily_injury_limit)
-            # "$1 million CSL" is Progressive's default — skip unless value differs
-            if bi_label != "$1 million CSL":
-                await self._set_combobox(
-                    "Bodily Injury and Property Damage Liability",
-                    bi_label,
-                )
+        # SIEMPRE se setea: Progressive no siempre pre-llena su default — con
+        # T&S Logistics (NV, DOT nuevo, TX) el combo vino VACÍO y el required
+        # bloqueó el Recalculate (premium nunca materializó, live 2026-08-06).
+        bi_label = (self._normalize_bi_limit(coverages.bodily_injury_limit)
+                    if coverages.bodily_injury_limit else "$1 million CSL")
+        await self._set_combobox(
+            "Bodily Injury and Property Damage Liability",
+            bi_label,
+        )
 
         # Uninsured / Underinsured Motorist Bodily Injury
         if coverages.uninsured_motorist_limit:

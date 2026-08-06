@@ -119,11 +119,15 @@ class FilingProofPage(BasePage):
             return
 
         applied = []
+        dumped = False
         for label, desired in want.items():
             cb = self.page.get_by_role("checkbox", name=label)
             if await cb.count() == 0:
                 if desired:
                     self._log_skipped(f"filing_{label}", "checkbox not found")
+                    if not dumped:  # DIAG: labels reales para mapear (1 vez)
+                        dumped = True
+                        await self._dump_filing_labels()
                 continue
             try:
                 await self.safe_checkbox(cb.first, check=desired)
@@ -139,6 +143,27 @@ class FilingProofPage(BasePage):
             note=f"radio {rango}; pre-marcados: "
                  f"{', '.join(premarked) or 'ninguno'}")
         print(f"    [Progressive] Filings Needed = {', '.join(applied) or '(ninguno)'} ({rango})")
+
+    async def _dump_filing_labels(self) -> None:
+        """DIAG: labels reales de los checkboxes de la página de Filings —
+        los esperados ('State', 'Federal Liability Filing', 'MCS-90') se
+        implementaron a ciegas; esto captura los nombres verdaderos."""
+        try:
+            labels = await self.page.evaluate(
+                """() => Array.from(document.querySelectorAll(
+                    'input[type=checkbox], [role=checkbox]'
+                )).filter(el => el.offsetParent !== null)
+                  .map(el => el.getAttribute('aria-label')
+                        || el.labels?.[0]?.textContent
+                        || el.closest('label')?.textContent
+                        || el.parentElement?.textContent || '')
+                  .map(t => t.trim()).filter(t => t.length > 0)
+                  .slice(0, 15)"""
+            )
+            print(f"    [Progressive] DIAG filings checkbox labels: {labels}")
+            await self.screenshot("filings_checkboxes")
+        except Exception as e:
+            print(f"    [Progressive] DIAG filings dump failed: {e}")
 
     async def _premarked_filings(self) -> List[str]:
         """Solo lectura: qué checkboxes de 'Filings Needed' vienen marcados."""
