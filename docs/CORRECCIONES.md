@@ -71,9 +71,30 @@ las 2 cotizaciones fallaron y dejaron 3 fixes + 1 pendiente:**
 - **R-090 (nueva, EN-DUDA)**: Individual/Sole Proprietor NO renderiza el
   radio de Business Name en Progressive → el nombre comercial va a "DBA
   Name" (antes quemaba timeouts en un radio inexistente). ✅
+- **Causa raíz del premium (encontrada con inspección live vía MCP, quote
+  CA117697934)**: el combo de BI/PD Liability se tocaba recién entrada
+  RATES con su store ExtJS AÚN CARGANDO (dropdown abría con 0 opciones) →
+  quedaba vacío con "required" → y como Duck Creek VALIDA la página en cada
+  acción (`ignoreValidation:0`), el required vacío bloqueaba en cascada el
+  expand de MTC y el Recalculate (premium nunca materializaba). Fix en
+  `safe_select_combo`: boundlist vacío = "store cargando" → Escape +
+  settle_extjs + retry. Además el skip viejo "es el default de Progressive"
+  ocultó este path durante meses (nunca se había seteado BI/PD). ✅
+- **Quote T&S completada A MANO en el portal**: AL $1M CSL ($19,404) + MTC
+  $100k/$1,000 ded ($2,689) = **$22,585/año** (full pay $18,746), Quote
+  #CA117697934. Path MTC de Distributor validado live: 2 preguntas Yes/No
+  (sin reefer no aparece la de refrigeración) → commodity "Paper/ Plastic/
+  Glass" → "Paper & Paper Products" → limit revelado. El botón "+" de cada
+  coverage tiene id estable `<X>CoverageSectionOpenId` (p.ej.
+  `MotorTruckingCargoCoverageSectionOpenId`).
+- **Filings de DOT nuevo sin autoridad**: la página del interstitial NO
+  renderiza ningún checkbox de "Filings Needed" (DIAG live: 0 checkboxes) —
+  el "State checkbox not found" no era label equivocado, la sección no
+  existe para ese perfil. El interstitial avanza bien.
 - **GEICO Error 15 OTRA VEZ** (Imperva bloqueó el login del contenedor pese
-  al headful+Xvfb validado el 04-08; IP 186.114.55.6). ⏳ investigar:
-  ¿transitorio/reputación de IP o detección nueva?
+  al headful+Xvfb validado el 04-08; IP 186.114.55.6; credenciales
+  confirmadas vigentes por el usuario). ⏳ investigar: ¿transitorio/
+  reputación de IP o detección nueva?
 - Guard de grupos funcionando: brandon@ mandó un Submission RT (SLDC GLOBAL)
   estando solo en new_venture → descartado; el usuario confirmó que el cruce
   es intencional (brandon NO va en RT).

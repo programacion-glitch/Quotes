@@ -368,6 +368,26 @@ class BasePage:
                 # (replaces a flat 300ms sleep).
                 await self.wait_for_options_open()
 
+                # Store aún CARGANDO: el dropdown abre sin opciones (visto
+                # live 2026-08-06, BI/PD recién entrada a RATES — y como Duck
+                # Creek valida la página en cada acción, el required vacío
+                # bloqueaba también el expand de MTC y el Recalculate).
+                # Cerrar, asentar ExtJS y reintentar en vez de quemar el
+                # timeout del click de opción.
+                empty = None
+                try:
+                    empty = await self.page.evaluate(
+                        "() => !Array.from(document.querySelectorAll("
+                        "'li.x-boundlist-item')).some("
+                        "el => el.offsetParent !== null)"
+                    )
+                except Exception:
+                    pass
+                if empty is True:
+                    await self.page.keyboard.press("Escape")
+                    await self.settle_extjs(start_ms=500, timeout_ms=4_000)
+                    raise RuntimeError("boundlist vacío — store cargando")
+
                 # Strategy 1: exact match
                 option = self.page.get_by_role("option", name=option_text, exact=True)
                 if await option.count() == 0:

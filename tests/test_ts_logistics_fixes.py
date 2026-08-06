@@ -86,6 +86,41 @@ async def test_individual_sin_radio_llena_dba():
     bip._fill_placeholder.assert_awaited_once_with("DBA Name", "T&S Logistics")
 
 
+async def test_safe_select_combo_reintenta_cuando_el_boundlist_esta_vacio():
+    """Live 2026-08-06 (T&S, RATES): el combo de BI/PD abría con el store
+    aún cargando (0 opciones) y el required vacío bloqueaba TODAS las
+    acciones del server. Con el boundlist vacío se cierra (Escape), se
+    asienta ExtJS y se reintenta — sin quemar el timeout del click."""
+    from modules.progressive.pages.base_page import BasePage
+    from modules.progressive.pages._exceptions import ComboSelectError
+    import pytest
+
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    page.wait_for_function = AsyncMock()
+    page.evaluate = AsyncMock(return_value=True)   # boundlist siempre vacío
+    page.keyboard.press = AsyncMock()
+    page.screenshot = AsyncMock()
+
+    combo = MagicMock()
+    combo.click = AsyncMock()
+    combo.input_value = AsyncMock(return_value="")
+
+    bp = BasePage.__new__(BasePage)
+    bp.page = page
+    bp.screenshot = AsyncMock(return_value=None)
+    bp.dump_debug_context = AsyncMock(return_value={})
+    bp._close_open_boundlist = AsyncMock()
+
+    with pytest.raises(ComboSelectError):
+        await bp.safe_select_combo(combo, "$1 million CSL", retries=1)
+
+    # Escape presionado en cada intento (2 intentos con retries=1)
+    assert page.keyboard.press.await_count == 2
+    # nunca se intentó clickear una opción inexistente
+    page.get_by_role.assert_not_called()
+
+
 async def test_individual_con_dba_explicito_prefiere_el_dba():
     page = MagicMock()
     page.wait_for_timeout = AsyncMock()
