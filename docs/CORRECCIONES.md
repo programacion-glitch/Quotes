@@ -105,9 +105,24 @@ las 2 cotizaciones fallaron y dejaron 3 fixes + 1 pendiente:**
   ya no existe el widget de productos; ahora es "+ New Quote" → modal con
   ZIP (`#start-quote-zip`) → "Search Products" → checkbox "Commercial
   Auto/Trucking" → "Start Quote", y el USDOT vive en su propia tarjeta
-  ("Check USDOT Eligibility", input `#dashboard-usdot`). Falta re-mapear
-  `dashboard_page.py`; worker apagado mientras tanto. Evidencia:
-  `logs/map_geico_0*.png`.
+  ("Check USDOT Eligibility", input `#dashboard-usdot`).
+- **GEICO RE-MAPEADO Y OPERATIVO (mismo día).** `dashboard_page.py` soporta
+  ahora los dos layouts (`_detect_layout`): el viejo intacto y el nuevo por
+  modal — "+ New Quote" → `#start-quote-zip` → "Search Products" →
+  "Commercial Auto/Trucking" → `#start-quote-usdot` → "Check USDOT" →
+  "Start Quote" → pestaña nueva. Hallazgos que decidieron el diseño:
+  (a) el **gate de elegibilidad no se perdió**, se mudó al modal y sigue
+  dando `EligibilityHaltError` (respuesta real: *"Not Eligible — Eligibility
+  for USDOT:… was not found"*); (b) con USDOT cargado y sin checkear,
+  "Start Quote" queda DESHABILITADO; (c) hay DOS botones "Check USDOT" (modal
+  + tarjeta de fondo) y acotar por `role=dialog` NO sirve — se clickea **el
+  habilitado** (`_click_enabled`); (d) el wizard abre con ZIP y USDOT
+  pre-poblados, así que de Step 1 en adelante NO hubo que tocar nada;
+  (e) el Step 1 sumó la pregunta "current GEICO commercial auto policy" →
+  **R-091 (EN-DUDA)**: se responde No (ventas manda negocio nuevo; si ya
+  tuviera póliza sería renovación). **Validado live end-to-end: G&E HAULING
+  LLC $10,353/año**, y el halt correcto para T&S (USDOT nuevo, no elegible).
+  Worker reactivado. Evidencia: `logs/map_geico_0*.png`, `logs/newmap_*.png`.
 - **(histórico del mismo día, antes de la VPN) GEICO bloqueado a nivel de red.** El Error 15 NO es
   detección de bot: verificado el mismo minuto que contenedor, host Windows
   (con el stealth de junio) **y el Chrome normal del usuario** reciben todos

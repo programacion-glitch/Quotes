@@ -51,21 +51,196 @@ class DashboardPage(BasePage):
         self, usdot: str, zip_code: str, context: BrowserContext
     ) -> Page:
         """
-        Execute dashboard flow: select Commercial Auto -> check USDOT eligibility ->
-        check ZIP eligibility -> Start New Quote -> new tab opens.
+        Abre el wizard de cotización y devuelve su pestaña.
 
-        Returns the new Page (wizard tab).
+        Dos layouts soportados (GEICO rediseñó el dashboard el 2026-08-06 y
+        podría A/B-testear o revertir, así que el viejo se conserva):
+
+        NUEVO — modal "Start New Quote":
+            "+ New Quote" -> ZIP -> "Search Products" ->
+            "Commercial Auto/Trucking" -> "Start Quote" -> pestaña nueva.
+            El USDOT ya NO se valida acá: lo pide la primera página del
+            wizard ("Business Class & USDOT"), que es la misma de siempre.
+
+        VIEJO — widget de elegibilidad:
+            producto -> USDOT -> ZIP -> "Start New Quote" -> pestaña nueva.
 
         Raises:
-            EligibilityHaltError: USDOT or ZIP rejected by GEICO server-side.
-            RuntimeError: any other failure.
+            EligibilityHaltError: USDOT o ZIP rechazados server-side (layout viejo).
+            RuntimeError: cualquier otra falla.
         """
-        await self._ensure_on_quote_dashboard()
+        layout = await self._ensure_on_quote_dashboard()
+        if layout == "new":
+            return await self._start_quote_via_modal(usdot, zip_code, context)
         await self._select_commercial_auto()
         await self._check_usdot_eligibility(usdot)
         await self._check_zip_eligibility(zip_code)
         new_page = await self._click_start_new_quote(context)
         return new_page
+
+    # Chrome estable del dashboard NUEVO: el buscador de USDOT y el de
+    # pólizas. Sirven para reconocer el layout (el widget de productos ya no
+    # existe) — validados live 2026-08-06.
+    _NEW_DASHBOARD = "#dashboard-usdot, #start-quote-zip, #search-input-id"
+
+    async def _start_quote_via_modal(
+        self, usdot: str, zip_code: str, context: BrowserContext
+    ) -> Page:
+        """Dashboard NUEVO: modal '+ New Quote' -> ZIP -> productos -> USDOT
+        (+ 'Check USDOT') -> Start Quote.
+
+        Mapeado live 2026-08-06: desemboca en el MISMO wizard de siempre
+        (sales.geico.com/quote, 'GEICO Business Class & USDOT') en una pestaña
+        nueva, con ZIP y USDOT ya pre-poblados — por eso Step 1 sigue
+        limitándose a CONFIRMAR y no hay que tocar business_class_page.
+        """
+        print("    [GEICO] Dashboard nuevo: abriendo modal 'Start New Quote'...")
+        try:
+            await self.page.get_by_role(
+                "button", name="New Quote").first.click(timeout=15_000)
+            zip_box = self.page.locator("#start-quote-zip")
+            await zip_box.wait_for(state="visible", timeout=15_000)
+            await zip_box.fill(zip_code, timeout=10_000)
+            print(f"    [GEICO] ZIP {zip_code} -> 'Search Products'")
+            await self.page.get_by_text(
+                "Search Products", exact=False).first.click(timeout=15_000)
+        except Exception as e:
+            await self.screenshot("newquote_modal_failed")
+            raise RuntimeError(
+                f"No se pudo abrir/completar el modal 'Start New Quote': {e}"
+            ) from e
+
+        # La lista de productos llega del server: esperar a que aparezca en vez
+        # de dormir un tiempo fijo.
+        product = self.page.get_by_text("Commercial Auto/Trucking", exact=False)
+        try:
+            await product.first.wait_for(state="visible", timeout=20_000)
+        except Exception:
+            await self.screenshot("newquote_no_products")
+            body = ""
+            try:
+                body = (await self.page.inner_text("body")).lower()
+            except Exception:
+                pass
+            if "commercial" not in body:
+                raise ProductUnavailableError(
+                    f"GEICO no ofrece 'Commercial Auto/Trucking' para el ZIP "
+                    f"{zip_code} (el modal listó otros productos). Cotizar es "
+                    f"imposible hasta que GEICO lo habilite."
+                )
+            raise RuntimeError(
+                f"La lista de productos no cargó para el ZIP {zip_code}")
+
+        print("    [GEICO] Producto: Commercial Auto/Trucking")
+        await product.first.click(timeout=10_000)
+
+        await self._check_usdot_in_modal(usdot)
+
+        try:
+            async with context.expect_page(timeout=30_000) as new_page_info:
+                await self._click_enabled(
+                    self.page.get_by_role("button", name="Start Quote"),
+                    "Start Quote")
+            wizard = await new_page_info.value
+        except Exception as e:
+            await self.screenshot("newquote_start_failed")
+            raise RuntimeError(
+                f"'Start Quote' no abrió el wizard en una pestaña nueva: {e}"
+            ) from e
+
+        await wizard.wait_for_load_state("networkidle", timeout=60_000)
+        print(f"    [GEICO] Wizard abierto: {wizard.url[:80]}...")
+        return wizard
+
+    async def _click_enabled(self, locator, label: str, *,
+                             timeout_ms: int = 15_000) -> None:
+        """Clickea la PRIMERA coincidencia habilitada y visible.
+
+        El dashboard nuevo duplica nombres de botón entre el modal y las
+        tarjetas de fondo ('Check USDOT'); el de fondo está deshabilitado, así
+        que 'el habilitado' desambigua sin depender del rol del contenedor.
+        """
+        import asyncio
+        deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                for i in range(await locator.count()):
+                    cand = locator.nth(i)
+                    if await cand.is_visible() and await cand.is_enabled():
+                        await cand.click(timeout=10_000)
+                        return
+            except Exception:
+                pass
+            await self.page.wait_for_timeout(500)
+        raise RuntimeError(
+            f"ningún '{label}' habilitado y visible tras {timeout_ms} ms")
+
+    async def _check_usdot_in_modal(self, usdot: str) -> None:
+        """Carga el USDOT en el modal y dispara 'Check USDOT'.
+
+        El gate de elegibilidad NO desapareció con el rediseño: se mudó acá.
+        Respuesta live 2026-08-06 (T&S Logistics, DOT nuevo):
+            "Not Eligible — Eligibility for USDOT:9731476 in state:TX with
+             effectiveDate:08/06/2026 was not found"
+
+        Además el USDOT es lo que viaja al wizard y lo deja pre-poblado; y con
+        el campo lleno SIN checkear, 'Start Quote' queda deshabilitado.
+
+        OJO con el selector: hay DOS botones 'Check USDOT' (el del modal y el
+        de la tarjeta del dashboard). Acotar por `role=dialog` NO funciona —
+        el modal no siempre expone ese rol (live). El discriminante fiable es
+        que el de la tarjeta está DESHABILITADO: se clickea el habilitado.
+        """
+        if not usdot:
+            return
+        try:
+            box = self.page.locator("#start-quote-usdot")
+            await box.wait_for(state="visible", timeout=15_000)
+            await box.fill(usdot, timeout=10_000)
+            print(f"    [GEICO] USDOT {usdot} -> 'Check USDOT'")
+            await self._click_enabled(
+                self.page.get_by_role("button", name="Check USDOT"),
+                "Check USDOT")
+        except Exception as e:
+            # Sin el check no se puede arrancar: fallar con contexto, no seguir.
+            await self.screenshot("newquote_usdot_check_failed")
+            raise RuntimeError(
+                f"No se pudo validar el USDOT {usdot} en el modal: {e}"
+            ) from e
+
+        # El chequeo es server-side y sin spinner: poll por un veredicto claro.
+        not_eligible = self.page.get_by_text("Not Eligible", exact=False)
+        start_btn = self.page.get_by_role("button", name="Start Quote")
+        for _ in range(40):  # ~20s
+            try:
+                if (await not_eligible.count() > 0
+                        and await not_eligible.first.is_visible()):
+                    detail = ""
+                    try:
+                        detail = (await not_eligible.first.inner_text())[:200]
+                    except Exception:
+                        pass
+                    print(f"    [GEICO] USDOT {usdot} NO ELEGIBLE")
+                    await self.screenshot("newquote_usdot_not_eligible")
+                    raise EligibilityHaltError(
+                        f"USDOT {usdot} no elegible para GEICO: "
+                        f"{detail or 'sin detalle'}"
+                    )
+                # Veredicto positivo: el botón de arranque se habilita.
+                if await start_btn.count() > 0 and await start_btn.first.is_enabled():
+                    print(f"    [GEICO] USDOT {usdot} elegible")
+                    return
+            except EligibilityHaltError:
+                raise
+            except Exception:
+                pass
+            await self.page.wait_for_timeout(500)
+
+        # Sin veredicto: no inventamos elegibilidad, pero tampoco frenamos el
+        # flujo — el wizard vuelve a validar el USDOT en Step 1.
+        self.warnings.append(
+            f"dashboard: el check de USDOT {usdot} no dio veredicto en 20s")
+        print(f"    [GEICO] WARN: sin veredicto para el USDOT {usdot}; sigo")
 
     # The Commercial Auto eligibility widget: its label id, with the visible
     # product text as a tolerant fallback (a fresh login lands on /Dashboard
@@ -93,17 +268,51 @@ class DashboardPage(BasePage):
             await self.page.wait_for_timeout(500)
         return False
 
-    async def _ensure_on_quote_dashboard(self) -> None:
-        """Make sure we're on the dashboard page that exposes the
-        'Commercial Auto' eligibility widget.
+    async def _new_dashboard_ready(self, *, timeout_ms: int) -> bool:
+        """True cuando el dashboard NUEVO está en pantalla (su chrome estable:
+        buscadores de USDOT/pólizas). Rediseño live 2026-08-06."""
+        import asyncio
+        deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+        loc = self.page.locator(self._NEW_DASHBOARD).first
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                if await loc.count() > 0 and await loc.is_visible():
+                    return True
+            except Exception:
+                pass
+            await self.page.wait_for_timeout(500)
+        return False
 
-        After login GEICO lands on gateway.geico.com/Dashboard, but the
-        eligibility widget lives on /quote. Navigate there (twice if needed —
-        a fresh-login dashboard can need a beat) and wait for the widget by a
-        TOLERANT locator (id or product text) with a generous budget.
+    async def _detect_layout(self, *, timeout_ms: int):
+        """'old' | 'new' | None. Chequea ambos en paralelo lógico para no
+        gastar el budget entero en el layout que ya no existe."""
+        import asyncio
+        deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
+        old = self.page.locator(self._WIDGET).first
+        new = self.page.locator(self._NEW_DASHBOARD).first
+        while asyncio.get_event_loop().time() < deadline:
+            for name, loc in (("old", old), ("new", new)):
+                try:
+                    if await loc.count() > 0 and await loc.is_visible():
+                        return name
+                except Exception:
+                    pass
+            await self.page.wait_for_timeout(500)
+        return None
+
+    async def _ensure_on_quote_dashboard(self) -> str:
+        """Deja el navegador en un dashboard utilizable y dice CUÁL es.
+
+        Devuelve 'new' (modal '+ New Quote') u 'old' (widget de elegibilidad).
+
+        Tras el login GEICO aterriza en /Dashboard — o, desde el rediseño, en
+        la raíz de gateway2 sin path. El widget viejo vivía en /quote, así que
+        se navega ahí (dos veces si hace falta) y se espera CUALQUIERA de los
+        dos layouts con un budget generoso.
         """
-        if await self._widget_ready(timeout_ms=3_000):
-            return
+        layout = await self._detect_layout(timeout_ms=3_000)
+        if layout:
+            return layout
         target = "https://gateway.geico.com/quote"
         for attempt in (1, 2):
             print(f"    [GEICO] Navigating to {target} (attempt {attempt})...")

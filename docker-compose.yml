@@ -26,13 +26,11 @@ services:
       # El contenedor sale por la IP del host (verificar: docker exec
       # h2o-quote-bot curl -s https://api.ipify.org).
       #
-      # APAGADO por el REDISEÑO del dashboard (2026-08-06): con la VPN el login
-      # ya entra bien, pero GEICO reemplazó el widget de productos por un modal
-      # "Start New Quote" (ZIP → Search Products → checkbox Commercial Auto/
-      # Trucking → Start Quote) y el USDOT quedó en su propia tarjeta. Hasta
-      # re-mapear dashboard_page.py, todo job GEICO muere en 'dashboard'.
-      # Reactivar tras el re-mapeo: true + docker compose up -d (sin rebuild).
-      - GEICO_QUEUE_ENABLED=false
+      # REACTIVADO 2026-08-06 tras re-mapear el dashboard nuevo (modal
+      # "Start New Quote": ZIP → Search Products → Commercial Auto/Trucking →
+      # USDOT + "Check USDOT" → Start Quote). Validado live end-to-end:
+      # G&E HAULING LLC $10,353/año. REQUIERE la VPN arriba (ver arriba).
+      - GEICO_QUEUE_ENABLED=true
       # Sync de reglas REACTIVADO (2026-08-04): el master nuevo de Drive
       # (REGLAS_DRIVE_FILE_ID en .env, subido por el usuario) ya contiene las
       # correcciones de Diana (olas 1 y 2) — verificado contra el local.

@@ -84,6 +84,11 @@ _CONDITIONAL_DEFAULTS = (
     ("oil and gas fields", ("No", True)),
     ("coiled steel", ("No", True)),
     ("state or federal filing", ("Neither", False)),
+    # Aparecida con el rediseño del dashboard (live 2026-08-06, G&E HAULING):
+    # el Step 1 ahora la muestra siempre. Va No: ventas manda submissions de
+    # negocio NUEVO — si el cliente ya tuviera póliza GEICO vigente sería una
+    # renovación, no una cotización. R-091 (EN-DUDA, confirmar con Diana).
+    ("current geico commercial auto policy", ("No", False)),
 )
 
 
