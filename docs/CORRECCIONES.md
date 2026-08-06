@@ -56,12 +56,37 @@ DIANA CAROLINA GARCIA OSORIO (08-06).
 3. `quote_flow`: el halt por falta de USDOT ahora explica el porqué en el
    correo de análisis en vez de soltar un mensaje técnico.
 
-**PENDIENTE DE NEGOCIO (Diana):** ¿Progressive debe cotizar New Ventures sin
-USDOT? El wizard pregunta *"Does the customer have a USDOT Number?"* con tres
-respuestas: `Yes`, `No — and the customer will not have a USDOT number`, y
-`Not Yet — but the customer has applied/will apply within 60 days`. Elegir una
-u otra **cambia el rating y es una declaración al carrier**, no un default
-técnico → hasta que se defina, el bot hace halt limpio y lo dice en el correo.
+### 2026-08-06 (tarde) — R-092: New Ventures SIN USDOT se cotizan
+
+**Respuesta de Diana (misma tarde):** *"Solo funciona Progressive y Geico para
+ese tipo de clientes"* + *"no hay necesidad de verificar el USDOT"*. O sea: el
+halt se elimina, se cotiza en ambos MGAs.
+
+**Mapeado LIVE con el MCP antes de tocar el código** (sesión de `gateway2`,
+ZIP 77036) — nada se adivinó:
+- GEICO, modal *Start New Quote*: con `#start-quote-usdot` **vacío**, el botón
+  `Start Quote` queda **habilitado** y el campo no es `required`. El gate de
+  "Check USDOT" es opcional.
+- GEICO, Step 1 sin USDOT: el radio queda **sin responder** con tres opciones
+  — `Yes` / `No` / `"Not yet, but the customer has applied for one."` — y el
+  `value` del custom element ES ese string completo. Sin mapearla, Step 1
+  haría HALT por "UNMAPPED conditional question".
+- Progressive: el widget de SAFER del dashboard ya se probó opcional.
+
+**R-092 — respuesta elegida: `Not Yet`, nunca `No`.** Un New Venture de
+trucking **sí** va a tener USDOT: es un trámite pendiente, no una operación que
+no lo requiera. Responder "No" (= *nunca lo tendrá*) sería declararle al
+carrier algo falso y cambia el rating. Queda registrado en el Decision Ledger
+para que salga en cada correo de análisis y Diana lo pueda auditar.
+
+**Código:** `usdot` sale de `missing_critical()` en **ambos** MGAs (cortaba
+antes de abrir el browser); `_clean_usdot` con el mismo criterio en los dos
+field mappers; la pregunta de USDOT entra en `_CONDITIONAL_DEFAULTS` de GEICO;
+Progressive responde `Not Yet` en START y omite el lookup de SAFER.
+
+⚠️ **Falta validación live end-to-end**: ninguna cotización real sin USDOT se
+corrió todavía en ninguno de los dos MGAs. El primer New Venture que entre lo
+confirma.
 
 ### 2026-08-06 — Monitor sin `is:unread` + alta de jorgeurzola@
 
