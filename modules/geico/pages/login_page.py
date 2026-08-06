@@ -14,6 +14,7 @@ Flow (very different from Progressive's ForAgentsOnly):
   8. Click "Continue" -> redirect to gateway.geico.com/quote.
 """
 
+import re
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -22,19 +23,27 @@ from playwright.async_api import Page
 from modules.geico.pages.base_page import BasePage
 from modules.gmail_api_otp_reader import GmailAPIOTPReader
 
+# gateway.geico.com, gateway2.geico.com, … y sus subdominios.
+_GATEWAY_HOST_RE = re.compile(r"^(.+\.)?gateway\d*\.geico\.com$")
+
 
 def _host_is_gateway(url: str) -> bool:
-    """True only when the URL's actual HOST is gateway.geico.com.
+    """True only when the URL's actual HOST is un gateway de GEICO.
 
     Must parse the host — a plain substring check matches the
     `relayState=https%3A%2F%2Fgateway.geico.com%2FDashboard` query param
     on the b2clogin authorize URL and falsely reports a completed login.
+
+    GEICO balancea entre `gateway.geico.com` y `gateway2.geico.com` (live
+    2026-08-06): aterrizar en gateway2 dejaba el landing en 'unknown' y
+    quemaba el primer intento de login entero ("Login landing did not
+    resolve"), aunque el reintento entrara sin problema.
     """
     try:
         host = (urlparse(url).hostname or "").lower()
     except Exception:
         return False
-    return host == "gateway.geico.com" or host.endswith(".gateway.geico.com")
+    return bool(_GATEWAY_HOST_RE.match(host))
 
 
 def _is_live_gateway(url: str) -> bool:
@@ -130,10 +139,17 @@ class LoginPage(BasePage):
         username_box = self.page.get_by_role("textbox", name="Username")
         # Logged-in dashboard chrome — lets us accept an authenticated bare
         # gateway root (no app path yet) without a false positive.
+        # Incluye el dashboard NUEVO (rediseño visto live 2026-08-06): ya no
+        # trae el widget de productos ni el saludo — su chrome estable es el
+        # buscador de USDOT / el de pólizas. Sin esto, aterrizar en la RAÍZ de
+        # gateway2 (la SPA no agrega path) quedaba en 'unknown' hasta agotar
+        # el budget y el intento de login se perdía entero.
+        # OJO: `text=` NO puede ir dentro de una lista CSS separada por comas
+        # — el selector entero queda inválido, el locator LEVANTA y el except
+        # lo silencia (el branch del marcador nunca corrió). CSS puro + .or_().
         auth_marker = self.page.locator(
-            "#labelForCommercialAuto, "
-            "text=Welcome to your dashboard"
-        )
+            "#labelForCommercialAuto, #dashboard-usdot, #search-input-id"
+        ).or_(self.page.get_by_text("Welcome to your dashboard"))
         fallback = "unknown"
         expired_since = None  # time we first saw a sustained sessionexpired
         while asyncio.get_event_loop().time() < deadline:

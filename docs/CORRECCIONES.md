@@ -91,10 +91,36 @@ las 2 cotizaciones fallaron y dejaron 3 fixes + 1 pendiente:**
   renderiza ningún checkbox de "Filings Needed" (DIAG live: 0 checkboxes) —
   el "State checkbox not found" no era label equivocado, la sección no
   existe para ese perfil. El interstitial avanza bien.
-- **GEICO Error 15 OTRA VEZ** (Imperva bloqueó el login del contenedor pese
-  al headful+Xvfb validado el 04-08; IP 186.114.55.6; credenciales
-  confirmadas vigentes por el usuario). ⏳ investigar: ¿transitorio/
-  reputación de IP o detección nueva?
+- **GEICO — era la VPN, y apareció un rediseño del portal.** El Error 15
+  se resolvió al levantar el túnel WireGuard `H2O-PC027` (IP de salida
+  35.173.147.57): gateway pasa y el login completo (credenciales + MFA +
+  OTP por Gmail) funciona dentro del contenedor. Tres bugs corregidos en
+  el camino: (1) GEICO balancea a `gateway2.geico.com` y el clasificador
+  no lo reconocía → quemaba el primer intento entero; (2) el locator del
+  marcador de sesión mezclaba CSS con `text=` en una lista por comas —
+  selector inválido que LEVANTA y quedaba silenciado por el `except`: ese
+  branch **nunca** corrió; (3) preflight nuevo que detecta el bloqueo de
+  Imperva antes de abrir el browser y devuelve "revisar la VPN" en vez de
+  un timeout opaco. **Blocker restante: GEICO rediseñó el dashboard** —
+  ya no existe el widget de productos; ahora es "+ New Quote" → modal con
+  ZIP (`#start-quote-zip`) → "Search Products" → checkbox "Commercial
+  Auto/Trucking" → "Start Quote", y el USDOT vive en su propia tarjeta
+  ("Check USDOT Eligibility", input `#dashboard-usdot`). Falta re-mapear
+  `dashboard_page.py`; worker apagado mientras tanto. Evidencia:
+  `logs/map_geico_0*.png`.
+- **(histórico del mismo día, antes de la VPN) GEICO bloqueado a nivel de red.** El Error 15 NO es
+  detección de bot: verificado el mismo minuto que contenedor, host Windows
+  (con el stealth de junio) **y el Chrome normal del usuario** reciben todos
+  Error 15 en `gateway.geico.com`; `curl` simple da 403. El bloqueo es de
+  ESE host: `ecams.geico.com` y `sales.geico.com` responden 200 desde la
+  misma IP (186.114.55.6), y `sales.geico.com/quote` es el flujo de
+  consumidor (pide ZIP) — no sirve como puerta de agente. Credenciales
+  confirmadas vigentes. `GEICO_QUEUE_ENABLED=false` en compose para que los
+  reintentos dejen de alimentar el scoring de Imperva (reactivar = true +
+  `docker compose up -d`, sin rebuild). ⏳ pendiente del usuario: probar
+  gateway desde otra IP (hotspot del celular) para confirmar bloqueo por IP
+  → si confirma, rotar IP (reiniciar módem) o escalar a soporte de agentes
+  de GEICO. Ojo: el 04-08 el mismo probe pasaba desde esta misma red.
 - Guard de grupos funcionando: brandon@ mandó un Submission RT (SLDC GLOBAL)
   estando solo en new_venture → descartado; el usuario confirmó que el cruce
   es intencional (brandon NO va en RT).

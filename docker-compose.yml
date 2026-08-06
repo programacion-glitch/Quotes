@@ -17,7 +17,22 @@ services:
       - GEICO_HEADLESS=false
       # Progressive sigue headless: su portal no tiene Imperva y funciona.
       - PROGRESSIVE_HEADLESS=true
-      - GEICO_QUEUE_ENABLED=true
+      # ⚠️ GEICO DEPENDE DE LA VPN (diagnosticado 2026-08-06): Imperva bloquea
+      # gateway.geico.com por IP — sin VPN da Error 15 a TODO desde esta red
+      # (contenedor, host y hasta el Chrome normal del usuario; curl da 403),
+      # mientras ecams/sales.geico.com sí responden. Con la VPN en EE.UU. el
+      # gateway redirige normal al login B2C. NO es detección de bot: si vuelve
+      # el Error 15, revisar la VPN ANTES de tocar stealth.py.
+      # El contenedor sale por la IP del host (verificar: docker exec
+      # h2o-quote-bot curl -s https://api.ipify.org).
+      #
+      # APAGADO por el REDISEÑO del dashboard (2026-08-06): con la VPN el login
+      # ya entra bien, pero GEICO reemplazó el widget de productos por un modal
+      # "Start New Quote" (ZIP → Search Products → checkbox Commercial Auto/
+      # Trucking → Start Quote) y el USDOT quedó en su propia tarjeta. Hasta
+      # re-mapear dashboard_page.py, todo job GEICO muere en 'dashboard'.
+      # Reactivar tras el re-mapeo: true + docker compose up -d (sin rebuild).
+      - GEICO_QUEUE_ENABLED=false
       # Sync de reglas REACTIVADO (2026-08-04): el master nuevo de Drive
       # (REGLAS_DRIVE_FILE_ID en .env, subido por el usuario) ya contiene las
       # correcciones de Diana (olas 1 y 2) — verificado contra el local.

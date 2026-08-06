@@ -175,8 +175,47 @@ class GEICOClient:
         # the email's "Decisiones tomadas" table).
         mapper_entries = decision_ledger.entries()
 
+        # Preflight de red: sin la VPN, Imperva bloquea gateway.geico.com por
+        # IP y el bot moría con "Login landing did not resolve" tras dos
+        # intentos de ~2 min (diagnóstico 2026-08-06: el Error 15 lo recibían
+        # también el host y el Chrome del usuario). Detectarlo ANTES ahorra el
+        # ciclo, deja un mensaje accionable y evita seguir alimentando el
+        # scoring de Imperva.
+        blocked = _gateway_blocked_by_waf()
+        if blocked:
+            return QuoteResult(
+                success=False,
+                error=(
+                    "GEICO inalcanzable: Imperva bloquea gateway.geico.com "
+                    "desde esta IP (Error 15). Suele ser la VPN caída — "
+                    "revisar el túnel WireGuard 'H2O-PC027' y reintentar. "
+                    "NO es un problema del bot ni de las credenciales."
+                ),
+                step_reached="preflight_network",
+            )
+
         # Run async flow with retry
         return asyncio.run(_run_with_browser(config, fields, mapper_entries))
+
+
+def _gateway_blocked_by_waf(timeout: float = 15.0) -> bool:
+    """True si el WAF de GEICO nos está bloqueando por IP (Error 15).
+
+    Petición liviana y tolerante a fallos: cualquier problema distinto del
+    bloqueo (sin red, DNS, timeout) devuelve False para no inventar un
+    diagnóstico y dejar que el flujo normal reporte lo que realmente pase.
+    """
+    try:
+        import requests
+
+        r = requests.get(
+            "https://gateway.geico.com/",
+            headers={"User-Agent": stealth.USER_AGENT},
+            timeout=timeout,
+        )
+    except Exception:
+        return False
+    return r.status_code == 403 and "_Incapsula_Resource" in (r.text or "")
 
 
 async def _run_with_browser(
