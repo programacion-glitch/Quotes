@@ -32,6 +32,37 @@ Convenciones de fuente en el ledger/correo: `RULE`/`MATCHED` = confiable;
 
 ## Changelog de ajustes
 
+### 2026-08-06 (tarde) — Progressive: `USDOT: N/A` de New Venture mataba el flujo
+
+**Síntoma reportado:** "Progressive no loguea". **Realidad:** loguea perfecto
+(sesión restaurada, sin OTP). El fallo estaba en el step `dashboard`.
+
+**Causa raíz:** la Blue Quote de un New Venture trae `USDOT: N/A`.
+`field_mapper` solo limpiaba espacios, así que el literal `'N/A'` sobrevivía
+como valor truthy, pasaba el guard `if not fields.usdot` de `quote_flow` y
+llegaba al buscador de SAFER del dashboard, que contesta **"This is not a valid
+USDOT number"** → `RuntimeError` en step `dashboard` (no retryable).
+Evidencia: `logs/progressive_error_dashboard.png`. Quemó 2 jobs seguidos de
+DIANA CAROLINA GARCIA OSORIO (08-06).
+
+**Fix (3 capas):**
+1. `field_mapper._clean_usdot`: centinelas (`N/A`, `NONE`, `TBD`,
+   `NEW VENTURE`, `-`…) y cualquier valor no numérico → `None`. GEICO ya tenía
+   esta defensa (`_TXDOT_SENTINELS` + normalización de `N/A`); Progressive era
+   el único MGA sin ella.
+2. `home_page.start_new_quote`: el USDOT pasa a `Optional`. El widget del
+   dashboard es **opcional** (solo pre-consulta SAFER, no abre el wizard), así
+   que sin número se omite el lookup.
+3. `quote_flow`: el halt por falta de USDOT ahora explica el porqué en el
+   correo de análisis en vez de soltar un mensaje técnico.
+
+**PENDIENTE DE NEGOCIO (Diana):** ¿Progressive debe cotizar New Ventures sin
+USDOT? El wizard pregunta *"Does the customer have a USDOT Number?"* con tres
+respuestas: `Yes`, `No — and the customer will not have a USDOT number`, y
+`Not Yet — but the customer has applied/will apply within 60 days`. Elegir una
+u otra **cambia el rating y es una declaración al carrier**, no un default
+técnico → hasta que se defina, el bot hace halt limpio y lo dice en el correo.
+
 ### 2026-08-06 — Monitor sin `is:unread` + alta de jorgeurzola@
 
 Diagnóstico del "no ejecutó nada" tras el arranque del 05-08: el bot estaba
