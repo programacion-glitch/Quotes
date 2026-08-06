@@ -227,6 +227,55 @@ def test_poll_once_pasa_skip_que_salta_ya_vistos(tmp_path):
     assert skip("nuevo") is False
 
 
+def test_poll_once_lee_tambien_correos_leidos(tmp_path):
+    """2026-08-06: sin is:unread — un correo que ventas abrió antes que el
+    bot (o durante una caída) ya no se pierde; el dedup es seen_emails."""
+    from modules.quote_queue.store import QuoteQueueStore
+    store = QuoteQueueStore(tmp_path / "q.db")
+    gmail = MagicMock()
+    gmail.fetch_unread.return_value = []
+    runner.poll_once(gmail, MagicMock(), "Submission", store)
+    _, kwargs = gmail.fetch_unread.call_args
+    assert kwargs["unread_only"] is False
+
+
+def test_poll_once_metadata_guard_rechaza_cachea_y_loguea(tmp_path, capsys):
+    """El guard corre sobre headers ANTES de la descarga completa: rechaza
+    Re:/remitentes ajenos, los cachea y deja rastro en el log."""
+    from modules.quote_queue.store import QuoteQueueStore
+    store = QuoteQueueStore(tmp_path / "q.db")
+    gmail = MagicMock()
+    gmail.fetch_unread.return_value = []
+    cache = set()
+
+    runner.poll_once(gmail, MagicMock(), "Submission", store,
+                     rt_senders={"simon@h2oins.com"},
+                     new_venture_senders={"duvan@h2oins.com"},
+                     skip_cache=cache)
+
+    _, kwargs = gmail.fetch_unread.call_args
+    guard = kwargs["metadata_filter"]
+    assert guard("m1", "simon@h2oins.com", "Submission // ACME") is True
+    assert guard("m2", "ajeno@gmail.com", "Submission // X") is False
+    assert guard("m3", "simon@h2oins.com", "Re: Submission // ACME") is False
+    assert guard("m4", "duvan@h2oins.com",
+                 "Submission New Venture // NV LLC") is True
+    assert cache == {"m2", "m3"}
+    out = capsys.readouterr().out
+    assert "descartado: ajeno@gmail.com" in out
+    assert "Re: Submission // ACME" in out
+
+
+def test_poll_once_sin_guard_metadata_filter_acepta_todo(tmp_path):
+    from modules.quote_queue.store import QuoteQueueStore
+    store = QuoteQueueStore(tmp_path / "q.db")
+    gmail = MagicMock()
+    gmail.fetch_unread.return_value = []
+    runner.poll_once(gmail, MagicMock(), "Submission", store)
+    _, kwargs = gmail.fetch_unread.call_args
+    assert kwargs["metadata_filter"]("m1", "cualquiera@x.com", "lo que sea") is True
+
+
 def test_poll_once_guard_rechazado_entra_al_skip_cache(tmp_path):
     """Un correo rechazado por el guard no se reclama, pero queda en el
     cache en memoria para no re-descargarlo cada ciclo de 5s."""

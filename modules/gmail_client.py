@@ -29,7 +29,7 @@ _DEFAULT_TOKEN = _PROJECT_ROOT / "data" / "token.json"
 
 
 class GmailClient:
-    """Lee no-leídos, responde en hilo (con CC), etiqueta y marca leído."""
+    """Lee el inbox, responde en hilo (con CC), etiqueta y marca leído."""
 
     def __init__(self, credentials_path=None, token_path=None, service=None):
         self.credentials_path = Path(credentials_path or _DEFAULT_CREDENTIALS)
@@ -71,8 +71,10 @@ class GmailClient:
                      after_epoch: Optional[float] = None,
                      exclude_label: Optional[str] = None,
                      from_allowlist: Optional[List[str]] = None,
-                     skip_message_id=None) -> List[dict]:
-        """No-leídos que matchean el filtro de asunto, en el dict del flujo.
+                     skip_message_id=None,
+                     unread_only: bool = True,
+                     metadata_filter=None) -> List[dict]:
+        """Correos que matchean el filtro de asunto, en el dict del flujo.
 
         after_epoch: si se da, solo correos recibidos DESPUÉS de ese epoch
         (término Gmail `after:`), para ignorar el backlog viejo sin tocarlo.
@@ -88,11 +90,20 @@ class GmailClient:
         skip_message_id: callable(id) -> bool. Se evalúa sobre los IDs del
         listado ANTES de messages.get: un correo ya visto no se vuelve a
         descargar (cuerpo + adjuntos). Imprescindible con polling agresivo —
-        un no-leído pendiente se re-descargaba en CADA ciclo hasta que
-        ventas lo leyera.
+        un pendiente se re-descargaría en CADA ciclo.
+
+        unread_only: con False NO filtra por is:unread — el dedup queda 100%
+        a cargo del caller (seen_emails + corte). Así un correo que ventas
+        leyó antes que el bot (o durante una caída) NO se pierde.
+
+        metadata_filter: callable(msg_id, sender_email, subject) -> bool.
+        Se evalúa con un messages.get de SOLO headers, ANTES de la descarga
+        completa (cuerpo + adjuntos): lo rechazado (p.ej. "Re: ..." de un
+        hilo viejo) nunca se baja entero. Crítico sin is:unread, donde el
+        listado incluye todas las respuestas del período.
         """
         svc = self._svc()
-        q = "is:unread"
+        q = "is:unread" if unread_only else ""
         if subject_filter:
             q += f' subject:"{subject_filter}"'
         if after_epoch:
@@ -104,15 +115,38 @@ class GmailClient:
             # descargan (no messages.get, no se etiquetan).
             addrs = " OR ".join(from_allowlist)
             q += f" from:({addrs})"
-        resp = (
-            svc.users().messages()
-            .list(userId="me", q=q, maxResults=25)
-            .execute()
-        )
+        q = q.strip()
+
+        # Sin is:unread el resultado crece con el período: paginar para que
+        # un backlog (p.ej. tras una caída) no quede fuera de la primera página.
+        refs, token = [], None
+        for _ in range(10):  # tope de seguridad: 10 páginas x 50
+            req = {"userId": "me", "q": q, "maxResults": 50}
+            if token:
+                req["pageToken"] = token
+            resp = svc.users().messages().list(**req).execute()
+            refs.extend(resp.get("messages", []))
+            token = resp.get("nextPageToken")
+            if not token:
+                break
+
         out = []
-        for ref in resp.get("messages", []):
+        for ref in refs:
             if skip_message_id is not None and skip_message_id(ref["id"]):
                 continue
+            if metadata_filter is not None:
+                meta = (
+                    svc.users().messages()
+                    .get(userId="me", id=ref["id"], format="metadata",
+                         metadataHeaders=["From", "Subject"])
+                    .execute()
+                )
+                payload = meta.get("payload", {})
+                _, sender_email = self._split_sender(
+                    self._header(payload, "From"))
+                if not metadata_filter(ref["id"], sender_email,
+                                       self._header(payload, "Subject")):
+                    continue
             msg = (
                 svc.users().messages()
                 .get(userId="me", id=ref["id"], format="full")

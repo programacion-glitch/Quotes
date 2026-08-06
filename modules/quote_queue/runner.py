@@ -5,6 +5,7 @@ worker-thread por MGA), en un solo proceso, sobre la cola durable.
 Entrypoint:  python -m modules.quote_queue.runner
 """
 
+import os
 import sys
 import threading
 import time
@@ -37,10 +38,17 @@ def poll_once(gmail, orchestrator, subject_filter: str, store,
     el buzón. Se reclama ANTES de procesar (mismas semánticas que la
     etiqueta vieja en finally: un crash a mitad de proceso no reprocesa).
 
+    LEÍDOS TAMBIÉN (Usuario 2026-08-06): sin is:unread — con seen_emails +
+    corte, el estado leído/no-leído ya no aporta dedup, y ventas lee el
+    buzón todo el día: con is:unread, cualquier correo abierto por un humano
+    antes que el bot (p.ej. durante una caída) se perdía para siempre.
+
     Guard de remitentes: idéntico a antes; lo que no pasa NO se procesa NI
     se reclama (si mañana entra al allowlist, sigue procesable). Sí se
     recuerda en `skip_cache` (memoria del proceso) para no re-descargarlo
-    cada ciclo — al reiniciar el bot se re-evalúa contra el allowlist vigente.
+    cada ciclo — al reiniciar el bot se re-evalúa contra el allowlist
+    vigente. Corre sobre los headers (metadata_filter) ANTES de bajar
+    cuerpo + adjuntos, y cada rechazo se loguea una vez.
 
     after_epoch: corte por fecha — solo correos recibidos después de ese epoch.
     skip_cache: set en memoria compartido entre ciclos; junto con
@@ -56,11 +64,25 @@ def poll_once(gmail, orchestrator, subject_filter: str, store,
     def _skip(msg_id: str) -> bool:
         return msg_id in cache or store.is_seen(msg_id)
 
+    def _meta_guard(msg_id: str, sender_email: str, subject: str) -> bool:
+        if not guard_active:
+            return True
+        if is_processable_submission(sender_email, subject, rt, nv):
+            return True
+        print(f"  [guard] descartado: {sender_email} | "
+              f"{(subject or '')[:70]}")
+        cache.add(msg_id)  # no re-evaluar mientras viva el proceso
+        return False
+
     emails = gmail.fetch_unread(subject_filter, after_epoch=after_epoch,
                                 from_allowlist=from_allowlist,
-                                skip_message_id=_skip)
+                                skip_message_id=_skip,
+                                unread_only=False,
+                                metadata_filter=_meta_guard)
     processed = 0
     for email_data in emails:
+        # Re-chequeo del guard sobre el correo completo (el metadata_filter
+        # es una optimización del fetch; la autoridad sigue siendo esta).
         if guard_active and not is_processable_submission(
                 email_data.get("sender_email", ""),
                 email_data.get("subject", ""), rt, nv):
@@ -123,7 +145,6 @@ def _load_sender_sets(config):
 
 def run_forever(check_interval: int = None) -> None:
     if check_interval is None:
-        import os
         check_interval = int(os.getenv("MONITOR_INTERVAL_SECONDS", "5"))
     config = get_config()
     gmail = GmailClient()
@@ -152,8 +173,14 @@ def run_forever(check_interval: int = None) -> None:
         cutoff = time.time()
         store.set_meta(_CUTOFF_KEY, cutoff)
         origen = "primer arranque"
-    print(f"[runner] corte por fecha: solo correos NO LEÍDOS posteriores a "
-          f"{datetime.fromtimestamp(cutoff).isoformat()} ({origen})")
+    # Sin is:unread (2026-08-06) el listado por ciclo crece con la edad del
+    # corte; la ventana móvil lo acota (todo lo anterior ya está visto/
+    # descartado, y una caída más larga que la ventana igual se recupera a
+    # mano). El corte NO avanza: es el piso histórico.
+    lookback_days = float(os.getenv("MONITOR_LOOKBACK_DAYS", "14"))
+    print(f"[runner] corte por fecha: solo correos posteriores a "
+          f"{datetime.fromtimestamp(cutoff).isoformat()} ({origen}); "
+          f"leídos o no — dedup por message-id; ventana máx {lookback_days:g} días")
 
     # Recuperación de crash: jobs colgados vuelven a pending.
     reclaimed = store.reclaim_stale()
@@ -172,16 +199,22 @@ def run_forever(check_interval: int = None) -> None:
 
     print(f"[runner] monitoreando '{subject_filter}' cada {check_interval}s")
     skip_cache = set()  # rechazados por el guard: no re-descargar cada ciclo
+    heartbeat_s = float(os.getenv("MONITOR_HEARTBEAT_SECONDS", "1800"))
+    hb_last = time.time()
+    hb_ok = hb_fail = hb_procesados = 0
     try:
         while True:
             try:
                 n = poll_once(gmail, orchestrator, subject_filter, store,
-                              after_epoch=cutoff,
+                              after_epoch=max(cutoff, time.time()
+                                              - lookback_days * 86400),
                               rt_senders=rt_senders,
                               new_venture_senders=new_venture_senders,
                               skip_cache=skip_cache)
                 if n:
                     print(f"[monitor] procesados {n} correo(s)")
+                hb_ok += 1
+                hb_procesados += n
             except Exception as e:
                 # Errores transitorios de red/API (TimeoutError [WinError 10060],
                 # RemoteDisconnected, HttpError 5xx...) NO deben tumbar el runner:
@@ -189,6 +222,13 @@ def run_forever(check_interval: int = None) -> None:
                 # vivos. KeyboardInterrupt NO es Exception → escapa a la salida.
                 print(f"[monitor] ciclo falló ({type(e).__name__}: {e}); "
                       f"reintento en {check_interval}s")
+                hb_fail += 1
+            if time.time() - hb_last >= heartbeat_s:
+                print(f"[monitor] vivo — últimos {heartbeat_s / 60:.0f} min: "
+                      f"{hb_ok} ciclos OK, {hb_fail} fallidos, "
+                      f"{hb_procesados} procesados")
+                hb_last = time.time()
+                hb_ok = hb_fail = hb_procesados = 0
             time.sleep(check_interval)
     except KeyboardInterrupt:
         print("\n[runner] apagando...")

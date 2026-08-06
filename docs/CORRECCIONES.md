@@ -32,6 +32,32 @@ Convenciones de fuente en el ledger/correo: `RULE`/`MATCHED` = confiable;
 
 ## Changelog de ajustes
 
+### 2026-08-06 — Monitor sin `is:unread` + alta de jorgeurzola@
+
+Diagnóstico del "no ejecutó nada" tras el arranque del 05-08: el bot estaba
+sano (~15,800 ciclos OK); simplemente NO llegó ningún Submission original de
+un remitente de la lista — el único original (T&S Logistics, 05-08) vino de
+jorgeurzola@h2oins.com, que no estaba en la lista. Los 5 originales del 04-08
+cayeron con el contenedor caído y quedaron fuera del corte elegido.
+
+- **Alta de remitente**: jorgeurzola@h2oins.com → grupo new_venture
+  (`config/settings.yaml`).
+- **Sin `is:unread`** (`fetch_unread(unread_only=False)`): ventas lee el
+  buzón todo el día — con is:unread, cualquier correo abierto por un humano
+  antes que el bot (p.ej. durante una caída) se perdía para siempre. El dedup
+  ya no lo necesita: seen_emails (message-id) + corte persistido.
+- **Guard por metadata** (`metadata_filter`): remitente/asunto se validan con
+  solo headers ANTES de bajar cuerpo + adjuntos (crítico sin is:unread, donde
+  el listado incluye los "Re:" del período), y cada rechazo se loguea:
+  `[guard] descartado: ...` — antes el descarte era silencioso y el log no
+  contaba nada.
+- **Ventana móvil** `MONITOR_LOOKBACK_DAYS` (default 14): acota el listado
+  por ciclo; el corte persistido sigue siendo el piso histórico.
+- **Heartbeat** `MONITOR_HEARTBEAT_SECONDS` (default 1800): línea periódica
+  "vivo — N ciclos OK / fallidos / procesados" para distinguir "no llega
+  nada" de "algo está roto" de un vistazo.
+- Paginación del listado (10 páginas x 50) para backlogs post-caída.
+
 ### 2026-08-04 — Ola 2: respuestas de Diana a las 8 dudas de PANTHER
 
 Diana respondió las 8 preguntas técnicas (queda pendiente agendar la sesión

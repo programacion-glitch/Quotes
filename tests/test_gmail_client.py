@@ -68,6 +68,92 @@ def test_fetch_unread_query_includes_unread_and_subject():
     assert "Submission" in kwargs["q"]
 
 
+def test_fetch_unread_only_false_omite_is_unread():
+    """unread_only=False: el dedup es del caller (seen_emails + corte) —
+    un correo que ventas leyó antes que el bot NO se pierde."""
+    svc = _fake_service_with_messages([])
+    client = GmailClient(service=svc)
+    client.fetch_unread("Submission", unread_only=False)
+    _, kwargs = svc.users().messages().list.call_args
+    assert "is:unread" not in kwargs["q"]
+    assert 'subject:"Submission"' in kwargs["q"]
+
+
+def test_fetch_metadata_filter_evita_la_descarga_completa():
+    """Lo rechazado por metadata_filter (headers) nunca se baja entero."""
+    svc = MagicMock()
+    svc.users().messages().list().execute.return_value = {
+        "messages": [{"id": "m1"}, {"id": "m2"}]
+    }
+    full = {
+        "m1": _msg("m1", "Re: Submission A", "Ana <ana@h2oins.com>", "uno"),
+        "m2": _msg("m2", "Submission B", "Bea <bea@h2oins.com>", "dos"),
+    }
+    gets = []
+
+    def _get(userId=None, id=None, format=None, metadataHeaders=None):
+        gets.append((id, format))
+        call = MagicMock()
+        call.execute.return_value = full[id]  # headers presentes en ambos formatos
+        return call
+
+    svc.users().messages().get.side_effect = _get
+    client = GmailClient(service=svc)
+    rechazados = []
+
+    def _filtro(msg_id, sender_email, subject):
+        if subject.lower().startswith("re:"):
+            rechazados.append((msg_id, sender_email))
+            return False
+        return True
+
+    emails = client.fetch_unread("Submission", unread_only=False,
+                                 metadata_filter=_filtro)
+
+    assert [e["id"] for e in emails] == ["m2"]
+    assert rechazados == [("m1", "ana@h2oins.com")]
+    # m1: SOLO metadata; m2: metadata + full.
+    assert ("m1", "full") not in gets
+    assert ("m1", "metadata") in gets
+    assert ("m2", "full") in gets
+
+
+def test_fetch_pagina_hasta_agotar_next_page_token():
+    """Sin is:unread el backlog puede exceder una página: se pagina."""
+    svc = MagicMock()
+    pages = [
+        {"messages": [{"id": "m1"}], "nextPageToken": "t2"},
+        {"messages": [{"id": "m2"}]},
+    ]
+    calls = []
+
+    def _list(**kw):
+        calls.append(kw)
+        call = MagicMock()
+        call.execute.return_value = pages[len(calls) - 1]
+        return call
+
+    svc.users().messages().list.side_effect = _list
+    by_id = {
+        "m1": _msg("m1", "Submission A", "a@x.com", "uno"),
+        "m2": _msg("m2", "Submission B", "b@x.com", "dos"),
+    }
+
+    def _get(userId=None, id=None, format=None, metadataHeaders=None):
+        call = MagicMock()
+        call.execute.return_value = by_id[id]
+        return call
+
+    svc.users().messages().get.side_effect = _get
+    client = GmailClient(service=svc)
+
+    emails = client.fetch_unread("Submission", unread_only=False)
+
+    assert [e["id"] for e in emails] == ["m1", "m2"]
+    assert "pageToken" not in calls[0]
+    assert calls[1]["pageToken"] == "t2"
+
+
 def test_send_threaded_builds_raw_with_cc_and_thread():
     svc = MagicMock()
     sent = {}
