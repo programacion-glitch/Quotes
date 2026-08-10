@@ -52,6 +52,8 @@ class RuleEngine:
         # Diana 2026-08-04 (respuestas ola PANTHER):
         "MAX_VEHICLE_AGE_YEARS", "MIN_VEHICLE_YEAR",
         "REQUIRES_MECH_INSPECTION", "MAX_RADIUS_MILES",
+        # Diana 2026-08-10: condados donde el programa no aplica (R-095).
+        "BLOCKED_COUNTIES",
     ]
 
     def __init__(self, excel_path: str, sheet_name: str = "REGLAS FINALES"):
@@ -147,6 +149,40 @@ class RuleEngine:
         rules = self._load_rules()
         normalized = tipo_negocio.strip().upper()
         return [r for r in rules if (r.get("TIPO_DE_NEGOCIO") or "").strip().upper() == normalized]
+
+    @staticmethod
+    def _check_blocked_counties(rule: Dict[str, Any], profile: QuoteProfile):
+        """(FailedRule|None, warning|None) segun el condado del ZIP physical.
+
+        Un ZIP que no sabemos mapear AVISA en vez de bloquear: rechazar un
+        riesgo por un dato que no tenemos es peor que mandarlo a revision
+        manual (Diana 2026-08-10, AMWINS).
+        """
+        raw = rule.get("BLOCKED_COUNTIES")
+        if not raw:
+            return None, None
+
+        from modules.tx_counties import county_for_zip
+
+        blocked = {c.strip().lower() for c in str(raw).split(",") if c.strip()}
+        zip_code = (getattr(profile.applicant, "physical_zip", None)
+                    or profile.applicant.zip_code)
+        county = county_for_zip(zip_code)
+
+        if county is None:
+            return None, (
+                f"No se pudo determinar el condado del zip physical "
+                f"{zip_code or 'N/D'} — verificar a mano: el programa no "
+                f"aplica en {str(raw).replace(',', ', ')}"
+            )
+        if county.lower() in blocked:
+            return FailedRule(
+                "BLOCKED_COUNTIES",
+                f"Programa inelegible en el condado {county} "
+                f"(zip physical {zip_code})",
+                county, f"fuera de {str(raw).replace(',', ', ')}",
+            ), None
+        return None, None
 
     def evaluate(self, profile: QuoteProfile, tipo_negocio: str) -> List[MGAEvaluation]:
         """
@@ -447,6 +483,15 @@ class RuleEngine:
                         shown, max_radius))
                 elif bounds:
                     passed.append("MAX_RADIUS_MILES")
+
+            # --- Condado del ZIP physical (Diana 2026-08-10, R-095) ---
+            county_fail, county_warn = self._check_blocked_counties(rule, profile)
+            if county_fail:
+                failures.append(county_fail)
+            elif county_warn:
+                warnings.append(county_warn)
+            elif rule.get("BLOCKED_COUNTIES"):
+                passed.append("BLOCKED_COUNTIES")
 
             # --- Informational columns (not evaluated) ---
             informational = {
