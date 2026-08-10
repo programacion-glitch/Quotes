@@ -18,10 +18,26 @@ from modules.rule_engine import MGAEvaluation, FailedRule
 # don't apply to them and shouldn't downgrade them to ineligible.
 WEB_AUTOMATION_MGAS = {"PROGRESSIVE", "GEICO"}
 
+# MGAs que se cotizan en SU portal pero todavia a mano (sin RPA). Diana
+# 2026-08-10: "añadir berkshire es una plataforma en línea". Comparten con las
+# de arriba lo unico que importa aca: los documentos se cargan en el portal, no
+# se reenvian por correo, asi que el guard de adjuntos no aplica (R-093).
+ONLINE_PLATFORM_MGAS = {"BERKSHIRE"}
+
 
 def _is_web_automation_mga(mga_name: str) -> bool:
     name = (mga_name or "").strip().upper()
     return any(wa in name for wa in WEB_AUTOMATION_MGAS)
+
+
+def _is_online_platform_mga(mga_name: str) -> bool:
+    name = (mga_name or "").strip().upper()
+    return any(p in name for p in ONLINE_PLATFORM_MGAS)
+
+
+def _is_portal_mga(mga_name: str) -> bool:
+    """Se cotiza en un portal (con o sin RPA) en vez de por correo."""
+    return _is_web_automation_mga(mga_name) or _is_online_platform_mga(mga_name)
 
 
 def _baseline_missing_docs(profile: QuoteProfile) -> List[FailedRule]:
@@ -56,9 +72,9 @@ def _baseline_eval_for_no_rules(mga_name: str, profile: QuoteProfile) -> MGAEval
     Build an MGAEvaluation for an MGA that has NO specific REGLAS rows,
     applying only baseline document requirements (or none for web-automation MGAs).
     """
-    # Web-automation carriers skip baseline doc checks — they quote directly
-    # from the Blue Quote data without requiring forwarded attachments.
-    if _is_web_automation_mga(mga_name):
+    # Los portales se saltan el guard de adjuntos: cotizan con los datos de la
+    # Blue Quote cargados en su sitio, sin que les reenviemos documentos.
+    if _is_portal_mga(mga_name):
         return MGAEvaluation(mga_name=mga_name, eligible=True)
     failures = _baseline_missing_docs(profile)
     return MGAEvaluation(
@@ -79,7 +95,7 @@ def _apply_baseline_to_eligible(ev: MGAEvaluation, profile: QuoteProfile) -> MGA
     """
     if not ev.eligible:
         return ev
-    if _is_web_automation_mga(ev.mga_name):
+    if _is_portal_mga(ev.mga_name):
         return ev
     missing = _baseline_missing_docs(profile)
     if not missing:
@@ -231,6 +247,18 @@ def _eligible_row(ev: MGAEvaluation) -> str:
         f'<td style="padding:12px 16px;border-bottom:1px solid #c6e9d2;">',
         f'<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:bold;color:#0d7a3f;">{ev.mga_name}</p>',
     ]
+    # Portales: se cotizan en su sitio, no por correo. Aclararlo evita que se
+    # espere un envio de documentos que nunca va a salir (Diana 2026-08-10).
+    if _is_portal_mga(ev.mga_name):
+        nota = ("Plataforma en linea &mdash; se cotiza en su portal; "
+                "el resultado final sale en la seccion RPA"
+                if _is_web_automation_mga(ev.mga_name) else
+                "Plataforma en linea &mdash; la cotizacion se hace en su "
+                "portal (hoy manualmente)")
+        lines.append(
+            f'<p style="margin:2px 0 0 0;font-family:Arial,Helvetica,sans-serif;'
+            f'font-size:11px;color:#5a6577;">{nota}</p>'
+        )
     # Warnings
     for w in ev.warnings:
         lines.append(
@@ -454,10 +482,18 @@ def build_analysis_email(
     # bloque separado "MGAs Web — Evaluación de Reglas" (_web_rules_row) que
     # explica el filtro PREVIO del rule engine, sin reintroducirlos en las
     # listas generales de elegibles/no-elegibles.
+    # (2026-08-10, Diana): se sacaban de la lista de elegibles Y del contador,
+    # asi que el correo de T&S Logistics decia "0 ELEGIBLE(S)" / "Ninguna MGA
+    # califica" mientras el bloque de arriba las daba por elegibles — la queja
+    # textual fue "en MGA elegible si aplica con Progressive, Geico y Berkshire
+    # mas sin embargo, no lo toma en cuenta". Ahora SI cuentan y se listan
+    # (R-093); el bloque separado se mantiene como explicacion, y un decline
+    # real del RPA sigue mandando en la seccion RPA.
     web_evals = [ev for ev in relevant if _is_web_automation_mga(ev.mga_name)]
     relevant = [ev for ev in relevant if not _is_web_automation_mga(ev.mga_name)]
 
     eligible = [ev for ev in relevant if ev.eligible]
+    eligible += [ev for ev in web_evals if ev.eligible]
     ineligible_all = [ev for ev in relevant if not ev.eligible]
 
     # Split ineligibles: those failing ONLY by missing docs go to the "fixes"
@@ -514,6 +550,17 @@ def build_analysis_email(
     elif cdl_missing:
         warnings_list.append(
             "<strong>Falta CDL</strong> &mdash; requerido para la cotizacion final con los MGAs."
+        )
+    # Limite(s) de AL adicionales pedidos por el agente (segunda Blue Quote o
+    # pedido en el cuerpo del correo). El bot cotiza UNO; el resto tiene que
+    # verse, no perderse (R-096, Diana 2026-08-10).
+    extra_al = list(getattr(profile, "requested_extra_al_limits", []) or [])
+    if extra_al:
+        cotizado = profile.coverages_detail.bodily_injury_limit or "el de la Blue Quote"
+        warnings_list.append(
+            f"<strong>Se pidio mas de un limite de AL:</strong> el bot cotiza "
+            f"{cotizado} y ademas se solicito {', '.join(extra_al)}. "
+            f"La(s) cotizacion(es) del limite adicional hay que hacerla(s) a mano."
         )
     if current_carrier_norm:
         hit_names = ", ".join(ev.mga_name for ev in current_carrier_hits) if current_carrier_hits else "ninguna coincidencia"

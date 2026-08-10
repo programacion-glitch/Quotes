@@ -798,6 +798,34 @@ class DocumentAIExtractor:
 
     # ---- Blue Quote helpers ----
 
+    @staticmethod
+    def _extra_al_limits(extra_attachments: list, primary_limit) -> list:
+        """Limites de AL de las Blue Quotes duplicadas que difieren del principal.
+
+        Best-effort: si una no se puede leer, se ignora — el objetivo es no
+        perder un pedido, no romper la extraccion (R-096).
+        """
+        found = []
+        primary = (primary_limit or "").strip().upper()
+        for att in extra_attachments or []:
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    tmp.write(att["data"])
+                    tmp_path = tmp.name
+                try:
+                    data = BlueQuotePDFExtractor(tmp_path).extract()
+                finally:
+                    Path(tmp_path).unlink(missing_ok=True)
+            except Exception as e:
+                print(f"    Blue Quote adicional '{att.get('filename')}' "
+                      f"no se pudo leer: {e}")
+                continue
+            raw = (data.get("coverages") or {}).get("auto_liability_limits")
+            limit = str(raw).strip() if raw not in (None, "") else None
+            if limit and limit.upper() != primary and limit not in found:
+                found.append(limit)
+        return found
+
     def _is_blue_quote_sufficient(
         self,
         applicant: ApplicantProfile,
@@ -890,6 +918,7 @@ class DocumentAIExtractor:
         # No AI fallback — avoids misclassifying unrelated docs as CDL, Loss Run, etc.
         classified: dict = {}  # doc_type -> attachment
         unclassified: list = []
+        duplicate_blue_quotes: list = []
 
         for att in attachments:
             filename = att["filename"]
@@ -907,7 +936,13 @@ class DocumentAIExtractor:
                 continue
 
             if matched_type in classified:
-                # Slot already taken — keep the first match
+                # Slot already taken — keep the first match.
+                # OJO: una segunda Blue Quote no siempre es una copia. En T&S
+                # Logistics venian '...BLUE QUOTE.pdf' ($1M CSL) y
+                # '...BLUE QUOTE 750K AL.pdf' ($750K CSL): descartarla sin mirar
+                # borro el segundo limite que el agente pedia (R-096).
+                if matched_type == "BLUE QUOTE":
+                    duplicate_blue_quotes.append(att)
                 print(f"    Skipped (duplicate {matched_type}): {filename}")
                 continue
 
@@ -967,6 +1002,15 @@ class DocumentAIExtractor:
                 confidence_flags.append(ConfidenceFlag(
                     "blue_quote",
                     "Blue Quote could not be extracted by form parser or AI"))
+
+            # Blue Quotes adicionales: solo interesa si piden OTRO limite de AL.
+            profile.requested_extra_al_limits = self._extra_al_limits(
+                duplicate_blue_quotes,
+                profile.coverages_detail.bodily_injury_limit,
+            )
+            for lim in profile.requested_extra_al_limits:
+                print(f"    Limite de AL adicional pedido: {lim} "
+                      f"(se cotiza {profile.coverages_detail.bodily_injury_limit})")
 
         # Step 3: Extract CDL (AI) — update driver-level data
         if "CDL" in classified:

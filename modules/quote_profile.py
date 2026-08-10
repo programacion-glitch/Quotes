@@ -204,6 +204,12 @@ class QuoteProfile:
     app: AppProfile = field(default_factory=AppProfile)
     documents_present: List[str] = field(default_factory=list)
     extraction_confidence: ExtractionConfidence = field(default_factory=ExtractionConfidence)
+    # Limites de AL adicionales que el agente pidio y que NO son el de
+    # coverages_detail.bodily_injury_limit: una segunda Blue Quote con otro
+    # limite, o un pedido explicito en el cuerpo del correo ("solicitar una
+    # quote de $750,000 tambien"). Se cotiza uno solo, pero el pedido tiene que
+    # quedar a la vista en el analisis en vez de perderse (R-096).
+    requested_extra_al_limits: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
@@ -246,4 +252,6 @@ class QuoteProfile:
             app=AppProfile(**_only_fields(AppProfile, data.get("app", {}) or {})),
             documents_present=list(data.get("documents_present", []) or []),
             extraction_confidence=extraction_confidence,
+            requested_extra_al_limits=list(
+                data.get("requested_extra_al_limits", []) or []),
         )

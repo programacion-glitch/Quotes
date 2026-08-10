@@ -86,8 +86,13 @@ def test_web_automation_mgas_excluded_from_rule_sections():
     assert "GEICO" in web_section, "GEICO debe explicarse en el bloque MGAs Web"
     assert "PROGRESSIVE" in web_section, "PROGRESSIVE debe explicarse en el bloque MGAs Web"
 
-    assert "GEICO" not in eligible_section, "GEICO no debe salir en la lista general de elegibles"
-    assert "PROGRESSIVE" not in eligible_section, "PROGRESSIVE no debe salir en la lista general de elegibles"
+    # Hasta 2026-08-10 se exigia lo contrario (fuera de la lista de elegibles).
+    # Diana lo corrigio sobre T&S Logistics: sacarlas de la lista dejaba el
+    # correo diciendo "0 ELEGIBLE(S)" / "Ninguna MGA califica" al lado de un
+    # bloque que las daba por elegibles. Ahora cuentan y se listan (R-093);
+    # el bloque de arriba queda como explicacion, no como reemplazo.
+    assert "GEICO" in eligible_section, "GEICO elegible por reglas debe contarse"
+    assert "PROGRESSIVE" in eligible_section, "PROGRESSIVE elegible por reglas debe contarse"
     assert "GEICO" not in ineligible_section, "GEICO no debe salir en la lista general de no-elegibles"
     assert "PROGRESSIVE" not in ineligible_section, "PROGRESSIVE no debe salir en la lista general de no-elegibles"
 

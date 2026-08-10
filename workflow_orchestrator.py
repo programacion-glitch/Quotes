@@ -7,6 +7,7 @@ Coordinates the complete email auto-response workflow.
 import sys
 import json
 import hashlib
+import re
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -156,6 +157,17 @@ class QuoteWorkflowOrchestrator:
         except Exception as e:
             print(f"  Error: {e}")
             return
+
+        # El agente puede pedir un limite de AL extra en el CUERPO del correo,
+        # no solo con una segunda Blue Quote: T&S Logistics traia "POR FAVOR
+        # SOLICITAR UNA QUOTE DE $750,000 TAMBIEN" (R-096).
+        for lim in self._al_limits_from_body(
+            email_data.get("body", ""),
+            profile.coverages_detail.bodily_injury_limit,
+        ):
+            if lim not in profile.requested_extra_al_limits:
+                profile.requested_extra_al_limits.append(lim)
+                print(f"  Limite de AL adicional pedido en el correo: {lim}")
 
         # Override new-venture flag from subject (authoritative signal from sender)
         # — but a REAL current_carrier in the Blue Quote is HARD EVIDENCE that
@@ -475,21 +487,92 @@ class QuoteWorkflowOrchestrator:
         subject = email_data.get("subject", "")
         return "sub-" + hashlib.sha1(f"{subject}|{usdot}".encode("utf-8")).hexdigest()[:16]
 
+    # Gmail entrega TODA imagen inline (logos y firmas del remitente) con el
+    # mismo filename 'noname'. En T&S Logistics eso significo 5 partes con
+    # nombre identico: se escribieron sobre la misma ruta —4 se perdieron— y la
+    # lista quedo con ese path repetido 5 veces, asi que el analisis le llego a
+    # Diana con 5 copias de un logo de 7 KB llamado 'noname' (R-094).
+    _INLINE_JUNK_NAMES = {"noname", "attachment", "image001", "image002",
+                          "image003", "image004", "image005"}
+
+    @classmethod
+    def _is_inline_junk(cls, filename: str, content_type: str) -> bool:
+        """Firma/logo incrustado en el cuerpo, no un documento del cliente."""
+        stem = Path(filename or "").stem.strip().lower()
+        if stem in cls._INLINE_JUNK_NAMES:
+            return True
+        # Imagen sin extension: Gmail no supo nombrarla -> no es un documento.
+        return (content_type or "").startswith("image/") and \
+            not Path(filename or "").suffix
+
     def _persist_attachments(self, submission_id: str, attachments: list) -> list:
-        """Escribe los adjuntos originales a disco y devuelve sus paths."""
+        """Escribe los adjuntos del cliente a disco y devuelve sus paths.
+
+        Descarta las imagenes inline de la firma y garantiza un path unico por
+        adjunto: el nombre que puso el cliente ES informacion de negocio
+        ('20260805 BLUE QUOTE 750K AL.pdf' dice que limite pedir), asi que se
+        respeta tal cual y solo se desambigua con sufijo si se repite.
+        """
         safe = "".join(c if c.isalnum() else "_" for c in submission_id)[:40]
         out_dir = SUBMISSIONS_DIR / safe
         out_dir.mkdir(parents=True, exist_ok=True)
         paths = []
+        used = set()
         for att in attachments:
             data = att.get("data")
-            fname = att.get("filename") or "attachment.pdf"
             if not data:
                 continue
-            p = out_dir / fname
+            fname = att.get("filename") or "attachment.pdf"
+            if self._is_inline_junk(fname, att.get("content_type", "")):
+                print(f"  Adjunto inline ignorado (firma del remitente): {fname}")
+                continue
+            stem, suffix = Path(fname).stem, Path(fname).suffix
+            candidate = fname
+            n = 2
+            while candidate in used:
+                candidate = f"{stem} ({n}){suffix}"
+                n += 1
+            used.add(candidate)
+            p = out_dir / candidate
             p.write_bytes(data)
             paths.append(str(p))
         return paths
+
+    # "SOLICITAR UNA QUOTE DE $750,000 TAMBIEN" / "quote de 1M tambien".
+    # Se exige la palabra quote/cotiza/limite cerca para no confundir el monto
+    # con un precio objetivo, un valor de camion o un limite de cargo.
+    _AL_REQUEST_RE = re.compile(
+        r"(?:quote|cotiz\w*|l[ií]mite|limit)[^.\n]{0,40}?"
+        r"\$\s?(\d{1,3}(?:[,.]\d{3})+|\d+(?:\.\d+)?\s?[MK])",
+        re.IGNORECASE)
+
+    @classmethod
+    def _al_limits_from_body(cls, body: str, primary_limit) -> list:
+        """Limites de AL pedidos en el cuerpo del correo, normalizados al
+        formato de la Blue Quote ('$750K CSL'), excluyendo el que ya se cotiza."""
+        if not body:
+            return []
+        text = re.sub(r"<[^>]+>", " ", body)
+        primary = (primary_limit or "").strip().upper()
+        out = []
+        for raw in cls._AL_REQUEST_RE.findall(text):
+            token = raw.replace(" ", "").upper()
+            if token.endswith("M"):
+                thousands = int(float(token[:-1]) * 1000)
+            elif token.endswith("K"):
+                thousands = int(float(token[:-1]))
+            else:
+                digits = re.sub(r"[^\d]", "", token)
+                if len(digits) < 5:          # < $10.000: no es un limite de AL
+                    continue
+                thousands = int(digits) // 1000
+            if thousands < 100:              # ruido (montos chicos)
+                continue
+            label = (f"${thousands // 1000}M CSL" if thousands % 1000 == 0
+                     and thousands >= 1000 else f"${thousands}K CSL")
+            if label.upper() != primary and label not in out:
+                out.append(label)
+        return out
 
     def _effective_date_from_subject(self, subject: str):
         import re
