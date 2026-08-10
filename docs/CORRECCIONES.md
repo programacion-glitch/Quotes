@@ -32,6 +32,65 @@ Convenciones de fuente en el ledger/correo: `RULE`/`MATCHED` = confiable;
 
 ## Changelog de ajustes
 
+### 2026-08-10 — Ola de Diana sobre T&S Logistics (R-093…R-096)
+
+Quote de referencia: **T&S Logistics** (New Venture, USDOT 9731476, job 29).
+
+**1. El correo se contradecía a sí mismo (R-093).** Encabezado *"0 ELEGIBLE(S)"*
+y *"Ninguna MGA califica para esta cotizacion"*, dos bloques debajo de decir
+que GEICO y PROGRESSIVE eran *"Elegible por reglas"*. El rule engine estaba
+bien —devuelve Progressive/GEICO/Berkshire elegibles—; el builder las sacaba
+de la lista **y del contador**. Ahora cuentan y se listan como *plataforma en
+línea*. Berkshire entra al mismo grupo: se cotiza en su portal, así que el
+guard de documentos-por-correo ya no la baja a no elegible.
+Reemplaza el criterio de 2026-06-25; un decline real del RPA sigue mandando
+en la sección RPA.
+
+**2. Adjuntos basura (R-094).** Gmail nombra `noname` a toda imagen inline.
+Las 5 de la firma del remitente se escribieron sobre la **misma ruta** (4 se
+perdieron) y la lista quedó con ese path repetido 5 veces: Diana recibió 8
+adjuntos, 5 de ellos el mismo logo de 7 KB. Ahora las inline no se reenvían y
+los documentos del cliente conservan su nombre (desambiguado con sufijo si se
+repite) — el nombre **es** información: `BLUE QUOTE 750K AL.pdf` dice qué
+límite pedir.
+
+**3. Se pidieron DOS límites de AL y se perdió uno (R-096).** Venían
+`20260805 BLUE QUOTE.pdf` (**$1M CSL**) y `20260805 BLUE QUOTE 750K AL.pdf`
+(**$750K CSL**), y el cuerpo del correo de Jorge decía en mayúsculas *"POR
+FAVOR SOLICITAR UNA QUOTE DE $750,000 TAMBIÉN"*. El clasificador descartó la
+segunda como duplicada (`Skipped (duplicate BLUE QUOTE)`) y el pedido
+desapareció. Ahora se detecta por **las dos vías** (segunda Blue Quote + regex
+sobre el cuerpo) y sale como aviso destacado. ⚠️ Se cotiza **uno solo**:
+falta decidir con Diana si el bot debe cotizar ambos por sí mismo.
+
+**4. AMWINS: canal y condados (R-095).** Test drive se tramita **por Canal**,
+no es una ruta aparte. Y el programa es inelegible según el condado del zip
+**physical**: Brazoria, Fort Bend, Galveston, Harris, Montgomery, Hidalgo,
+Starr, Cameron y Beaumont. Nueva columna `BLOCKED_COUNTIES` + mapa
+`modules/tx_counties.py`. Criterio: un zip que no se puede mapear **avisa**,
+no bloquea. ⚠️ **Beaumont es ciudad** (condado Jefferson): se bloquean los zips
+de la ciudad, falta confirmar si Diana quería el condado entero.
+
+**5. Datos del checklist.** JENCAP eliminada (18 filas — ya no hay mercado).
+GSIAY: enganche 25% → **20%** + registraciones explícitas. Star Mutual: **no
+aplica a New Venture** + nota de que depende del **% OOS** de conductores y
+vehículos. Atribución `Diana AAAA-MM-DD (...)` quitada de **318 celdas** de
+comentarios (la trazabilidad vive acá y en el ledger, no en el texto que ve
+el usuario).
+
+⚠️ **El Excel corregido NO está en Drive todavía** y `REGLAS_SYNC_ENABLED=true`:
+al arrancar, el sync baja el master y **pisa estos cambios**. Subirlo antes de
+levantar el contenedor.
+
+**Hallazgos operativos de la misma revisión (no son de la ola):**
+- El contenedor lleva 2 días abajo: `Exited (137)`, pero `OOMKilled: false` y
+  `RestartPolicy=unless-stopped` → lo **pararon**, no crasheó.
+- El guard descartó submissions **originales** (no "Re:") de `juanfelipe@`,
+  `juandavid@`, `sirley@` y `brandon@`: están dados de alta solo en el grupo
+  `new_venture`, y cuando mandan una submission sin "New Venture" en el asunto
+  el guard los busca en `rt`, donde no están. `cindyr@` no está en ninguna
+  lista. Decisión de negocio — no se tocó.
+
 ### 2026-08-06 (tarde) — Progressive: `USDOT: N/A` de New Venture mataba el flujo
 
 **Síntoma reportado:** "Progressive no loguea". **Realidad:** loguea perfecto
