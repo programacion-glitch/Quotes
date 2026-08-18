@@ -11,9 +11,9 @@ rule engine emite un AVISO para revisar a mano — nunca un bloqueo silencioso.
 Preferimos dejar pasar un riesgo que rechazarlo por un dato que no tenemos.
 
 OJO — Beaumont es CIUDAD (condado Jefferson), no condado. Se bloquean los ZIP
-de la ciudad de Beaumont, que es la lectura literal de lo que pidio Diana;
-bloquear Jefferson entero (Port Arthur, Nederland, Groves, Port Neches) seria
-mas amplio que lo pedido. Pendiente de confirmar con ella.
+de la ciudad de Beaumont y nada mas: CONFIRMADO 2026-08-17 ("solo bloquea
+Beaumont"). Port Arthur, Nederland, Groves y Port Neches estan en el condado
+Jefferson y SI son elegibles — no agregarlos.
 """
 from __future__ import annotations
 

@@ -64,7 +64,8 @@ class QuoteQueueStore:
                     screenshot_path TEXT,
                     error TEXT,
                     created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL
+                    updated_at REAL NOT NULL,
+                    al_limit TEXT
                 );
                 CREATE TABLE IF NOT EXISTS submissions (
                     submission_id TEXT PRIMARY KEY,
@@ -86,11 +87,13 @@ class QuoteQueueStore:
                 """
             )
             self._conn.commit()
-            # Migración aditiva: quote_jobs ya existe en producción sin esta columna.
-            try:
-                self._conn.execute("ALTER TABLE quote_jobs ADD COLUMN decisions_json TEXT")
-            except sqlite3.OperationalError:
-                pass  # columna ya existe
+            # Migraciones aditivas: quote_jobs ya existe en producción sin
+            # estas columnas.
+            for col in ("decisions_json TEXT", "al_limit TEXT"):
+                try:
+                    self._conn.execute(f"ALTER TABLE quote_jobs ADD COLUMN {col}")
+                except sqlite3.OperationalError:
+                    pass  # columna ya existe
             self._conn.commit()
 
     @staticmethod
@@ -114,6 +117,7 @@ class QuoteQueueStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             decisions_json=row["decisions_json"],
+            al_limit=row["al_limit"],
         )
 
     def _get_job_locked(self, job_id: int) -> Optional[QuoteJob]:
@@ -122,15 +126,19 @@ class QuoteQueueStore:
         ).fetchone()
         return self._row_to_job(row) if row else None
 
-    def enqueue(self, submission_id, mga, profile_json, effective_date, usdot) -> int:
+    def enqueue(self, submission_id, mga, profile_json, effective_date, usdot,
+                al_limit=None) -> int:
+        """Encola una cotización. `al_limit` fija el límite de Auto Liability
+        de ESTE job (R-097): cuando el agente pide más de uno, la misma
+        submission encola un job por límite. None = el del perfil."""
         now = time.time()
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO quote_jobs (submission_id, mga, profile_json, "
-                "effective_date, usdot, status, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "effective_date, usdot, status, created_at, updated_at, al_limit) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (submission_id, mga, profile_json, effective_date, usdot,
-                 JobStatus.PENDING.value, now, now),
+                 JobStatus.PENDING.value, now, now, al_limit),
             )
             self._conn.commit()
             return cur.lastrowid
@@ -330,14 +338,19 @@ class QuoteQueueStore:
             self._conn.commit()
 
     def recently_quoted(self, mga, usdot, since_epoch: float) -> int:
-        """Cuántos jobs se crearon para (mga, usdot) desde since_epoch.
+        """Cuántas SUBMISSIONS pidieron (mga, usdot) desde since_epoch.
 
         Para honrar 'no re-cotizar el mismo USDOT >3x/día': el caller pasa
         since_epoch = now - 86400 y chequea el conteo < 3 antes de encolar.
+
+        Cuenta submissions y no jobs porque desde R-097 una sola submission
+        encola un job por límite de AL pedido: contando jobs, dos submissions
+        de dos límites (4 jobs) pasarían el tope y la segunda se descartaría
+        sola, que es justo el pedido del agente.
         """
         with self._lock:
             row = self._conn.execute(
-                "SELECT COUNT(*) FROM quote_jobs "
+                "SELECT COUNT(DISTINCT submission_id) FROM quote_jobs "
                 "WHERE mga=? AND usdot=? AND created_at>=?",
                 (mga, usdot, since_epoch),
             ).fetchone()

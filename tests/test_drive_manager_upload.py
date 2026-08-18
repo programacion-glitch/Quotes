@@ -146,3 +146,57 @@ def test_upload_indication_skips_if_already_exists(tmp_path):
         carrier="PROGRESSIVE", when=datetime(2026, 6, 25),
     )
     assert res == "exists"
+
+
+# ---------------------------------------------------------------------------
+# Dos límites de AL en la misma cotización (R-097)
+# ---------------------------------------------------------------------------
+
+def test_el_limite_de_al_entra_al_nombre_de_la_indicacion(tmp_path):
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4 test")
+    tree = {"PARENT": [_folder("c1", "T&S LOGISTICS USDOT 9731476")],
+            "c1": [_folder("q1", "2) Quotes")], "q1": []}
+    dm = _dm(tree)
+    dm.upload_quote_indication(
+        "T&S LOGISTICS", "9731476", str(pdf), carrier="PROGRESSIVE",
+        when=datetime(2026, 8, 17), al_limit="$1M CSL",
+    )
+    up = [c for c in dm.service.files().created if c["media"] is not None]
+    assert up[0]["name"] == "20260817 - Indications Progressive AL 1M.pdf"
+
+
+def test_dos_limites_del_mismo_carrier_el_mismo_dia_ya_no_chocan(tmp_path):
+    """Antes de R-097 el segundo PDF se descartaba con 'ya existe' porque el
+    nombre no llevaba el límite: Diana recibía una sola indicación."""
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4 test")
+    tree = {"PARENT": [_folder("c1", "T&S LOGISTICS USDOT 9731476")],
+            "c1": [_folder("q1", "2) Quotes")], "q1": []}
+    dm = _dm(tree)
+    for limite in ("$1M CSL", "$750K CSL"):
+        res = dm.upload_quote_indication(
+            "T&S LOGISTICS", "9731476", str(pdf), carrier="PROGRESSIVE",
+            when=datetime(2026, 8, 17), al_limit=limite,
+        )
+        assert res != "exists"
+    nombres = [c["name"] for c in dm.service.files().created
+               if c["media"] is not None]
+    assert nombres == ["20260817 - Indications Progressive AL 1M.pdf",
+                       "20260817 - Indications Progressive AL 750K.pdf"]
+
+
+def test_sin_limite_el_nombre_no_cambia(tmp_path):
+    """Regresión: las cotizaciones de un solo límite conservan el nombre que
+    Diana ya conoce."""
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4 test")
+    tree = {"PARENT": [_folder("c1", "1 FMB FREIGHT LLC USDOT 2468083")],
+            "c1": [_folder("q1", "2) Quotes")], "q1": []}
+    dm = _dm(tree)
+    dm.upload_quote_indication(
+        "1 FMB FREIGHT LLC", "2468083", str(pdf), carrier="PROGRESSIVE",
+        when=datetime(2026, 6, 25),
+    )
+    up = [c for c in dm.service.files().created if c["media"] is not None]
+    assert up[0]["name"] == "20260625 - Indications Progressive.pdf"

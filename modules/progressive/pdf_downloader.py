@@ -16,6 +16,8 @@ from typing import Optional, Union
 
 from playwright.async_api import Page
 
+from modules.al_limits import al_label
+
 # Caracteres inválidos en nombres de archivo (Windows es el más restrictivo).
 _INVALID_FS_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
@@ -24,10 +26,15 @@ def quote_pdf_basename(
     business_name: Optional[str],
     quote_number: Optional[str],
     when: Optional[datetime] = None,
+    al_limit: Optional[str] = None,
 ) -> str:
     """Basename (sin extensión) del PDF oficial según R-086 (Diana 2026-08-03):
     la cotización se guarda con la fecha AAAA-MM-DD primero, luego el negocio
     y el número de quote. Ej: '2026-08-03 PANTHER EXPRESS Progressive CA117638002'.
+
+    Con `al_limit` se agrega el límite de Auto Liability al final ('... AL
+    750K'), que es lo que distingue las dos indicaciones cuando el agente pide
+    más de un límite (R-097). El formato de R-086 no se toca.
     """
     when = when or datetime.now()
     parts = [when.strftime("%Y-%m-%d")]
@@ -35,6 +42,9 @@ def quote_pdf_basename(
     if biz:
         parts.append(biz)
     parts.append(f"Progressive {(quote_number or '').strip() or 'sin-numero'}")
+    al = al_label(al_limit)
+    if al:
+        parts.append(al)
     return " ".join(parts)
 
 

@@ -32,7 +32,11 @@ TERMINAL_STATUSES = {JobStatus.QUOTED, JobStatus.FAILED, JobStatus.HALTED}
 
 @dataclass
 class QuoteJob:
-    """Una fila de quote_jobs: una cotización (submission × MGA)."""
+    """Una fila de quote_jobs: una cotización (submission × MGA × límite de AL).
+
+    `al_limit` es el límite de Auto Liability que le toca cotizar a ESTE job.
+    None = el que traiga el perfil (comportamiento previo a R-097).
+    """
     id: int
     submission_id: str
     mga: str
@@ -51,3 +55,4 @@ class QuoteJob:
     created_at: float = 0.0
     updated_at: float = 0.0
     decisions_json: Optional[str] = None
+    al_limit: Optional[str] = None

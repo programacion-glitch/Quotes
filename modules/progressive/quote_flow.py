@@ -232,14 +232,18 @@ class QuoteFlow:
             # el wizard en RATES pase lo que pase.
             # R-086 (Diana 2026-08-03): el archivo empieza con la fecha
             # AAAA-MM-DD, luego el negocio y el número de quote.
+            # R-097: cuando el agente pide más de un límite de AL se cotiza
+            # cada uno por separado, así que el límite entra al nombre — si no,
+            # las dos indicaciones del mismo día chocan y Drive descarta una.
             _pdf_name = quote_pdf_basename(
                 fields.business_name,
                 result.price.quote_number if result.price else None,
+                al_limit=fields.coverages.bodily_injury_limit,
             )
             decision_ledger.record(
                 "Nombre del PDF de la cotización", f"{_pdf_name}.pdf",
                 page="RATES → Print/Send", source="RULE", rule_id="R-086",
-                note="fecha AAAA-MM-DD + negocio + quote number")
+                note="fecha AAAA-MM-DD + negocio + quote number + límite de AL")
             result.pdf_path = await rates_page.download_quote_pdf(_pdf_name)
             if not result.pdf_path:
                 result.warnings.append(

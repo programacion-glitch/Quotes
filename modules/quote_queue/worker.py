@@ -11,7 +11,7 @@ PDFs adjuntos.
 import json
 import os
 import time
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 from modules import decision_ledger
 from modules.quote_profile import QuoteProfile
@@ -99,6 +99,12 @@ class QuoteWorker:
 
         try:
             profile = QuoteProfile.from_dict(json.loads(job.profile_json))
+            # Todos los jobs de una submission llevan el MISMO perfil; lo que
+            # los distingue es el límite de AL que le toca a cada uno (R-097).
+            # Se aplica acá, en un solo punto: de ahí lo leen Progressive
+            # (CoveragesRatesPage) y GEICO (_bi_limits_to_geico) sin cambios.
+            if job.al_limit:
+                profile.coverages_detail.bodily_injury_limit = job.al_limit
             result = self.create_quote(profile, job.effective_date)
         except Exception as e:  # falla dura del cliente RPA
             decisions = decision_ledger.entries()
@@ -132,7 +138,7 @@ class QuoteWorker:
         )
         # Subir la indicación (PDF) a la carpeta del cliente en Drive.
         if status == "quoted" and pdf_path:
-            self._upload_indication(profile, pdf_path)
+            self._upload_indication(profile, pdf_path, job.al_limit)
         self.maybe_send_submission_email(job.submission_id)
         return True
 
@@ -156,7 +162,8 @@ class QuoteWorker:
             self._drive_failed = True
             return None
 
-    def _upload_indication(self, profile, pdf_path: str) -> None:
+    def _upload_indication(self, profile, pdf_path: str,
+                           al_limit: Optional[str] = None) -> None:
         if not self._upload_enabled:
             return
         try:
@@ -168,6 +175,7 @@ class QuoteWorker:
                 usdot=profile.applicant.usdot,
                 pdf_path=pdf_path,
                 carrier=self.mga,
+                al_limit=al_limit,
             )
         except Exception as e:  # Drive nunca debe tumbar el flujo
             print(f"    [worker:{self.mga}] drive upload warn: {e}")
@@ -201,7 +209,7 @@ class QuoteWorker:
             RpaQuoteOutcome(
                 mga=j.mga, status=j.status, reason=(j.error or "error"),
                 premium=j.premium, pdf_path=j.pdf_path,
-                decisions=_decisions_for(j),
+                decisions=_decisions_for(j), al_limit=j.al_limit,
             )
             for j in jobs
         ]

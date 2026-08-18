@@ -36,6 +36,8 @@ from typing import Union
 
 from playwright.async_api import Page
 
+from modules.al_limits import al_label
+
 
 # JavaScript executed inside the page context. Uses fetch() with
 # credentials:'include' so the authenticated sales.geico.com cookies are sent.
@@ -156,16 +158,25 @@ async def download_geico_pdf(
     }
 
 
-def quote_pdf_filename(business_name: str, quote_number: str | None = None) -> str:
+def quote_pdf_filename(business_name: str, quote_number: str | None = None,
+                       al_limit: str | None = None) -> str:
     """Return a filesystem-safe filename like 'geico_quote_HUMBERTO_VILLARREAL.pdf'
     or 'geico_quote_HUMBERTO_VILLARREAL_CA116960411.pdf' if a quote number is
     available. Spaces and punctuation collapse to underscores.
+
+    With `al_limit` the Auto Liability limit is appended ('..._AL_750K.pdf'):
+    that suffix is what tells the two indications apart when the agent asks
+    for more than one limit (R-097).
     """
     name = re.sub(r"[^A-Za-z0-9]+", "_", (business_name or "unknown").strip()).strip("_")
     if not name:
         name = "unknown"
+    parts = [f"geico_quote_{name}"]
     if quote_number:
         safe_qn = re.sub(r"[^A-Za-z0-9]+", "_", quote_number.strip()).strip("_")
         if safe_qn:
-            return f"geico_quote_{name}_{safe_qn}.pdf"
-    return f"geico_quote_{name}.pdf"
+            parts.append(safe_qn)
+    al = al_label(al_limit)
+    if al:
+        parts.append(al.replace(" ", "_"))
+    return "_".join(parts) + ".pdf"

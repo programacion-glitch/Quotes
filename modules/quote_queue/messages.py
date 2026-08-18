@@ -26,6 +26,7 @@ class RpaQuoteOutcome:
     pdf_path: Optional[str] = None
     detail: Optional[str] = None     # detalle técnico — NUNCA se muestra al agente
     decisions: Optional[List[dict]] = None   # entradas del decision_ledger (solo quoted)
+    al_limit: Optional[str] = None   # límite de AL de ESTA cotización (R-097)
 
 
 def _is_dudosa(d: dict) -> bool:
@@ -116,10 +117,15 @@ def _row(outcome: "RpaQuoteOutcome") -> str:
     decisions_html = ""
     if quoted and outcome.decisions:
         decisions_html = _decisions_table(outcome.decisions)
+    # Con dos cotizaciones de la MISMA MGA (un límite de AL cada una, R-097),
+    # el límite es lo único que distingue las filas.
+    titulo_limite = (
+        f' <span style="font-weight:normal;color:#5a6577;">'
+        f'&mdash; AL {outcome.al_limit}</span>' if outcome.al_limit else "")
     return (
         f'<tr><td style="padding:12px 16px;border-bottom:1px solid #e8eaee;">'
         f'<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;'
-        f'font-weight:bold;color:{accent};">{outcome.mga}</p>'
+        f'font-weight:bold;color:{accent};">{outcome.mga}{titulo_limite}</p>'
         f'<p style="margin:4px 0 0 0;font-family:Arial,Helvetica,sans-serif;'
         f'font-size:13px;color:#0a1628;line-height:1.5;">{humanize(outcome)}</p>'
         f'{decisions_html}'

@@ -186,7 +186,7 @@ def test_try_claim_submission_email_creates_row_if_absent(store):
     assert store.try_claim_submission_email("sub-2") is False
 
 
-def test_recently_quoted_counts_jobs_in_window(store):
+def test_recently_quoted_counts_submissions_in_window(store):
     now = __import__("time").time()
     store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111")
     store.enqueue("sub-2", "PROGRESSIVE", "{}", None, "111")
@@ -197,6 +197,51 @@ def test_recently_quoted_counts_jobs_in_window(store):
     assert store.recently_quoted("GEICO", "111", now - 86400) == 0
     # ventana en el futuro → nada cuenta
     assert store.recently_quoted("PROGRESSIVE", "111", now + 86400) == 0
+
+
+def test_recently_quoted_no_penaliza_pedir_dos_limites(store):
+    """El guard corta a las 3 cotizaciones del mismo USDOT por dia. Desde
+    R-097 una sola submission encola un job POR LIMITE de AL, asi que contar
+    jobs haria que dos submissions con dos limites (4 jobs) pasaran el tope y
+    la segunda se descartara sola. Se cuenta la submission, no el job."""
+    now = __import__("time").time()
+    store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111", al_limit="$1M CSL")
+    store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111", al_limit="$750K CSL")
+    assert store.recently_quoted("PROGRESSIVE", "111", now - 86400) == 1
+
+
+def test_el_job_recuerda_que_limite_de_al_le_toco(store):
+    """El worker lo lee para cotizar ESE limite y para nombrar el PDF."""
+    store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111", al_limit="$750K CSL")
+    assert store.get_jobs("sub-1")[0].al_limit == "$750K CSL"
+
+
+def test_sin_limite_explicito_el_job_no_inventa_ninguno(store):
+    """Retrocompatible: los jobs viejos (y las MGAs sin varios limites)
+    cotizan el limite que traiga el perfil."""
+    store.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111")
+    assert store.get_jobs("sub-1")[0].al_limit is None
+
+
+def test_la_columna_al_limit_se_agrega_a_una_db_que_ya_existe(tmp_path):
+    """quote_jobs ya corre en produccion sin esta columna: abrir la DB vieja
+    no puede tumbar el worker ni perder los jobs encolados."""
+    db = tmp_path / "vieja.db"
+    viejo = QuoteQueueStore(db)
+    viejo.enqueue("sub-0", "PROGRESSIVE", "{}", None, "111")
+    viejo._conn.execute("ALTER TABLE quote_jobs DROP COLUMN al_limit")
+    viejo._conn.commit()
+    viejo.close()
+
+    nuevo = QuoteQueueStore(db)
+    try:
+        jobs = nuevo.get_jobs("sub-0")
+        assert len(jobs) == 1 and jobs[0].al_limit is None
+        nuevo.enqueue("sub-1", "PROGRESSIVE", "{}", None, "111",
+                      al_limit="$750K CSL")
+        assert nuevo.get_jobs("sub-1")[0].al_limit == "$750K CSL"
+    finally:
+        nuevo.close()
 
 
 def test_concurrent_claims_never_double_claim(store):

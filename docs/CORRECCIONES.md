@@ -32,6 +32,64 @@ Convenciones de fuente en el ledger/correo: `RULE`/`MATCHED` = confiable;
 
 ## Changelog de ajustes
 
+### 2026-08-17 — Respuestas a las dos preguntas abiertas de la ola anterior (R-097)
+
+Quote de referencia: la misma, **T&S Logistics** (USDOT 9731476).
+
+**1. Los dos límites de AL los cotiza el bot (R-097).** Respuesta de negocio:
+*"al ser en línea sí sería bueno que el BOT lo haga"*. R-096 detectaba el
+segundo límite y avisaba para cotizarlo a mano; ahora una submission encola un
+job **por (MGA × límite)**. Cada job corre el flujo completo, deja su propio
+número de quote en el carrier y baja su propia indicación.
+
+- El límite del job se aplica en un solo punto (`worker.py`, sobre
+  `profile.coverages_detail.bodily_injury_limit`). De ahí lo leen Progressive
+  (`CoveragesRatesPage`) y GEICO (`_bi_limits_to_geico`) sin tocar nada.
+- **El límite entra al nombre del archivo**, que era el pedido explícito:
+  `20260817 - Indications Progressive AL 750K.pdf` en Drive y
+  `2026-08-17 T&S LOGISTICS Progressive CA117054124 AL 750K.pdf` local.
+  Esto además arregla un bug que ya existía: dos indicaciones del mismo carrier
+  el mismo día chocaban por nombre y Drive descartaba la segunda con
+  *"ya existe"*.
+- Se dejó **`Indications` en plural**, como estaba. Cambiarlo a singular haría
+  que el dedup por nombre no reconociera ninguno de los PDFs ya subidos de
+  todos los clientes y se re-subirían duplicados.
+
+**2. GEICO no ofrece $750K — y eso hay que decirlo, no taparlo.** Hallazgo al
+implementar: `_bi_limits_to_geico` mapea 100K/300K/500K/1M CSL y el split
+250/500. Un `$750K CSL` no matchea nada y **cae al default de $1M**. Sin
+guard, el "job de 750K" en GEICO habría cotizado un millón y el PDF habría
+salido etiquetado *"AL 750K"* — peor que no cotizar. Ahora ese job no se
+encola y el correo dice *"GEICO no ofrece $750K CSL: se cotiza con su límite
+estándar"*.
+
+Qué ofrece cada MGA vive en `modules/al_limits.py`; `tests/test_al_limits.py`
+verifica que ese set no se separe de los mappers de cada carrier.
+
+**3. No perder cotizaciones.** Si a un MGA no le sirve **ninguno** de los
+límites pedidos, igual se encola con su default. Antes de R-097 eso era
+exactamente lo que pasaba (en silencio); lo que cambia es que ahora queda
+dicho. Bloquearlo habría hecho que un cliente que pide solo $750K perdiera la
+cotización de GEICO por completo.
+
+**4. Efecto colateral que había que arreglar sí o sí.** El tope de *3
+cotizaciones del mismo USDOT por día* contaba **jobs**. Con dos límites, una
+submission consume 2 de 3 y la segunda submission del mismo día se descartaba
+sola. Pasó a contar `submission_id` distintos.
+
+**5. Beaumont: solo la ciudad (R-095 cerrada).** Respuesta de negocio: *"solo
+bloquea Beaumont"*. Se bloquean los ZIP de la **ciudad** de Beaumont; el resto
+del condado Jefferson (Port Arthur, Nederland, Groves, Port Neches) **sí es
+elegible**. Documentado en el encabezado de `modules/tx_counties.py` para que
+nadie lo "corrija" después.
+
+**Cobertura:** 877 tests (eran 816). Lo único que no cubre un test unitario es
+la línea de cada flow que pasa el límite al nombre del PDF — necesita un
+navegador; todo lo que esa línea llama sí está cubierto.
+
+⚠️ Igual que la ola anterior: **el Excel corregido hay que subirlo a Drive**
+antes de levantar el contenedor, o el sync de arranque lo pisa.
+
 ### 2026-08-10 — Ola de Diana sobre T&S Logistics (R-093…R-096)
 
 Quote de referencia: **T&S Logistics** (New Venture, USDOT 9731476, job 29).

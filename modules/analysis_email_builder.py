@@ -5,7 +5,7 @@ Builds the pre-dispatch HTML summary email with full MGA eligibility analysis.
 """
 
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
 from modules.quote_profile import QuoteProfile
@@ -411,6 +411,7 @@ def build_analysis_email(
     original_subject: str,
     confirmation_keyword: str = "APROBAR",
     rpa_quotes_section: str = "",
+    al_limits_unavailable: Optional[List[Tuple[str, str]]] = None,
 ) -> Dict[str, str]:
     """
     Build HTML analysis summary email for human review before MGA dispatch.
@@ -552,15 +553,29 @@ def build_analysis_email(
             "<strong>Falta CDL</strong> &mdash; requerido para la cotizacion final con los MGAs."
         )
     # Limite(s) de AL adicionales pedidos por el agente (segunda Blue Quote o
-    # pedido en el cuerpo del correo). El bot cotiza UNO; el resto tiene que
-    # verse, no perderse (R-096, Diana 2026-08-10).
+    # pedido en el cuerpo del correo). R-096 los hacia visibles para cotizarlos
+    # a mano; desde R-097 el bot cotiza cada uno por separado, asi que el aviso
+    # dice que se esta cotizando y no manda a rehacer trabajo ya hecho.
     extra_al = list(getattr(profile, "requested_extra_al_limits", []) or [])
     if extra_al:
-        cotizado = profile.coverages_detail.bodily_injury_limit or "el de la Blue Quote"
+        principal = profile.coverages_detail.bodily_injury_limit or "el de la Blue Quote"
         warnings_list.append(
-            f"<strong>Se pidio mas de un limite de AL:</strong> el bot cotiza "
-            f"{cotizado} y ademas se solicito {', '.join(extra_al)}. "
-            f"La(s) cotizacion(es) del limite adicional hay que hacerla(s) a mano."
+            f"<strong>Se pidio mas de un limite de AL:</strong> {principal} y "
+            f"{', '.join(extra_al)}. Cada limite se cotiza por separado y va "
+            f"con su propia indicacion adjunta."
+        )
+    # MGAs que no ofrecen un limite pedido: se cotizan con su limite estandar
+    # (no perdemos la cotizacion) pero tiene que quedar dicho. GEICO no tiene
+    # $750K y su mapper cae al default de $1M.
+    vistos = []
+    for mga, limite in (al_limits_unavailable or []):
+        if (mga, limite) in vistos:
+            continue
+        vistos.append((mga, limite))
+        warnings_list.append(
+            f"<strong>{mga} no ofrece {limite}:</strong> se cotiza con su "
+            f"limite estandar. La cotizacion de {limite} en {mga} no existe "
+            f"como producto."
         )
     if current_carrier_norm:
         hit_names = ", ".join(ev.mga_name for ev in current_carrier_hits) if current_carrier_hits else "ninguna coincidencia"

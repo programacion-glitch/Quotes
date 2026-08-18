@@ -20,6 +20,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from modules.config_manager import get_config
+from modules.al_limits import al_label
 
 _DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 
@@ -393,9 +394,17 @@ class DriveManager:
 
     def upload_quote_indication(self, business_name: str, usdot: str,
                                 pdf_path: str, carrier: str = "Progressive",
-                                when: Optional[datetime] = None) -> Optional[str]:
+                                when: Optional[datetime] = None,
+                                al_limit: Optional[str] = None) -> Optional[str]:
         """Sube el PDF de indicación a
         <carpeta cliente>/2) Quotes/'YYYYMMDD - Indications <carrier>.pdf'.
+
+        Con `al_limit` el nombre lleva además el límite de Auto Liability
+        ('... Indications Progressive AL 750K.pdf'). Hace falta desde R-097:
+        cuando el agente pide dos límites se suben dos indicaciones del mismo
+        carrier el mismo día, y sin el sufijo la segunda chocaba por nombre y
+        se descartaba con 'ya existe'.
+
         Best-effort: devuelve file_id, 'exists' si ya estaba, o None. NUNCA
         levanta (un fallo de Drive no debe tumbar el flujo de cotización)."""
         if not self.service:
@@ -418,7 +427,9 @@ class DriveManager:
             date_str = (when or datetime.now()).strftime("%Y%m%d")
             label = {"PROGRESSIVE": "Progressive", "GEICO": "GEICO"}.get(
                 (carrier or "").upper(), (carrier or "Quote").title())
-            fname = f"{date_str} - Indications {label}.pdf"
+            al = al_label(al_limit)
+            fname = (f"{date_str} - Indications {label}"
+                     f"{' ' + al if al else ''}.pdf")
 
             existing = self._list_existing_file_keys(quotes_id) or set()
             if self._filename_key(fname) in existing:

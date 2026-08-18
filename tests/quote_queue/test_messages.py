@@ -113,3 +113,34 @@ class TestDecisionsTable:
         html = render_rpa_section([self._outcome(None)])
         assert "PROGRESSIVE" in html
         assert "Decisiones tomadas" not in html
+
+
+# ---------------------------------------------------------------------------
+# Dos límites de AL en la misma submission (R-097)
+# ---------------------------------------------------------------------------
+
+def test_la_fila_dice_que_limite_de_al_se_cotizo():
+    """Con dos cotizaciones de la MISMA MGA en el correo, sin el límite las
+    dos filas dirían 'PROGRESSIVE cotizó ...' y no se sabría cuál es cuál."""
+    o = RpaQuoteOutcome(mga="PROGRESSIVE", status="quoted", reason="ok",
+                        premium="$44,621", al_limit="$750K CSL")
+    fila = render_rpa_section([o])
+    assert "$750K CSL" in fila
+
+
+def test_dos_limites_de_la_misma_mga_se_distinguen():
+    outcomes = [
+        RpaQuoteOutcome(mga="PROGRESSIVE", status="quoted", reason="ok",
+                        premium="$53,064", al_limit="$1M CSL"),
+        RpaQuoteOutcome(mga="PROGRESSIVE", status="quoted", reason="ok",
+                        premium="$44,621", al_limit="$750K CSL"),
+    ]
+    html = render_rpa_section(outcomes)
+    assert "$53,064" in html and "$44,621" in html
+    assert "$1M CSL" in html and "$750K CSL" in html
+
+
+def test_sin_limite_la_fila_es_la_de_siempre():
+    con = RpaQuoteOutcome(mga="GEICO", status="quoted", reason="ok",
+                          premium="$10,000", al_limit=None)
+    assert "AL" not in humanize(con).replace("GEICO", "")

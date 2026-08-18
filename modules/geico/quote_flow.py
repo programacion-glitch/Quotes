@@ -195,9 +195,12 @@ class QuoteFlow:
             # Errors here are non-fatal: the price was already captured, so
             # we keep going (pdf_path stays None and a warning is recorded).
             try:
+                # R-097: el límite de AL entra al nombre para distinguir las
+                # dos indicaciones cuando el agente pide más de un límite.
                 pdf_filename = quote_pdf_filename(
                     fields.business_name or "unknown",
                     price.quote_number,
+                    al_limit=fields.current_bi_limits,
                 )
                 pdf_path = _PDF_OUTPUT_DIR / pdf_filename
                 info = await download_geico_pdf(wizard_page, pdf_url, pdf_path)

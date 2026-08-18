@@ -31,3 +31,28 @@ def test_sin_negocio_ni_quote_number():
 def test_usa_fecha_actual_por_defecto():
     out = quote_pdf_basename("ACME", "CA1")
     assert out.split(" ")[0] == datetime.now().strftime("%Y-%m-%d")
+
+
+# ---------------------------------------------------------------------------
+# Dos límites de AL en la misma cotización (R-097)
+# ---------------------------------------------------------------------------
+
+def test_el_limite_de_al_va_al_final_del_nombre():
+    """El formato de R-086 que Diana aprobó no se toca: el límite se agrega
+    al final para distinguir las dos indicaciones."""
+    out = quote_pdf_basename("T&S LOGISTICS", "CA117054124", when=_WHEN,
+                             al_limit="$750K CSL")
+    assert out.startswith("2026-08-03 T&S LOGISTICS Progressive CA117054124")
+    assert out.endswith("AL 750K")
+
+
+def test_los_dos_limites_dan_nombres_distintos():
+    uno = quote_pdf_basename("T&S", "CA1", when=_WHEN, al_limit="$1M CSL")
+    dos = quote_pdf_basename("T&S", "CA1", when=_WHEN, al_limit="$750K CSL")
+    assert uno != dos
+
+
+def test_sin_limite_el_nombre_es_el_de_siempre():
+    con = quote_pdf_basename("T&S", "CA1", when=_WHEN, al_limit=None)
+    sin = quote_pdf_basename("T&S", "CA1", when=_WHEN)
+    assert con == sin
