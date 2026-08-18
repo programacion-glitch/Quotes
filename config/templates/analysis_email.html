@@ -47,6 +47,90 @@
 <!-- ====== WARNINGS BANNER ====== -->
 {warnings_banner}
 {rpa_quotes_section}
+<!-- ORDEN (2026-08-18): primero lo que hay que DECIDIR (cotizaciones y
+     evaluacion de MGAs), despues los datos con los que se decidio. Antes
+     el analisis quedaba al final y habia que scrollear todo el correo
+     para ver el veredicto. tests/test_analysis_email_order.py lo fija. -->
+<!-- ====== WEB MGAs (rule engine) ====== -->
+<tr>
+<td style="padding:8px 32px 4px 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#1a5276;border-radius:6px 6px 0 0;">
+  <tr>
+    <td style="padding:14px 20px;">
+      <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:#ffffff;">&#9679; MGAs Web &mdash; Evaluacion de Reglas</p>
+    </td>
+  </tr>
+  </table>
+</td>
+</tr>
+<tr>
+<td style="padding:0 32px 20px 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #bcd2e8;border-top:none;border-radius:0 0 6px 6px;overflow:hidden;">
+  {web_rules_rows}
+  </table>
+</td>
+</tr>
+
+<!-- ====== ELIGIBLE MGAs ====== -->
+<tr>
+<td style="padding:8px 32px 4px 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0d7a3f;border-radius:6px 6px 0 0;">
+  <tr>
+    <td style="padding:14px 20px;">
+      <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:#ffffff;">&#9679; MGAs Elegibles ({eligible_count})</p>
+    </td>
+  </tr>
+  </table>
+</td>
+</tr>
+<tr>
+<td style="padding:0 32px 20px 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #c6e9d2;border-top:none;border-radius:0 0 6px 6px;overflow:hidden;">
+  {eligible_rows}
+  </table>
+</td>
+</tr>
+
+<!-- ====== INELIGIBLE MGAs ====== -->
+<tr>
+<td style="padding:8px 32px 4px 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#c4291c;border-radius:6px 6px 0 0;">
+  <tr>
+    <td style="padding:14px 20px;">
+      <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:#ffffff;">&#9679; MGAs No Elegibles ({ineligible_count})</p>
+    </td>
+  </tr>
+  </table>
+</td>
+</tr>
+<tr>
+<td style="padding:0 32px 20px 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #f0c6c3;border-top:none;border-radius:0 0 6px 6px;overflow:hidden;">
+  {ineligible_rows}
+  </table>
+</td>
+</tr>
+
+<!-- ====== WHAT'S NEEDED ====== -->
+<tr>
+<td style="padding:8px 32px 4px 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#b8860b;border-radius:6px 6px 0 0;">
+  <tr>
+    <td style="padding:14px 20px;">
+      <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:#ffffff;">&#9650; Que Faltaria para Desbloquear Mas MGAs</p>
+    </td>
+  </tr>
+  </table>
+</td>
+</tr>
+<tr>
+<td style="padding:0 32px 24px 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #f0deb0;border-top:none;border-radius:0 0 6px 6px;overflow:hidden;">
+  {fixes_rows}
+  </table>
+</td>
+</tr>
+
 <!-- ====== CLIENT INFO ====== -->
 <tr>
 <td style="padding:28px 32px 20px 32px;">
@@ -142,86 +226,6 @@
       <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#0a1628;">{loss_run_summary}</p>
     </td>
   </tr>
-  </table>
-</td>
-</tr>
-
-<!-- ====== WEB MGAs (rule engine) ====== -->
-<tr>
-<td style="padding:8px 32px 4px 32px;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#1a5276;border-radius:6px 6px 0 0;">
-  <tr>
-    <td style="padding:14px 20px;">
-      <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:#ffffff;">&#9679; MGAs Web &mdash; Evaluacion de Reglas</p>
-    </td>
-  </tr>
-  </table>
-</td>
-</tr>
-<tr>
-<td style="padding:0 32px 20px 32px;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #bcd2e8;border-top:none;border-radius:0 0 6px 6px;overflow:hidden;">
-  {web_rules_rows}
-  </table>
-</td>
-</tr>
-
-<!-- ====== ELIGIBLE MGAs ====== -->
-<tr>
-<td style="padding:8px 32px 4px 32px;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0d7a3f;border-radius:6px 6px 0 0;">
-  <tr>
-    <td style="padding:14px 20px;">
-      <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:#ffffff;">&#9679; MGAs Elegibles ({eligible_count})</p>
-    </td>
-  </tr>
-  </table>
-</td>
-</tr>
-<tr>
-<td style="padding:0 32px 20px 32px;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #c6e9d2;border-top:none;border-radius:0 0 6px 6px;overflow:hidden;">
-  {eligible_rows}
-  </table>
-</td>
-</tr>
-
-<!-- ====== INELIGIBLE MGAs ====== -->
-<tr>
-<td style="padding:8px 32px 4px 32px;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#c4291c;border-radius:6px 6px 0 0;">
-  <tr>
-    <td style="padding:14px 20px;">
-      <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:#ffffff;">&#9679; MGAs No Elegibles ({ineligible_count})</p>
-    </td>
-  </tr>
-  </table>
-</td>
-</tr>
-<tr>
-<td style="padding:0 32px 20px 32px;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #f0c6c3;border-top:none;border-radius:0 0 6px 6px;overflow:hidden;">
-  {ineligible_rows}
-  </table>
-</td>
-</tr>
-
-<!-- ====== WHAT'S NEEDED ====== -->
-<tr>
-<td style="padding:8px 32px 4px 32px;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#b8860b;border-radius:6px 6px 0 0;">
-  <tr>
-    <td style="padding:14px 20px;">
-      <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:#ffffff;">&#9650; Que Faltaria para Desbloquear Mas MGAs</p>
-    </td>
-  </tr>
-  </table>
-</td>
-</tr>
-<tr>
-<td style="padding:0 32px 24px 32px;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #f0deb0;border-top:none;border-radius:0 0 6px 6px;overflow:hidden;">
-  {fixes_rows}
   </table>
 </td>
 </tr>

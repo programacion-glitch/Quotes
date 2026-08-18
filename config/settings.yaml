@@ -101,6 +101,14 @@ email:
         - victor@h2oins.com
         - luisgomez@h2oins.com
         - juanmanuel@h2oins.com
+        # Alta 2026-08-18: estos ya estaban en new_venture, pero tambien mandan
+        # submissions SIN "New Venture" en el asunto y el guard las descartaba
+        # en silencio (is_processable_submission las busca en rt y no estaban).
+        - sirley@h2oins.com
+        - brandon@h2oins.com
+        - danielramirez@h2oins.com
+        - juanfelipe@h2oins.com
+        - ileny@h2oins.com
       new_venture:
         - duvan@h2oins.com
         - veronica@h2oins.com
@@ -114,6 +122,8 @@ email:
         - brandon@h2oins.com
         - cindyr@h2oins.com
         - jorgeurzola@h2oins.com   # alta 2026-08-06 (Submission T&S Logistics)
+        - ileny@h2oins.com         # alta 2026-08-18: no estaba en NINGUNA lista
+                                   # (RAAL TRUCKING, Jasa Truckline se perdieron)
 
   # Análisis autónomo (Gmail API): destino del correo NUEVO (sin hilo, sin CC,
   # sin etiquetas — transparente).
